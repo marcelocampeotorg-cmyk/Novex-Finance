@@ -312,20 +312,26 @@ model RecurrenceRule {
 }
 
 model IntegrationAccount {
-  id                   String                @id @default(uuid())
-  workspaceId          String                @map("workspace_id")
-  provider             IntegrationProvider   @default(MERCADO_PAGO)
-  externalAccountId    String?               @map("external_account_id")
-  displayName          String                @map("display_name")
-  encryptedCredentials String?               @map("encrypted_credentials")
-  capabilities         Json?
-  status               String                @default("CONNECTED")
-  lastSyncAt           DateTime?             @map("last_sync_at")
-  createdAt            DateTime              @default(now()) @map("created_at")
-  updatedAt            DateTime              @updatedAt @map("updated_at")
-  workspace            Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  externalTransactions ExternalTransaction[]
+  id                      String                @id @default(uuid())
+  workspaceId             String                @map("workspace_id")
+  provider                IntegrationProvider   @default(MERCADO_PAGO)
+  environment             String                @default("SANDBOX")
+  externalAccountId       String?               @map("external_account_id")
+  externalApplicationId   String?               @map("external_application_id")
+  displayName             String                @map("display_name")
+  encryptedCredentials    String?               @map("encrypted_credentials")
+  credentialKeyVersion    Int                   @default(1) @map("credential_key_version")
+  capabilities            Json?
+  status                  String                @default("DISCONNECTED")
+  lastValidatedAt         DateTime?             @map("last_validated_at")
+  lastValidationErrorCode String?               @map("last_validation_error_code")
+  lastSyncAt              DateTime?             @map("last_sync_at")
+  createdAt               DateTime              @default(now()) @map("created_at")
+  updatedAt               DateTime              @updatedAt @map("updated_at")
+  workspace               Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  externalTransactions    ExternalTransaction[]
 
+  @@unique([workspaceId, provider, environment])
   @@map("integration_accounts")
 }
 
