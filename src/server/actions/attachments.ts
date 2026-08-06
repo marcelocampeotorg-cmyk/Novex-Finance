@@ -4,12 +4,14 @@ import { db } from "@/server/db";
 import { revalidatePath } from "next/cache";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { requireAuthenticatedWorkspace } from "@/server/auth-context";
 
-const DEMO_WORKSPACE_ID = "ws-personal-demo";
 const UPLOADS_DIR = process.env.UPLOADS_DIR || "./uploads";
 
 export async function uploadAttachment(formData: FormData) {
   try {
+    const { workspaceId, userName } = await requireAuthenticatedWorkspace();
+
     const file = formData.get("file") as File;
     const ownerType = (formData.get("ownerType") as string) || "FINANCIAL_ITEM";
     const ownerId = (formData.get("ownerId") as string) || "demo-owner";
@@ -40,14 +42,14 @@ export async function uploadAttachment(formData: FormData) {
     // Gravar registro no banco
     const attachment = await db.attachment.create({
       data: {
-        workspaceId: DEMO_WORKSPACE_ID,
+        workspaceId,
         ownerType,
         ownerId,
         storageKey,
         originalName: file.name,
         mimeType: file.type,
         size: BigInt(file.size),
-        uploadedBy: "Frank",
+        uploadedBy: userName,
       },
     });
 

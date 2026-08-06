@@ -2,13 +2,14 @@
 
 import { db } from "@/server/db";
 import { revalidatePath } from "next/cache";
-
-const DEMO_WORKSPACE_ID = "ws-personal-demo";
+import { requireAuthenticatedWorkspace } from "@/server/auth-context";
 
 export async function getExternalTransactions() {
   try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+
     const txs = await db.externalTransaction.findMany({
-      where: { workspaceId: DEMO_WORKSPACE_ID },
+      where: { workspaceId },
       include: {
         reconciliations: true,
       },
@@ -44,11 +45,13 @@ export async function getExternalTransactions() {
 
 export async function matchReconciliation(externalTransactionId: string, installmentId: string) {
   try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+
     return await db.$transaction(async (tx) => {
       // Criar ou atualizar vinculo de conciliação
       const rec = await tx.reconciliation.create({
         data: {
-          workspaceId: DEMO_WORKSPACE_ID,
+          workspaceId,
           externalTransactionId,
           installmentId,
           status: "MATCHED",

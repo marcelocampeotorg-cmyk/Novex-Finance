@@ -86,19 +86,66 @@ enum MatchedBy {
 }
 
 model User {
-  id           String       @id @default(uuid())
-  email        String       @unique
-  passwordHash String?      @map("password_hash")
-  name         String
-  timezone     String       @default("America/Sao_Paulo")
-  locale       String       @default("pt-BR")
-  status       String       @default("ACTIVE")
-  createdAt    DateTime     @default(now()) @map("created_at")
-  updatedAt    DateTime     @updatedAt @map("updated_at")
-  memberships  Membership[]
-  workspaces   Workspace[]  @relation("WorkspaceOwner")
+  id            String       @id @default(uuid())
+  email         String       @unique
+  emailVerified Boolean      @default(false) @map("email_verified")
+  name          String
+  image         String?
+  timezone      String       @default("America/Sao_Paulo")
+  locale        String       @default("pt-BR")
+  status        String       @default("ACTIVE")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+  sessions      Session[]
+  accounts      Account[]
+  memberships   Membership[]
+  workspaces    Workspace[]  @relation("WorkspaceOwner")
 
   @@map("users")
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  expiresAt DateTime @map("expires_at")
+  token     String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  ipAddress String?  @map("ip_address")
+  userAgent String?  @map("user_agent")
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model Account {
+  id                    String    @id @default(uuid())
+  accountId             String    @map("account_id")
+  providerId            String    @map("provider_id")
+  userId                String    @map("user_id")
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?   @map("access_token")
+  refreshToken          String?   @map("refresh_token")
+  idToken               String?   @map("id_token")
+  accessTokenExpiresAt  DateTime? @map("access_token_expires_at")
+  refreshTokenExpiresAt DateTime? @map("refresh_token_expires_at")
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  @@map("accounts")
+}
+
+model Verification {
+  id         String   @id @default(uuid())
+  identifier String
+  value      String
+  expiresAt  DateTime @map("expires_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("verifications")
 }
 
 model Workspace {
@@ -224,23 +271,23 @@ model FinancialItem {
 }
 
 model Installment {
-  id                   String          @id @default(uuid())
-  financialItemId      String          @map("financial_item_id")
-  sequence             Int
-  amountCents          BigInt          @map("amount_cents")
-  dueDate              DateTime        @map("due_date")
-  settledAmountCents   BigInt          @default(0) @map("settled_amount_cents")
-  status               InstallmentStatus @default(SCHEDULED)
-  selectedPixKeyId     String?         @map("selected_pix_key_id")
-  settlementDate       DateTime?       @map("settlement_date")
-  uniqueReference      String?         @unique @map("unique_reference")
-  createdAt            DateTime        @default(now()) @map("created_at")
-  updatedAt            DateTime        @updatedAt @map("updated_at")
-  financialItem        FinancialItem   @relation(fields: [financialItemId], references: [id], onDelete: Cascade)
-  selectedPixKey       PixKey?         @relation(fields: [selectedPixKeyId], references: [id])
-  reconciliations      Reconciliation[]
-  pixCharges           PixCharge[]
-  ledgerEntries        LedgerEntry[]
+  id                 String            @id @default(uuid())
+  financialItemId    String            @map("financial_item_id")
+  sequence           Int
+  amountCents        BigInt            @map("amount_cents")
+  dueDate            DateTime          @map("due_date")
+  settledAmountCents BigInt            @default(0) @map("settled_amount_cents")
+  status             InstallmentStatus @default(SCHEDULED)
+  selectedPixKeyId   String?           @map("selected_pix_key_id")
+  settlementDate     DateTime?         @map("settlement_date")
+  uniqueReference    String?           @unique @map("unique_reference")
+  createdAt          DateTime          @default(now()) @map("created_at")
+  updatedAt          DateTime          @updatedAt @map("updated_at")
+  financialItem      FinancialItem     @relation(fields: [financialItemId], references: [id], onDelete: Cascade)
+  selectedPixKey     PixKey?           @relation(fields: [selectedPixKeyId], references: [id])
+  reconciliations    Reconciliation[]
+  pixCharges         PixCharge[]
+  ledgerEntries      LedgerEntry[]
 
   @@map("installments")
 }
@@ -332,23 +379,23 @@ model Reconciliation {
 }
 
 model PixCharge {
-  id                String      @id @default(uuid())
-  workspaceId       String      @map("workspace_id")
-  installmentId     String      @map("installment_id")
+  id                String              @id @default(uuid())
+  workspaceId       String              @map("workspace_id")
+  installmentId     String              @map("installment_id")
   provider          IntegrationProvider @default(MERCADO_PAGO)
-  externalChargeId  String?     @map("external_charge_id")
-  externalReference String      @unique @map("external_reference")
-  idempotencyKey    String      @unique @map("idempotency_key")
-  amountCents       BigInt      @map("amount_cents")
-  qrCodeText        String?     @map("qr_code_text")
-  qrCodeImageRef    String?     @map("qr_code_image_ref")
-  ticketUrl         String?     @map("ticket_url")
-  expiresAt         DateTime?   @map("expires_at")
-  status            String      @default("PENDING")
-  createdAt         DateTime    @default(now()) @map("created_at")
-  updatedAt         DateTime    @updatedAt @map("updated_at")
-  workspace         Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  installment       Installment @relation(fields: [installmentId], references: [id], onDelete: Cascade)
+  externalChargeId  String?             @map("external_charge_id")
+  externalReference String              @unique @map("external_reference")
+  idempotencyKey    String              @unique @map("idempotency_key")
+  amountCents       BigInt              @map("amount_cents")
+  qrCodeText        String?             @map("qr_code_text")
+  qrCodeImageRef    String?             @map("qr_code_image_ref")
+  ticketUrl         String?             @map("ticket_url")
+  expiresAt         DateTime?           @map("expires_at")
+  status            String              @default("PENDING")
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
+  workspace         Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  installment       Installment         @relation(fields: [installmentId], references: [id], onDelete: Cascade)
 
   @@map("pix_charges")
 }
@@ -375,19 +422,19 @@ model LedgerEntry {
 }
 
 model NotificationRule {
-  id               String         @id @default(uuid())
-  workspaceId      String         @map("workspace_id")
-  scope            String         @default("GLOBAL")
-  financialItemId  String?        @map("financial_item_id")
-  daysBefore       Int[]          @map("days_before")
-  onDueDate        Boolean        @default(true) @map("on_due_date")
-  overdueFrequency Int            @default(1) @map("overdue_frequency")
-  hour             Int            @default(9)
-  channels         String[]       @default(["DASHBOARD"])
-  enabled          Boolean        @default(true)
-  createdAt        DateTime       @default(now()) @map("created_at")
-  updatedAt        DateTime       @updatedAt @map("updated_at")
-  workspace        Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  id               String    @id @default(uuid())
+  workspaceId      String    @map("workspace_id")
+  scope            String    @default("GLOBAL")
+  financialItemId  String?   @map("financial_item_id")
+  daysBefore       Int[]     @map("days_before")
+  onDueDate        Boolean   @default(true) @map("on_due_date")
+  overdueFrequency Int       @default(1) @map("overdue_frequency")
+  hour             Int       @default(9)
+  channels         String[]  @default(["DASHBOARD"])
+  enabled          Boolean   @default(true)
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@map("notification_rules")
 }

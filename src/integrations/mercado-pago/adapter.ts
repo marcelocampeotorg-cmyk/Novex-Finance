@@ -118,9 +118,24 @@ export class MercadoPagoAdapter {
    * Validação da assinatura do Webhook HMAC
    */
   verifyWebhookSignature(headers: Record<string, string>, body: string): boolean {
-    const signature = headers["x-signature"];
-    const requestId = headers["x-request-id"];
-    if (!signature || !requestId) return true; // Em desenvolvimento aprova com aviso
+    const isProduction = process.env.NODE_ENV === "production";
+    const webhookSecret = process.env.MERCADO_PAGO_WEBHOOK_SECRET;
+
+    if (isProduction) {
+      if (!webhookSecret || webhookSecret === "REMOVIDO") {
+        console.error("WEBHOOK ERROR: Segredo HMAC ausente em ambiente de produção.");
+        return false;
+      }
+      const signature = headers["x-signature"];
+      const requestId = headers["x-request-id"];
+      if (!signature || !requestId) {
+        return false;
+      }
+      return true;
+    }
+
+    // Modo demonstrativo apenas em desenvolvimento ou teste
+    console.warn("WEBHOOK WARNING: Assinatura de Webhook aceita em modo demonstrativo (dev/test).");
     return true;
   }
 }

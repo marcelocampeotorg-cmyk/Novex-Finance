@@ -1,14 +1,25 @@
 "use client";
 
 import React, { useState } from "react";
-import { RefreshCw, Plus, Search, CheckCircle2, User } from "lucide-react";
+import { RefreshCw, Plus, Search, CheckCircle2, User, LogOut } from "lucide-react";
 import { MOCK_BALANCE_SUMMARY } from "@/mocks/financial-data";
 import { NewAccountModal } from "@/components/ui/NewAccountModal";
+import { authClient } from "@/lib/auth-client";
 
 export const AppTopbar: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isNewAccountOpen, setIsNewAccountOpen] = useState(false);
   const [lastSync, setLastSync] = useState(MOCK_BALANCE_SUMMARY.lastSyncAt);
+
+  const handleLogout = async () => {
+    await authClient.signOut({
+      fetchOptions: {
+        onSuccess: () => {
+          window.location.href = "/login";
+        },
+      },
+    });
+  };
 
   const handleSync = () => {
     setIsSyncing(true);
@@ -66,7 +77,7 @@ export const AppTopbar: React.FC = () => {
           </button>
 
           {/* Avatar Usuário */}
-          <div className="flex items-center gap-2 border-l border-novex-border pl-4">
+          <div className="flex items-center gap-3 border-l border-novex-border pl-4">
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-novex-surface2 text-novex-cyan border border-novex-cyan/30">
               <User className="h-4 w-4" />
             </div>
@@ -74,6 +85,13 @@ export const AppTopbar: React.FC = () => {
               <span className="text-xs font-semibold text-novex-text-primary">Frank</span>
               <span className="text-[10px] text-novex-text-muted">Proprietário</span>
             </div>
+            <button
+              onClick={handleLogout}
+              className="ml-1 rounded p-1.5 text-novex-text-muted hover:bg-red-500/10 hover:text-red-400 transition-colors"
+              title="Sair do sistema"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
           </div>
         </div>
       </header>

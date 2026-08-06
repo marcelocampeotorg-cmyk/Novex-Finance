@@ -1,7 +1,5 @@
 import { db } from "@/server/db";
 
-const DEMO_WORKSPACE_ID = "ws-personal-demo";
-
 export interface ActiveReminderNotice {
   installmentId: string;
   title: string;
@@ -14,7 +12,7 @@ export interface ActiveReminderNotice {
 /**
  * Processador de Lembretes e Alertas de Vencimento
  */
-export async function processRemindersJob(): Promise<ActiveReminderNotice[]> {
+export async function processRemindersJob(targetWorkspaceId?: string): Promise<ActiveReminderNotice[]> {
   try {
     const now = new Date();
     now.setHours(0, 0, 0, 0);
@@ -22,7 +20,7 @@ export async function processRemindersJob(): Promise<ActiveReminderNotice[]> {
     const installments = await db.installment.findMany({
       where: {
         financialItem: {
-          workspaceId: DEMO_WORKSPACE_ID,
+          ...(targetWorkspaceId ? { workspaceId: targetWorkspaceId } : {}),
           deletedAt: null,
         },
         status: { in: ["SCHEDULED", "OVERDUE", "PARTIAL"] },

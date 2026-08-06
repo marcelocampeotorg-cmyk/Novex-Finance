@@ -2,14 +2,15 @@
 
 import { db } from "@/server/db";
 import { revalidatePath } from "next/cache";
-
-const DEMO_WORKSPACE_ID = "ws-personal-demo";
+import { requireAuthenticatedWorkspace } from "@/server/auth-context";
 
 export async function getFinancialItems(direction?: "PAYABLE" | "RECEIVABLE") {
   try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+
     const items = await db.financialItem.findMany({
       where: {
-        workspaceId: DEMO_WORKSPACE_ID,
+        workspaceId,
         deletedAt: null,
         ...(direction ? { direction } : {}),
       },
@@ -89,19 +90,21 @@ export async function createFinancialItem(input: {
   installments?: { sequence: number; amountCents: number; dueDate: string }[];
 }) {
   try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+
     return await db.$transaction(async (tx) => {
       // Localizar ou criar categoria se necessário
       let categoryId: string | undefined;
       if (input.categoryName) {
         const cat = await tx.category.findFirst({
-          where: { workspaceId: DEMO_WORKSPACE_ID, name: input.categoryName },
+          where: { workspaceId, name: input.categoryName },
         });
         if (cat) {
           categoryId = cat.id;
         } else {
           const newCat = await tx.category.create({
             data: {
-              workspaceId: DEMO_WORKSPACE_ID,
+              workspaceId,
               name: input.categoryName,
               direction: input.direction === "PAYABLE" ? "EXPENSE" : "INCOME",
               colorToken: "#3B82F6",
@@ -114,7 +117,7 @@ export async function createFinancialItem(input: {
       // Criar item pai
       const item = await tx.financialItem.create({
         data: {
-          workspaceId: DEMO_WORKSPACE_ID,
+          workspaceId,
           direction: input.direction,
           kind: input.kind,
           title: input.title,

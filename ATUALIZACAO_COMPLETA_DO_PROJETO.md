@@ -259,3 +259,17 @@ Implementado no arquivo `src/integrations/mercado-pago/adapter.ts`.
 **Bloqueadores para Teste Real / Mercado Pago:**
 1. Criar aplicação no painel Mercado Pago Developer, resgatar os Tokens finais e injetar via variável de ambiente real (substituindo `DEMO_TOKEN`).
 2. Tunneling (ngrok/localtunnel) para ouvir o Webhook MP diretamente da máquina local.
+
+---
+
+## 27. MARCO DE AUTENTICAÇÃO E ISOLAMENTO (Executado)
+
+- **Baseline Git:** Criado o commit inicial `chore: establish audited NOVEX Finance baseline` (Hash: `6e1d7de`) e a nova branch `feat/auth-workspace-isolation`.
+- **Biblioteca de Autenticação:** `better-auth` v1.6.26 integrada via Prisma Adapter (`prismaAdapter`).
+- **Data Model:** Atualizadas tabelas `User`, `Session`, `Account` e `Verification` no `prisma/schema.prisma` com migration `add_better_auth_and_workspace_session`.
+- **Eliminação do `DEMO_WORKSPACE_ID`:** Removidas todas as ocorrências de `DEMO_WORKSPACE_ID` em `src/server/actions/` e `src/jobs/`.
+- **Resolução de Identidade Server-Side:** Criada função central `requireAuthenticatedWorkspace()` em `src/server/auth-context.ts`.
+- **Rota de Login e UI NOVEXBR:** Criada tela visual `/login` em `src/app/login/page.tsx` com formulário, toggle de senha, erros e identidade visual dark-first.
+- **Middleware de Proteção:** `src/middleware.ts` bloqueia rotas privadas e redireciona não-autenticados para `/login`.
+- **AppShell:** Isolado o layout de `/login` para ocultar Sidebar e Topbar.
+- **Testes de Isolamento Multi-Tenant:** Criados 6 testes adicionais em `tests/auth-isolation.test.js` garantindo que Usuário A não lê nem altera dados do Workspace B. Suíte total: 16/16 testes aprovados.

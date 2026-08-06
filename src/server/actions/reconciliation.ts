@@ -3,8 +3,7 @@
 import { db } from "@/server/db";
 import { settleInstallment } from "@/server/actions/financial-items";
 import { revalidatePath } from "next/cache";
-
-const DEMO_WORKSPACE_ID = "ws-personal-demo";
+import { requireAuthenticatedWorkspace } from "@/server/auth-context";
 
 export interface ReconciliationScoreResult {
   score: number;
@@ -122,9 +121,11 @@ export function categorizeTransactionDescription(description: string): string {
  */
 export async function runAutomaticReconciliationEngine() {
   try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+
     const unmatchedTxs = await db.externalTransaction.findMany({
       where: {
-        workspaceId: DEMO_WORKSPACE_ID,
+        workspaceId,
         reconciliations: {
           none: {
             status: "MATCHED",
@@ -136,7 +137,7 @@ export async function runAutomaticReconciliationEngine() {
     const activeInstallments = await db.installment.findMany({
       where: {
         financialItem: {
-          workspaceId: DEMO_WORKSPACE_ID,
+          workspaceId,
           deletedAt: null,
         },
         status: { in: ["SCHEDULED", "OVERDUE", "PARTIAL"] },
@@ -182,7 +183,7 @@ export async function runAutomaticReconciliationEngine() {
         // Auto-match imediato
         await db.reconciliation.create({
           data: {
-            workspaceId: DEMO_WORKSPACE_ID,
+            workspaceId,
             externalTransactionId: tx.id,
             installmentId: bestCandidate.candidateInstallmentId,
             status: "MATCHED",
@@ -199,7 +200,7 @@ export async function runAutomaticReconciliationEngine() {
         // Registrar sugestão
         await db.reconciliation.create({
           data: {
-            workspaceId: DEMO_WORKSPACE_ID,
+            workspaceId,
             externalTransactionId: tx.id,
             installmentId: bestCandidate.candidateInstallmentId,
             status: "SUGGESTED",

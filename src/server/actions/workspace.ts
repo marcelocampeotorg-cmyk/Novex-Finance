@@ -2,11 +2,12 @@
 
 import { db } from "@/server/db";
 import { BalanceSummaryMock } from "@/types";
-
-const DEMO_WORKSPACE_ID = "ws-personal-demo";
+import { requireAuthenticatedWorkspace } from "@/server/auth-context";
 
 export async function getWorkspaceSummary(): Promise<BalanceSummaryMock> {
   try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+
     // Buscar todas as parcelas ativas do mês atual
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -15,7 +16,7 @@ export async function getWorkspaceSummary(): Promise<BalanceSummaryMock> {
     const installments = await db.installment.findMany({
       where: {
         financialItem: {
-          workspaceId: DEMO_WORKSPACE_ID,
+          workspaceId,
           deletedAt: null,
         },
         dueDate: {
@@ -51,7 +52,7 @@ export async function getWorkspaceSummary(): Promise<BalanceSummaryMock> {
     // Buscar transações imutáveis importadas
     const unmatchesCount = await db.externalTransaction.count({
       where: {
-        workspaceId: DEMO_WORKSPACE_ID,
+        workspaceId,
         reconciliations: {
           none: {
             status: "MATCHED",

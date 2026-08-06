@@ -1,18 +1,16 @@
 import { db } from "@/server/db";
 
-const DEMO_WORKSPACE_ID = "ws-personal-demo";
-
 /**
  * Processador automático de Regras de Recorrência
  * Gera a nova ocorrência financeira no banco quando a data `nextRunAt` for atingida
  */
-export async function processRecurrenceRulesJob() {
+export async function processRecurrenceRulesJob(targetWorkspaceId?: string) {
   try {
     const now = new Date();
 
     const dueRules = await db.recurrenceRule.findMany({
       where: {
-        workspaceId: DEMO_WORKSPACE_ID,
+        ...(targetWorkspaceId ? { workspaceId: targetWorkspaceId } : {}),
         active: true,
         nextRunAt: {
           lte: now,
@@ -28,7 +26,7 @@ export async function processRecurrenceRulesJob() {
 
       await db.financialItem.create({
         data: {
-          workspaceId: DEMO_WORKSPACE_ID,
+          workspaceId: rule.workspaceId,
           direction: "PAYABLE",
           kind: "RECURRING",
           title: `Ocorrência Recorrente (${nextRun.toLocaleDateString("pt-BR", { month: "long" })})`,

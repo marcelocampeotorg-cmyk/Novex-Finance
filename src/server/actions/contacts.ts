@@ -2,14 +2,15 @@
 
 import { db } from "@/server/db";
 import { revalidatePath } from "next/cache";
-
-const DEMO_WORKSPACE_ID = "ws-personal-demo";
+import { requireAuthenticatedWorkspace } from "@/server/auth-context";
 
 export async function getContacts() {
   try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+
     const contacts = await db.contact.findMany({
       where: {
-        workspaceId: DEMO_WORKSPACE_ID,
+        workspaceId,
         deletedAt: null,
       },
       include: {
@@ -74,9 +75,11 @@ export async function createContact(input: {
   pixKeyType?: "CPF" | "CNPJ" | "EMAIL" | "PHONE" | "RANDOM";
 }) {
   try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+
     const newContact = await db.contact.create({
       data: {
-        workspaceId: DEMO_WORKSPACE_ID,
+        workspaceId,
         name: input.name,
         type: input.type,
         document: input.document,
