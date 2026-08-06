@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: novex_web
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - APP_URL=http://localhost:3000
+      - DATABASE_URL=postgresql://novex:novex_dev_password@postgres:5432/novex_finance
+      - REDIS_URL=redis://redis:6379
+      - AUTH_SECRET=novex_dev_secret_key_change_in_production_32chars
+      - CREDENTIALS_ENCRYPTION_KEY=novex_dev_encryption_key_32chars_long
+      - MERCADO_PAGO_ACCESS_TOKEN=REMOVIDO
+      - MERCADO_PAGO_WEBHOOK_SECRET=REMOVIDO
+      - UPLOADS_DIR=/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - uploads_data:/app/uploads
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: novex_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: novex
+      POSTGRES_PASSWORD: novex_dev_password
+      POSTGRES_DB: novex_finance
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U novex -d novex_finance"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: novex_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+    driver: local
+  uploads_data:
+    driver: local

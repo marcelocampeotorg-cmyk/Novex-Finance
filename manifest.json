@@ -1,0 +1,30 @@
+{
+  "name": "NOVEX Finance Pessoal — Master Blueprint",
+  "version": "1.0.0",
+  "date": "2026-08-06",
+  "language": "pt-BR",
+  "source_of_truth": "15_DECISOES_CONFIRMADAS.md",
+  "immediate_milestones": [
+    "Marco 0 — Fundação",
+    "Marco 1 — Interface navegável"
+  ],
+  "stack": [
+    "Next.js",
+    "TypeScript",
+    "PostgreSQL",
+    "Prisma",
+    "Redis",
+    "BullMQ/equivalente",
+    "Docker"
+  ],
+  "integration": "Mercado Pago",
+  "preview_required": "http://localhost:3000",
+  "erpnext_allowed": false,
+  "screens": [
+    "01_dashboard_inicial.png",
+    "02_contas_a_pagar.png",
+    "03_devedores_contas_a_receber.png",
+    "04_modal_nova_conta.png",
+    "05_lembretes_recorrencias.png"
+  ]
+}

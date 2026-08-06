@@ -1,0 +1,11 @@
+PACOTE OFICIAL DE BRANDING NOVEXBR
+
+Conteúdo:
+- IDENTIDADE_VISUAL_NOVEXBR.md
+- brand_manifest_novexbr.json
+- MANIFESTO_ASSETS.md
+- PROMPT_ANTIGRAVITY.txt
+- assets_oficiais/
+
+Envie o arquivo ZIP inteiro ao Antigravity junto com a instrução:
+“Leia todo o pacote antes de editar qualquer arquivo do projeto. Os assets oficiais prevalecem sobre interpretações ou SVGs provisórios.”

@@ -1,0 +1,123 @@
+{
+  "schema_version": "1.0",
+  "brand": {
+    "name": "NOVEXBR",
+    "product_name": "NOVEX Finance",
+    "locale": "pt-BR",
+    "style_concept": "dark-first premium",
+    "visual_keywords": [
+      "tecnológico",
+      "premium",
+      "moderno",
+      "metal escovado",
+      "obsidian",
+      "ciano elétrico",
+      "alto contraste",
+      "limpo",
+      "sofisticado"
+    ]
+  },
+  "rules": {
+    "official_assets_are_authoritative": true,
+    "must_not_redraw_logo": true,
+    "must_not_distort_logo": true,
+    "must_preserve_original_proportions": true,
+    "must_preserve_original_colors": true,
+    "must_use_portuguese_brazil": true,
+    "must_not_modify_frappe_or_erpnext_core": true,
+    "must_not_use_provisional_svg_as_final": true
+  },
+  "assets": [
+    {
+      "original_file": "ChatGPT Image 22 de jun. de 2026, 22_58_00 (1)-Photoroom(2).png",
+      "packaged_file": "assets_oficiais/novex_symbol_original.png",
+      "role": "Símbolo isolado oficial",
+      "uses": [
+        "favicon",
+        "sidebar recolhida",
+        "splash",
+        "loader",
+        "ícone compacto"
+      ],
+      "format": "PNG",
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "has_transparency": true
+    },
+    {
+      "original_file": "logo-novexbr-original(2).png",
+      "packaged_file": "assets_oficiais/novex_login_background_original.png",
+      "role": "Composição oficial completa com fundo escuro tecnológico",
+      "uses": [
+        "tela de login",
+        "referência visual",
+        "splash institucional"
+      ],
+      "format": "PNG",
+      "width": 1254,
+      "height": 1254,
+      "mode": "RGBA",
+      "has_transparency": true
+    },
+    {
+      "original_file": "ChatGPT Image 22 de jun. de 2026, 22_58_00 (2)-Photoroom(2).png",
+      "packaged_file": "assets_oficiais/novex_logo_horizontal_original.png",
+      "role": "Logo horizontal oficial NOVEXBR",
+      "uses": [
+        "navbar",
+        "sidebar expandida",
+        "cabeçalhos",
+        "login"
+      ],
+      "format": "PNG",
+      "width": 1672,
+      "height": 941,
+      "mode": "RGBA",
+      "has_transparency": true
+    }
+  ],
+  "palette": {
+    "background": "#0B0E14",
+    "surface_1": "#12172B",
+    "surface_2": "#1E2638",
+    "border": "#2A354D",
+    "cyan_primary": "#00E5FF",
+    "cyan_hover": "#00B8D4",
+    "cyan_active": "#00838F",
+    "text_primary": "#F1F5F9",
+    "text_secondary": "#94A3B8",
+    "text_disabled": "#64748B",
+    "success": "#10B981",
+    "warning": "#F59E0B",
+    "error": "#EF4444",
+    "info": "#3B82F6"
+  },
+  "ui_mapping": {
+    "login": {
+      "background_asset": "assets_oficiais/novex_login_background_original.png",
+      "logo_asset": "assets_oficiais/novex_logo_horizontal_original.png"
+    },
+    "navbar": {
+      "asset": "assets_oficiais/novex_logo_horizontal_original.png"
+    },
+    "sidebar_expanded": {
+      "asset": "assets_oficiais/novex_logo_horizontal_original.png"
+    },
+    "sidebar_collapsed": {
+      "asset": "assets_oficiais/novex_symbol_original.png"
+    },
+    "favicon": {
+      "asset": "assets_oficiais/novex_symbol_original.png"
+    }
+  },
+  "implementation_constraints": {
+    "custom_app_only": true,
+    "app_name": "novex_finance",
+    "branch": "feat/marco1-branding",
+    "no_merge_without_visual_approval": true,
+    "no_tag_without_visual_approval": true,
+    "preserve_native_modules": true,
+    "preserve_reversibility": true
+  }
+}

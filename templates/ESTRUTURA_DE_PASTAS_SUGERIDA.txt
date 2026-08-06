@@ -1,0 +1,26 @@
+novex-finance/
+├── docs/
+│   └── blueprint/
+├── prisma/
+│   ├── schema.prisma
+│   └── migrations/
+├── public/
+│   └── brand/
+├── src/
+│   ├── app/
+│   ├── components/
+│   ├── features/
+│   ├── domain/
+│   ├── application/
+│   ├── infrastructure/
+│   ├── integrations/
+│   │   └── mercado-pago/
+│   ├── jobs/
+│   ├── lib/
+│   └── test/
+├── Dockerfile
+├── compose.yml
+├── compose.dev.yml
+├── .env.example
+├── package.json
+└── README.md
