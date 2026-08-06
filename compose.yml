@@ -17,8 +17,8 @@ services:
       - REDIS_URL=redis://redis:6379
       - AUTH_SECRET=novex_dev_secret_key_change_in_production_32chars
       - ALLOW_PUBLIC_SIGNUP=false
-      - DEV_SEED_EMAIL=frank@novexfinance.local
-      - DEV_SEED_PASSWORD=123456
+      - DEV_SEED_EMAIL=franklinjr18@hotmail.com
+      - DEV_SEED_PASSWORD=Novexbr159===
       - CREDENTIALS_ENCRYPTION_KEY=novex_dev_encryption_key_32chars_long
       - MERCADO_PAGO_ACCESS_TOKEN=REMOVIDO
       - MERCADO_PAGO_WEBHOOK_SECRET=REMOVIDO
