@@ -1,0 +1,205 @@
+if (typeof window !== "undefined") {
+  throw new Error("SERVER_ONLY_ERROR: O cliente da Orders API só pode ser executado no servidor.");
+}
+
+export interface CreatePixOrderInput {
+  accessToken: string;
+  amountCents: number;
+  externalReference: string;
+  idempotencyKey: string;
+  payerEmail: string;
+  description?: string;
+  expirationMinutes?: number;
+}
+
+export interface CreatePixOrderResult {
+  success: boolean;
+  orderId?: string;
+  status?: string;
+  qrCode?: string;
+  ticketUrl?: string;
+  expiresAt?: string;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+export interface GetOrderResult {
+  success: boolean;
+  orderId?: string;
+  status?: string;
+  isPaid?: boolean;
+  amountCents?: number;
+  paidAt?: string;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+/**
+ * Converte valor em centavos (BigInt/number) para string decimal formatada "0.00" determinística.
+ */
+export function centsToDecimalString(amountCents: number | bigint): string {
+  const cents = typeof amountCents === "bigint" ? Number(amountCents) : amountCents;
+  if (isNaN(cents) || cents <= 0) {
+    throw new Error("VALOR_INVALIDO: O valor em centavos deve ser maior que zero.");
+  }
+  return (cents / 100).toFixed(2);
+}
+
+/**
+ * Cria uma Order de Cobrança Pix no Mercado Pago via POST https://api.mercadopago.com/v1/orders
+ * Exige X-Idempotency-Key única e persistente.
+ */
+export async function createPixOrder(input: CreatePixOrderInput): Promise<CreatePixOrderResult> {
+  const { accessToken, amountCents, externalReference, idempotencyKey, payerEmail, expirationMinutes = 30 } = input;
+
+  if (!accessToken || !accessToken.trim()) {
+    return { success: false, errorCode: "MISSING_TOKEN", errorMessage: "Access Token não informado." };
+  }
+
+  if (!idempotencyKey || !idempotencyKey.trim()) {
+    return { success: false, errorCode: "MISSING_IDEMPOTENCY_KEY", errorMessage: "Chave de idempotência necessária." };
+  }
+
+  if (!payerEmail || !payerEmail.includes("@")) {
+    return {
+      success: false,
+      errorCode: "INVALID_PAYER_EMAIL",
+      errorMessage: "O devedor/pagador deve possuir um e-mail válido para cobrança via Orders API.",
+    };
+  }
+
+  const decimalAmount = centsToDecimalString(amountCents);
+
+  // Calcula data de expiração ISO 8601
+  const expDate = new Date(Date.now() + expirationMinutes * 60 * 1000);
+  const expirationIso = expDate.toISOString();
+
+  const payload = {
+    type: "online",
+    total_amount: decimalAmount,
+    external_reference: externalReference,
+    processing_mode: "automatic",
+    transactions: {
+      payments: [
+        {
+          amount: decimalAmount,
+          payment_method: {
+            id: "pix",
+            type: "bank_transfer",
+          },
+          expiration_time: expirationIso,
+        },
+      ],
+    },
+    payer: {
+      email: payerEmail.trim(),
+    },
+  };
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+  try {
+    const response = await fetch("https://api.mercadopago.com/v1/orders", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken.trim()}`,
+        "Content-Type": "application/json",
+        "X-Idempotency-Key": idempotencyKey.trim(),
+        Accept: "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    const data = await response.json();
+
+    if (response.status === 201 || response.status === 200) {
+      const paymentData = data.transactions?.payments?.[0];
+      const qrCode = paymentData?.point_of_interaction?.transaction_data?.qr_code || data.qr_code || undefined;
+      const ticketUrl = paymentData?.ticket_url || data.ticket_url || undefined;
+
+      return {
+        success: true,
+        orderId: String(data.id || data.order_id),
+        status: data.status || "PENDING",
+        qrCode,
+        ticketUrl,
+        expiresAt: expirationIso,
+      };
+    }
+
+    // Tratamento de erros
+    const errorMessage = data.message || data.error || `Erro HTTP ${response.status} na API Orders`;
+    return {
+      success: false,
+      errorCode: `HTTP_${response.status}`,
+      errorMessage,
+    };
+  } catch (error: any) {
+    clearTimeout(timeoutId);
+    if (error.name === "AbortError") {
+      return { success: false, errorCode: "TIMEOUT", errorMessage: "Tempo limite de 10s excedido ao criar Order." };
+    }
+    return { success: false, errorCode: "NETWORK_ERROR", errorMessage: "Falha de conectividade com a API de Orders." };
+  }
+}
+
+/**
+ * Consulta o status oficial da Order no Mercado Pago via GET https://api.mercadopago.com/v1/orders/{orderId}
+ */
+export async function getOrderById(input: { accessToken: string; orderId: string }): Promise<GetOrderResult> {
+  const { accessToken, orderId } = input;
+
+  if (!accessToken || !orderId) {
+    return { success: false, errorCode: "INVALID_PARAMS", errorMessage: "Parâmetros inválidos para consulta da Order." };
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+  try {
+    const response = await fetch(`https://api.mercadopago.com/v1/orders/${orderId}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken.trim()}`,
+        Accept: "application/json",
+      },
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    const data = await response.json();
+
+    if (response.status === 200) {
+      const status = String(data.status || "").toUpperCase();
+      const isPaid = status === "PAID" || status === "PROCESSED" || status === "CLOSED" || data.payments?.[0]?.status === "approved";
+
+      const paymentObj = data.payments?.[0];
+      const paidAt = paymentObj?.date_approved || data.date_created || new Date().toISOString();
+
+      return {
+        success: true,
+        orderId: String(data.id),
+        status,
+        isPaid,
+        paidAt,
+      };
+    }
+
+    return {
+      success: false,
+      errorCode: `HTTP_${response.status}`,
+      errorMessage: data.message || `Erro ${response.status} ao consultar Order.`,
+    };
+  } catch (error: any) {
+    clearTimeout(timeoutId);
+    if (error.name === "AbortError") {
+      return { success: false, errorCode: "TIMEOUT", errorMessage: "Timeout ao consultar Order." };
+    }
+    return { success: false, errorCode: "NETWORK_ERROR", errorMessage: "Erro de rede ao consultar Order." };
+  }
+}

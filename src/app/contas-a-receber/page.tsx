@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { PixChargeModal } from "@/components/ui/PixChargeModal";
+import { ReceivablePixChargeModal } from "@/components/modals/ReceivablePixChargeModal";
 import { NewAccountModal } from "@/components/ui/NewAccountModal";
 import { Search, Plus, QrCode, Eye, ArrowDownLeft, Send } from "lucide-react";
 import { MOCK_RECEIVABLES } from "@/mocks/financial-data";
@@ -13,6 +13,7 @@ import { InstallmentMock } from "@/types";
 export default function ContasAReceberPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedInstallment, setSelectedInstallment] = useState<InstallmentMock | null>(null);
+  const [selectedItemTitle, setSelectedItemTitle] = useState("");
   const [debtorName, setDebtorName] = useState("");
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
 
@@ -25,11 +26,11 @@ export default function ContasAReceberPage() {
     <div className="space-y-6 animate-in fade-in duration-300">
       <PageHeader
         title="Contas a Receber"
-        description="Cobranças Pix Mercado Pago, controle de entradas previstas e acertos de devedores."
+        description="Cobranças Pix Mercado Pago Orders, controle de entradas previstas e acertos de devedores."
         actions={
           <button
             onClick={() => setIsNewModalOpen(true)}
-            className="flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-600 transition-colors shadow-sm"
+            className="flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-600 transition-colors shadow-sm cursor-pointer"
           >
             <Plus className="h-4 w-4 stroke-[2.5]" />
             <span>Nova Conta a Receber</span>
@@ -101,13 +102,14 @@ export default function ContasAReceberPage() {
                     {inst.status !== "SETTLED" && (
                       <button
                         onClick={() => {
-                          setDebtorName(item.contact?.name || "");
+                          setSelectedItemTitle(item.title);
+                          setDebtorName(item.contact?.name || "Devedor");
                           setSelectedInstallment(inst);
                         }}
-                        className="flex items-center gap-1 rounded bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-500 transition-colors"
+                        className="flex items-center gap-1 rounded bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-500 transition-colors cursor-pointer"
                       >
                         <QrCode className="h-3 w-3" />
-                        <span>Gerar Pix</span>
+                        <span>Cobrar via Pix</span>
                       </button>
                     )}
                   </div>
@@ -118,13 +120,18 @@ export default function ContasAReceberPage() {
         ))}
       </div>
 
-      {/* Modais */}
-      <PixChargeModal
-        isOpen={!!selectedInstallment}
-        onClose={() => setSelectedInstallment(null)}
-        installment={selectedInstallment}
-        debtorName={debtorName}
-      />
+      {/* Modal de Cobrança Pix via Orders API */}
+      {selectedInstallment && (
+        <ReceivablePixChargeModal
+          isOpen={!!selectedInstallment}
+          onClose={() => setSelectedInstallment(null)}
+          installmentId={selectedInstallment.id}
+          amountCents={selectedInstallment.amountCents}
+          title={selectedItemTitle || "Cobrança de Recebível"}
+          debtorName={debtorName}
+          dueDate={selectedInstallment.dueDate}
+        />
+      )}
 
       <NewAccountModal
         isOpen={isNewModalOpen}
