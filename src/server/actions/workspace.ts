@@ -8,25 +8,12 @@ export async function getWorkspaceSummary(): Promise<BalanceSummaryMock> {
   try {
     const { workspaceId } = await requireAuthenticatedWorkspace();
 
-    // Buscar todas as parcelas ativas do mês atual
     const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
-
     const installments = await db.installment.findMany({
       where: {
-        financialItem: {
-          workspaceId,
-          deletedAt: null,
-        },
-        dueDate: {
-          gte: startOfMonth,
-          lte: endOfMonth,
-        },
+        financialItem: { workspaceId, deletedAt: null },
       },
-      include: {
-        financialItem: true,
-      },
+      include: { financialItem: true },
     });
 
     let totalPayableMonthCents = 0;
@@ -38,9 +25,7 @@ export async function getWorkspaceSummary(): Promise<BalanceSummaryMock> {
       if (inst.financialItem.direction === "PAYABLE") {
         if (inst.status !== "SETTLED" && inst.status !== "CANCELED") {
           totalPayableMonthCents += remainingCents;
-          if (inst.dueDate < now) {
-            totalOverdueCents += remainingCents;
-          }
+          if (inst.dueDate < now) totalOverdueCents += remainingCents;
         }
       } else {
         if (inst.status !== "SETTLED" && inst.status !== "CANCELED") {
@@ -49,21 +34,37 @@ export async function getWorkspaceSummary(): Promise<BalanceSummaryMock> {
       }
     });
 
-    // Buscar transações imutáveis importadas
     const unmatchesCount = await db.externalTransaction.count({
-      where: {
-        workspaceId,
-        reconciliations: {
-          none: {
-            status: "MATCHED",
-          },
-        },
-      },
+      where: { workspaceId, reconciliations: { none: { status: "MATCHED" } } },
     });
 
-    const currentBalanceCents = 1485050; // Snapshot/Cache de saldo sincronizado Mercado Pago (em centavos)
-    const projectedBalanceCents =
-      currentBalanceCents + totalReceivableMonthCents - totalPayableMonthCents;
+    const mpIntegration = await db.integrationAccount.findFirst({
+      where: { workspaceId, provider: "MERCADO_PAGO" },
+    });
+
+    let currentBalanceCents = 0;
+    let syncSource: "SINCRONIZADO" | "CALCULADO" = "CALCULADO";
+    let accountDisplayName = "Conta Local";
+    let lastSyncAt = new Date().toISOString();
+
+    if (mpIntegration) {
+      syncSource = "SINCRONIZADO";
+      accountDisplayName = mpIntegration.displayName || "Mercado Pago";
+      if (mpIntegration.lastSyncAt) lastSyncAt = mpIntegration.lastSyncAt.toISOString();
+
+      // Para refletir o saldo das transações do Mercado Pago de forma provisória antes da conciliação
+      const txs = await db.externalTransaction.findMany({
+        where: { workspaceId, integrationAccountId: mpIntegration.id },
+      });
+      let balance = 0;
+      for (const tx of txs) {
+        if (tx.direction === "CREDIT") balance += Number(tx.amountCents);
+        if (tx.direction === "DEBIT") balance -= Number(tx.amountCents);
+      }
+      currentBalanceCents = balance;
+    }
+
+    const projectedBalanceCents = currentBalanceCents + totalReceivableMonthCents - totalPayableMonthCents;
 
     return {
       currentBalanceCents,
@@ -71,27 +72,175 @@ export async function getWorkspaceSummary(): Promise<BalanceSummaryMock> {
       totalPayableMonthCents,
       totalReceivableMonthCents,
       totalOverdueCents,
-      totalDebtorsOwedCents: 580000,
-      lastSyncAt: new Date().toISOString(),
-      syncSource: "SINCRONIZADO",
-      accountDisplayName: "Mercado Pago — Frank (Conta Principal)",
+      totalDebtorsOwedCents: 0,
+      lastSyncAt,
+      syncSource,
+      accountDisplayName,
       unresolvedTransactionsCount: unmatchesCount,
-      uncategorizedCount: 1,
+      uncategorizedCount: 0,
     };
   } catch (error) {
-    console.error("Erro ao calcular resumo do workspace:", error);
+    console.error("Erro ao calcular resumo:", error);
     return {
-      currentBalanceCents: 1485050,
-      projectedBalanceCents: 2132050,
-      totalPayableMonthCents: 425000,
-      totalReceivableMonthCents: 1072000,
-      totalOverdueCents: 35000,
-      totalDebtorsOwedCents: 580000,
+      currentBalanceCents: 0,
+      projectedBalanceCents: 0,
+      totalPayableMonthCents: 0,
+      totalReceivableMonthCents: 0,
+      totalOverdueCents: 0,
+      totalDebtorsOwedCents: 0,
       lastSyncAt: new Date().toISOString(),
-      syncSource: "SINCRONIZADO",
-      accountDisplayName: "Mercado Pago — Frank (Conta Principal)",
-      unresolvedTransactionsCount: 2,
-      uncategorizedCount: 1,
+      syncSource: "CALCULADO",
+      accountDisplayName: "Erro",
+      unresolvedTransactionsCount: 0,
+      uncategorizedCount: 0,
     };
+  }
+}
+
+export async function getWorkspaceName() {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+    const ws = await db.workspace.findUnique({ where: { id: workspaceId } });
+    return { success: true, name: ws?.name || "Novex Finance" };
+  } catch (err) {
+    return { success: false, name: "Novex Finance", error: String(err) };
+  }
+}
+
+export async function updateWorkspaceName(data: { name: string }) {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+    await db.workspace.update({ where: { id: workspaceId }, data: { name: data.name } });
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+}
+
+export async function setManualInitialBalance(targetBalanceCents: number) {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+    const mpIntegration = await db.integrationAccount.findFirst({
+      where: { workspaceId, provider: "MERCADO_PAGO" },
+    });
+
+    if (!mpIntegration) {
+      return { success: false, error: "Nenhuma integração conectada." };
+    }
+
+    // Exclui ajustes manuais antigos para não acumular
+    await db.externalTransaction.deleteMany({
+      where: {
+        workspaceId,
+        externalId: { startsWith: "SALDO_INICIAL_" },
+      },
+    });
+
+    // Recalcula soma atual das transações sem o ajuste antigo
+    const credit = await db.externalTransaction.aggregate({
+      _sum: { amountCents: true },
+      where: { workspaceId, direction: "CREDIT" },
+    });
+    const debit = await db.externalTransaction.aggregate({
+      _sum: { amountCents: true },
+      where: { workspaceId, direction: "DEBIT" },
+    });
+
+    const currentSum = (Number(credit._sum.amountCents) || 0) - (Number(debit._sum.amountCents) || 0);
+    const diff = targetBalanceCents - currentSum;
+
+    if (diff !== 0) {
+      const isCredit = diff > 0;
+      const amountCents = Math.abs(diff);
+
+      await db.externalTransaction.create({
+        data: {
+          workspaceId,
+          integrationAccountId: mpIntegration.id,
+          provider: "MERCADO_PAGO",
+          externalId: "SALDO_INICIAL_" + Date.now(),
+          type: "TRANSFER",
+          direction: isCredit ? "CREDIT" : "DEBIT",
+          amountCents,
+          netAmountCents: amountCents,
+          status: "APPROVED",
+          occurredAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+          description: "Ajuste de Saldo Inicial (Manual)",
+          rawReference: "{}",
+        },
+      });
+    }
+
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
+}
+
+export async function getDashboardData() {
+  const summary = await getWorkspaceSummary();
+  const { workspaceId } = await requireAuthenticatedWorkspace();
+
+  const txs = await db.externalTransaction.findMany({
+    where: { workspaceId },
+    orderBy: { occurredAt: "desc" },
+    take: 10,
+    include: { reconciliations: { orderBy: { createdAt: "desc" }, take: 1 } },
+  });
+
+  const recentTransactions = txs.map(tx => ({
+    id: tx.id,
+    direction: tx.direction,
+    amountCents: Number(tx.amountCents),
+    description: tx.description,
+    counterpartName: tx.counterpartName,
+    category: "Movimentação", // simplificado para não precisar do async categorize
+    reconciliationStatus: tx.reconciliations[0]?.status || "UNMATCHED",
+  }));
+
+  // Chart data: agrupar por mês
+  const now = new Date();
+  const chartData = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const monthName = d.toLocaleString('pt-BR', { month: 'short' });
+    
+    // Sum for this month
+    const monthTxs = await db.externalTransaction.findMany({
+      where: {
+        workspaceId,
+        occurredAt: {
+          gte: new Date(d.getFullYear(), d.getMonth(), 1),
+          lt: new Date(d.getFullYear(), d.getMonth() + 1, 1),
+        }
+      }
+    });
+
+    let entradas = 0;
+    let saidas = 0;
+    monthTxs.forEach(t => {
+      if (t.type !== "TRANSFER") {
+        if (t.direction === "CREDIT") entradas += Number(t.amountCents) / 100;
+        if (t.direction === "DEBIT") saidas += Number(t.amountCents) / 100;
+      }
+    });
+
+    chartData.push({
+      month: monthName.charAt(0).toUpperCase() + monthName.slice(1),
+      entradas,
+      saídas: saidas,
+    });
+  }
+
+  return { summary, recentTransactions, chartData };
+}
+
+export async function triggerMercadoPagoSync() {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+    const { syncMercadoPago } = await import('./mercadopago-sync');
+    return await syncMercadoPago(workspaceId);
+  } catch (error) {
+    return { success: false, error: String(error) };
   }
 }

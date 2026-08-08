@@ -1,15 +1,18 @@
 "use client";
 
-import React, { useState } from "react";
-import { QrCode, Copy, Check, X, ShieldAlert, ArrowRight } from "lucide-react";
+import React, { useState, useMemo } from "react";
+import { QrCode, Copy, Check, X, ShieldAlert, ArrowRight, AlertCircle } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import { InstallmentMock } from "@/types";
+import { QRCodeSVG } from "qrcode.react";
+import { generatePixPayload } from "@/lib/pix";
 
 interface PaymentDialogProps {
   isOpen: boolean;
   onClose: () => void;
   installment: InstallmentMock | null;
   accountTitle: string;
+  pixKey?: string;
 }
 
 export const PaymentDialog: React.FC<PaymentDialogProps> = ({
@@ -17,17 +20,27 @@ export const PaymentDialog: React.FC<PaymentDialogProps> = ({
   onClose,
   installment,
   accountTitle,
+  pixKey,
 }) => {
   const [copied, setCopied] = useState(false);
   const [simulatedStatus, setSimulatedStatus] = useState<"PENDING" | "PROCESSING" | "SETTLED">("PENDING");
 
+  // Pix Copia e Cola Gerado via BACEN EMV
+  const pixPayload = useMemo(() => {
+    if (!pixKey || !installment) return "";
+    return generatePixPayload({
+      pixKey: pixKey,
+      amount: installment.amountCents / 100,
+      merchantName: "Novex",
+      merchantCity: "Sao Paulo",
+      txId: installment.uniqueReference.substring(0, 25),
+    });
+  }, [pixKey, installment]);
+
   if (!isOpen || !installment) return null;
 
-  // Pix Copia e Cola simulado para pagamento via Mercado Pago
-  const mockPixPayload = `00020126580014br.gov.bcb.pix0136${installment.uniqueReference}520400005303986540${(installment.amountCents / 100).toFixed(2)}5802BR5920NOVEX FINANCE PIX6009SAO PAULO62070503***6304ABCD`;
-
   const handleCopy = () => {
-    navigator.clipboard.writeText(mockPixPayload);
+    navigator.clipboard.writeText(pixPayload);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -90,25 +103,21 @@ export const PaymentDialog: React.FC<PaymentDialogProps> = ({
 
             {/* Simulação do QR Code Pix */}
             <div className="flex flex-col items-center justify-center rounded-lg bg-white p-4 text-slate-900 border border-novex-border">
-              <div className="w-44 h-44 bg-zinc-100 border-4 border-slate-900 p-2 flex flex-col items-center justify-center relative">
-                {/* Visual SVG Simulado de QR Code */}
-                <div className="grid grid-cols-6 gap-1 w-full h-full">
-                  {Array.from({ length: 36 }).map((_, i) => (
-                    <div
-                      key={i}
-                      className={`${
-                        (i * 7) % 3 === 0 ? "bg-slate-900" : "bg-transparent"
-                      } rounded-xs`}
-                    />
-                  ))}
+              {pixPayload ? (
+                <>
+                  <QRCodeSVG value={pixPayload} size={180} />
+                  <span className="text-[10px] text-slate-600 mt-2 font-medium text-center">
+                    Escaneie com o app do seu banco
+                  </span>
+                </>
+              ) : (
+                <div className="w-44 h-44 bg-zinc-100 flex flex-col items-center justify-center text-center p-4">
+                  <AlertCircle className="h-8 w-8 text-slate-400 mb-2" />
+                  <span className="text-xs font-semibold text-slate-500">
+                    Chave Pix não vinculada
+                  </span>
                 </div>
-                <span className="absolute bg-slate-900 text-cyan-400 font-mono text-[9px] px-1 py-0.5 rounded font-bold">
-                  PIX DEMO
-                </span>
-              </div>
-              <span className="text-[10px] text-slate-600 mt-2 font-medium">
-                Escaneie com o app do Mercado Pago
-              </span>
+              )}
             </div>
 
             {/* Pix Copia e Cola */}
@@ -120,25 +129,18 @@ export const PaymentDialog: React.FC<PaymentDialogProps> = ({
                 <input
                   type="text"
                   readOnly
-                  value={mockPixPayload}
+                  value={pixPayload || "Nenhuma chave Pix encontrada para este favorecido."}
                   className="w-full rounded-lg border border-novex-border bg-novex-bg py-2 px-3 text-xs text-novex-text-muted font-mono truncate"
                 />
                 <button
                   onClick={handleCopy}
-                  className="flex items-center gap-1.5 rounded-lg bg-novex-cyan px-3 py-2 text-xs font-semibold text-novex-bg hover:bg-novex-cyan-hover transition-colors shrink-0"
+                  disabled={!pixPayload}
+                  className="flex items-center gap-1.5 rounded-lg bg-novex-cyan px-3 py-2 text-xs font-semibold text-novex-bg hover:bg-novex-cyan-hover transition-colors shrink-0 disabled:opacity-50"
                 >
                   {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                   <span>{copied ? "Copiado!" : "Copiar"}</span>
                 </button>
               </div>
-            </div>
-
-            {/* Alerta de Fluxo Real */}
-            <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3 text-[11px] text-amber-300 flex items-start gap-2.5">
-              <ShieldAlert className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
-              <span>
-                <strong>Modo Demonstrativo:</strong> O NOVEX gera o QR Code Pix com identificador único. Após você pagar no app do seu banco, a sincronização reconhece a saída e atualiza o painel automaticamente.
-              </span>
             </div>
 
             {/* Botão para Simular Confirmação no Teste */}

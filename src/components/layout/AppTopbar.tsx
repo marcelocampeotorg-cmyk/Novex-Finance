@@ -2,14 +2,26 @@
 
 import React, { useState } from "react";
 import { RefreshCw, Plus, Search, CheckCircle2, User, LogOut } from "lucide-react";
-import { MOCK_BALANCE_SUMMARY } from "@/mocks/financial-data";
+
 import { NewAccountModal } from "@/components/ui/NewAccountModal";
 import { authClient } from "@/lib/auth-client";
 
 export const AppTopbar: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isNewAccountOpen, setIsNewAccountOpen] = useState(false);
-  const [lastSync, setLastSync] = useState(MOCK_BALANCE_SUMMARY.lastSyncAt);
+  const [summary, setSummary] = useState<{ syncSource: string; accountDisplayName: string; lastSyncAt: string } | null>(null);
+
+  React.useEffect(() => {
+    import("@/server/actions/workspace").then(({ getWorkspaceSummary }) => {
+      getWorkspaceSummary().then((res) => {
+        setSummary({
+          syncSource: res.syncSource,
+          accountDisplayName: res.accountDisplayName,
+          lastSyncAt: res.lastSyncAt,
+        });
+      });
+    });
+  }, []);
 
   const handleLogout = async () => {
     await authClient.signOut({
@@ -21,12 +33,23 @@ export const AppTopbar: React.FC = () => {
     });
   };
 
-  const handleSync = () => {
+  const handleSync = async () => {
     setIsSyncing(true);
-    setTimeout(() => {
+    try {
+      const { triggerMercadoPagoSync, getWorkspaceSummary } = await import("@/server/actions/workspace");
+      await triggerMercadoPagoSync();
+      const res = await getWorkspaceSummary();
+      setSummary({
+        syncSource: res.syncSource,
+        accountDisplayName: res.accountDisplayName,
+        lastSyncAt: res.lastSyncAt,
+      });
+      window.location.reload(); // Atualiza toda a tela para refletir o novo saldo
+    } catch (e) {
+      console.error(e);
+    } finally {
       setIsSyncing(false);
-      setLastSync(new Date().toISOString());
-    }, 1200);
+    }
   };
 
   return (
@@ -49,14 +72,16 @@ export const AppTopbar: React.FC = () => {
           {/* Status de Sincronização Mercado Pago */}
           <div className="hidden sm:flex items-center gap-2.5 rounded-lg border border-novex-border bg-novex-surface2/80 px-3 py-1.5 text-xs">
             <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-            <div className="flex flex-col">
-              <span className="font-medium text-novex-text-primary text-[11px]">
-                {MOCK_BALANCE_SUMMARY.syncSource}
-              </span>
-              <span className="text-[10px] text-novex-text-muted">
-                {MOCK_BALANCE_SUMMARY.accountDisplayName}
-              </span>
-            </div>
+            {summary && (
+              <div className="flex flex-col">
+                <span className="font-medium text-novex-text-primary text-[11px]">
+                  {summary.syncSource}
+                </span>
+                <span className="text-[10px] text-novex-text-muted">
+                  {summary.accountDisplayName}
+                </span>
+              </div>
+            )}
             <button
               onClick={handleSync}
               disabled={isSyncing}

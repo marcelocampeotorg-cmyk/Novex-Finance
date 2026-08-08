@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PaymentDialog } from "@/components/ui/PaymentDialog";
@@ -16,8 +16,9 @@ import {
   Paperclip,
   ArrowUpRight,
   CheckCircle2,
+  Edit3,
 } from "lucide-react";
-import { MOCK_PAYABLES } from "@/mocks/financial-data";
+
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import { FinancialItemMock, InstallmentMock } from "@/types";
 
@@ -27,9 +28,28 @@ export default function ContasAPagarPage() {
   const [selectedDrawerItem, setSelectedDrawerItem] = useState<FinancialItemMock | null>(null);
   const [paymentInstallment, setPaymentInstallment] = useState<InstallmentMock | null>(null);
   const [paymentAccountTitle, setPaymentAccountTitle] = useState("");
+  const [paymentPixKey, setPaymentPixKey] = useState<string | undefined>();
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<FinancialItemMock | null>(null);
+  const [payablesList, setPayablesList] = useState<FinancialItemMock[]>([]);
 
-  const filteredPayables = MOCK_PAYABLES.filter((item) => {
+  const loadItems = async () => {
+    const { getFinancialItems } = await import("@/server/actions/financial-items");
+    const items = await getFinancialItems("PAYABLE");
+    setPayablesList(items as unknown as FinancialItemMock[]);
+  };
+
+  useEffect(() => {
+    loadItems();
+    import("@/services/financial-store").then(({ subscribeFinancialStore }) => {
+      const unsubscribe = subscribeFinancialStore(() => {
+        loadItems();
+      });
+      return () => unsubscribe();
+    });
+  }, []);
+
+  const filteredPayables = payablesList.filter((item) => {
     const matchesSearch =
       item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (item.contact?.name && item.contact.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
@@ -47,7 +67,10 @@ export default function ContasAPagarPage() {
         description="Gerenciamento de obrigações financeiras, vencimentos, parcelas e pagamento Pix via Mercado Pago."
         actions={
           <button
-            onClick={() => setIsNewModalOpen(true)}
+            onClick={() => {
+              setEditingItem(null);
+              setIsNewModalOpen(true);
+            }}
             className="flex items-center gap-2 rounded-lg bg-novex-cyan px-4 py-2 text-xs font-semibold text-novex-bg hover:bg-novex-cyan-hover transition-colors shadow-sm glow-cyan-subtle"
           >
             <Plus className="h-4 w-4 stroke-[2.5]" />
@@ -106,7 +129,15 @@ export default function ContasAPagarPage() {
               {filteredPayables.map((item) => {
                 const inst = item.installments[0];
                 return (
-                  <tr key={item.id} className="hover:bg-novex-surface2/40 transition-colors">
+                  <tr
+                    key={item.id}
+                    onDoubleClick={() => {
+                      setEditingItem(item);
+                      setIsNewModalOpen(true);
+                    }}
+                    title="Clique 2 vezes para editar a conta"
+                    className="hover:bg-novex-surface2/40 transition-colors cursor-pointer"
+                  >
                     <td className="py-4 px-4">
                       <div className="font-semibold text-novex-text-primary flex items-center gap-2">
                         <span>{item.title}</span>
@@ -148,6 +179,16 @@ export default function ContasAPagarPage() {
                     <td className="py-4 px-4 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <button
+                          onClick={() => {
+                            setEditingItem(item);
+                            setIsNewModalOpen(true);
+                          }}
+                          className="rounded p-1.5 text-novex-text-muted hover:bg-novex-surface2 hover:text-novex-cyan transition-colors"
+                          title="Editar conta"
+                        >
+                          <Edit3 className="h-4 w-4" />
+                        </button>
+                        <button
                           onClick={() => setSelectedDrawerItem(item)}
                           className="rounded p-1.5 text-novex-text-muted hover:bg-novex-surface2 hover:text-novex-text-primary transition-colors"
                           title="Ver detalhes"
@@ -158,14 +199,29 @@ export default function ContasAPagarPage() {
                           <button
                             onClick={() => {
                               setPaymentAccountTitle(item.title);
+                              setPaymentPixKey(item.pixKey);
                               setPaymentInstallment(inst);
                             }}
-                            className="flex items-center gap-1.5 rounded-lg bg-novex-cyan px-3 py-1.5 text-xs font-semibold text-novex-bg hover:bg-novex-cyan-hover transition-colors"
+                            className="rounded bg-novex-cyan/10 px-2.5 py-1.5 text-[11px] font-bold text-novex-cyan hover:bg-novex-cyan/20 transition-colors flex items-center gap-1.5"
                           >
                             <QrCode className="h-3.5 w-3.5" />
                             <span>Pagar</span>
                           </button>
                         )}
+                        <button
+                          onClick={async () => {
+                            if (confirm(`Tem certeza que deseja excluir permanentemente a conta "${item.title}"?`)) {
+                              const { deleteFinancialItem } = await import("@/server/actions/financial-items");
+                              await deleteFinancialItem(item.id);
+                              const { notifyStoreChange } = await import("@/services/financial-store");
+                              notifyStoreChange();
+                            }
+                          }}
+                          className="rounded p-1.5 text-novex-text-muted hover:bg-red-500/20 hover:text-red-400 transition-colors"
+                          title="Excluir conta"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -182,6 +238,7 @@ export default function ContasAPagarPage() {
         onClose={() => setPaymentInstallment(null)}
         installment={paymentInstallment}
         accountTitle={paymentAccountTitle}
+        pixKey={paymentPixKey}
       />
 
       <AccountDetailsDrawer
@@ -191,13 +248,26 @@ export default function ContasAPagarPage() {
         onPayClick={(inst) => {
           setSelectedDrawerItem(null);
           setPaymentAccountTitle(selectedDrawerItem?.title || "");
+          setPaymentPixKey(selectedDrawerItem?.pixKey || undefined);
           setPaymentInstallment(inst);
+        }}
+        onDelete={async (targetItem) => {
+          const { deleteFinancialItem } = await import("@/server/actions/financial-items");
+          await deleteFinancialItem(targetItem.id);
+          const { notifyStoreChange } = await import("@/services/financial-store");
+          notifyStoreChange();
+          setSelectedDrawerItem(null);
         }}
       />
 
       <NewAccountModal
         isOpen={isNewModalOpen}
-        onClose={() => setIsNewModalOpen(false)}
+        onClose={() => {
+          setIsNewModalOpen(false);
+          setEditingItem(null);
+        }}
+        editItem={editingItem}
+        defaultDirection="PAYABLE"
       />
     </div>
   );

@@ -56,8 +56,13 @@ export async function requireUser() {
   const userId = session.user.id;
 
   try {
-    const user = await db.user.findUnique({
-      where: { id: userId },
+    const user = await db.user.findFirst({
+      where: { 
+        OR: [
+          { id: userId },
+          { email: session.user.email }
+        ]
+      },
     });
 
     if (user && user.status === "ACTIVE") {

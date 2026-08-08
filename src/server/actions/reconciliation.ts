@@ -15,7 +15,7 @@ export interface ReconciliationScoreResult {
 /**
  * Calcula a pontuação de conciliação entre uma movimentação importada e uma parcela prevista
  */
-export function calculateReconciliationScore(
+export async function calculateReconciliationScore(
   tx: {
     direction: "CREDIT" | "DEBIT";
     amountCents: number;
@@ -32,7 +32,7 @@ export function calculateReconciliationScore(
     contactName?: string;
     uniqueReference?: string;
   }
-): ReconciliationScoreResult {
+): Promise<ReconciliationScoreResult> {
   const reasons: string[] = [];
   let score = 0;
 
@@ -94,7 +94,7 @@ export function calculateReconciliationScore(
 /**
  * Regra de categorização automática baseada em texto da descrição
  */
-export function categorizeTransactionDescription(description: string): string {
+export async function categorizeTransactionDescription(description: string): Promise<string> {
   const descLower = description.toLowerCase();
 
   if (descLower.includes("posto") || descLower.includes("shell") || descLower.includes("ipiranga") || descLower.includes("uber")) {
@@ -128,7 +128,7 @@ export async function runAutomaticReconciliationEngine() {
         workspaceId,
         reconciliations: {
           none: {
-            status: "MATCHED",
+            status: { in: ["MATCHED", "IGNORED"] },
           },
         },
       },
@@ -155,7 +155,7 @@ export async function runAutomaticReconciliationEngine() {
       let bestCandidate: ReconciliationScoreResult | null = null;
 
       for (const inst of activeInstallments) {
-        const result = calculateReconciliationScore(
+        const result = await calculateReconciliationScore(
           {
             direction: tx.direction,
             amountCents: Number(tx.amountCents),
@@ -195,28 +195,157 @@ export async function runAutomaticReconciliationEngine() {
         });
 
         await settleInstallment(bestCandidate.candidateInstallmentId, Number(tx.amountCents));
-        autoMatchedCount++;
-      } else if (bestCandidate && bestCandidate.recommendation === "SUGGESTED" && bestCandidate.candidateInstallmentId) {
-        // Registrar sugestão
-        await db.reconciliation.create({
+
+        await db.ledgerEntry.create({
           data: {
             workspaceId,
             externalTransactionId: tx.id,
             installmentId: bestCandidate.candidateInstallmentId,
-            status: "SUGGESTED",
-            score: bestCandidate.score,
-            reasons: bestCandidate.reasons,
-            matchedBy: "SYSTEM",
+            direction: tx.direction,
+            amountCents: tx.amountCents,
+            occurredAt: tx.occurredAt,
+            sourceType: "AUTO_RECONCILIATION",
           },
         });
+
+        autoMatchedCount++;
+      } else if (bestCandidate && bestCandidate.recommendation === "SUGGESTED" && bestCandidate.candidateInstallmentId) {
+        // Registrar ou atualizar sugestão existente
+        const existingSuggestion = await db.reconciliation.findFirst({
+          where: {
+            workspaceId,
+            externalTransactionId: tx.id,
+            status: "SUGGESTED",
+          },
+        });
+
+        if (!existingSuggestion) {
+          await db.reconciliation.create({
+            data: {
+              workspaceId,
+              externalTransactionId: tx.id,
+              installmentId: bestCandidate.candidateInstallmentId,
+              status: "SUGGESTED",
+              score: bestCandidate.score,
+              reasons: bestCandidate.reasons,
+              matchedBy: "SYSTEM",
+            },
+          });
+        }
       }
     }
 
     revalidatePath("/movimentacoes");
+    revalidatePath("/contas-a-pagar");
+    revalidatePath("/contas-a-receber");
+    revalidatePath("/relatorios");
     revalidatePath("/");
     return { success: true, autoMatchedCount };
   } catch (error: any) {
     console.error("Erro no motor de conciliação automática:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Confirmar uma sugestão de conciliação feita pelo sistema
+ */
+export async function confirmSuggestedMatch(reconciliationId: string) {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+
+    const rec = await db.reconciliation.findFirst({
+      where: { id: reconciliationId, workspaceId },
+      include: { externalTransaction: true },
+    });
+
+    if (!rec || !rec.installmentId || !rec.externalTransaction) {
+      return { success: false, error: "Sugestão de conciliação não encontrada." };
+    }
+
+    await db.reconciliation.update({
+      where: { id: reconciliationId },
+      data: {
+        status: "MATCHED",
+        matchedBy: "USER",
+        matchedAt: new Date(),
+      },
+    });
+
+    await settleInstallment(rec.installmentId, Number(rec.externalTransaction.amountCents));
+
+    await db.ledgerEntry.create({
+      data: {
+        workspaceId,
+        externalTransactionId: rec.externalTransactionId,
+        installmentId: rec.installmentId,
+        direction: rec.externalTransaction.direction,
+        amountCents: rec.externalTransaction.amountCents,
+        occurredAt: rec.externalTransaction.occurredAt,
+        sourceType: "CONFIRMED_SUGGESTION",
+        sourceId: rec.id,
+      },
+    });
+
+    revalidatePath("/movimentacoes");
+    revalidatePath("/contas-a-pagar");
+    revalidatePath("/contas-a-receber");
+    revalidatePath("/relatorios");
+    revalidatePath("/");
+
+    return { success: true };
+  } catch (error: any) {
+    console.error("Erro ao confirmar sugestão:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Reverter/Desconciliar uma movimentação
+ */
+export async function unmatchTransaction(reconciliationId: string) {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+
+    const rec = await db.reconciliation.findFirst({
+      where: { id: reconciliationId, workspaceId },
+      include: { installment: true },
+    });
+
+    if (!rec) {
+      return { success: false, error: "Registro de conciliação não encontrado." };
+    }
+
+    await db.reconciliation.update({
+      where: { id: reconciliationId },
+      data: {
+        status: "REVERSED",
+        reversedAt: new Date(),
+      },
+    });
+
+    if (rec.installmentId && rec.installment) {
+      // Retornar status da parcela para SCHEDULED ou OVERDUE conforme data de vencimento
+      const isOverdue = new Date() > rec.installment.dueDate;
+      await db.installment.update({
+        where: { id: rec.installmentId },
+        data: {
+          status: isOverdue ? "OVERDUE" : "SCHEDULED",
+          settlementDate: null,
+          settledAmountCents: 0,
+        },
+      });
+    }
+
+    revalidatePath("/movimentacoes");
+    revalidatePath("/contas-a-pagar");
+    revalidatePath("/contas-a-receber");
+    revalidatePath("/relatorios");
+    revalidatePath("/");
+
+    return { success: true };
+  } catch (error: any) {
+    console.error("Erro ao desconciliar transação:", error);
     return { success: false, error: error.message };
   }
 }

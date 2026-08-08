@@ -65,6 +65,7 @@ enum InstallmentStatus {
 
 enum IntegrationProvider {
   MERCADO_PAGO
+  EVOLUTION_API
 }
 
 enum TransactionDirection {

@@ -39,19 +39,27 @@ export const MetricCard: React.FC<MetricCardProps> = ({
   return (
     <div
       className={cn(
-        "relative overflow-hidden rounded-xl border p-5 transition-all hover:border-novex-cyan/50",
+        "relative overflow-hidden rounded-xl border p-5 transition-all hover:border-novex-cyan/50 flex flex-col justify-between",
         getVariantStyles(),
         className
       )}
     >
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-novex-text-secondary">{title}</span>
-        <div className="rounded-lg bg-novex-surface2/80 p-2 text-current border border-novex-border/50">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex flex-col gap-1">
+          <span className="text-sm font-medium text-novex-text-secondary leading-tight">{title}</span>
+          {badgeText && (
+            <span className="inline-self-start self-start rounded bg-novex-cyan/10 px-2 py-0.5 text-[10px] font-semibold text-novex-cyan border border-novex-cyan/30 mt-0.5">
+              {badgeText}
+            </span>
+          )}
+        </div>
+
+        <div className="rounded-lg bg-novex-surface2/80 p-2 text-current border border-novex-border/50 shrink-0">
           <Icon className="h-5 w-5" />
         </div>
       </div>
 
-      <div className="mt-3">
+      <div className="mt-4">
         <div className="text-2xl font-bold tracking-tight text-novex-text-primary">
           {formatCurrency(amountCents)}
         </div>
@@ -61,12 +69,6 @@ export const MetricCard: React.FC<MetricCardProps> = ({
           </p>
         )}
       </div>
-
-      {badgeText && (
-        <span className="absolute top-3 right-12 rounded bg-novex-cyan/10 px-2 py-0.5 text-[10px] font-semibold text-novex-cyan border border-novex-cyan/30">
-          {badgeText}
-        </span>
-      )}
     </div>
   );
 };

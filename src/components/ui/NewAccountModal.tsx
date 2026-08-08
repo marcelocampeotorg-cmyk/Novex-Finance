@@ -4,35 +4,45 @@ import React, { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { X, Plus, Trash2, Calendar, DollarSign, Tag, User, Repeat, Bell, ShieldCheck } from "lucide-react";
-import { MOCK_CONTACTS } from "@/mocks/financial-data";
-import { formatCurrency } from "@/lib/formatters";
+import { X, QrCode, Info, CheckCircle2 } from "lucide-react";
+
 
 const newAccountSchema = z.object({
   direction: z.enum(["PAYABLE", "RECEIVABLE"]),
   kind: z.enum(["ONE_TIME", "INSTALLMENT_PLAN", "RECURRING"]),
   title: z.string().min(3, "Título deve ter no mínimo 3 caracteres"),
   description: z.string().optional(),
-  contactId: z.string().min(1, "Selecione ou informe um contato"),
+  contactName: z.string().min(2, "Digite o nome do contato ou favorecido"),
   category: z.string().min(1, "Selecione uma categoria"),
   totalAmount: z.coerce.number().min(0.01, "Informe um valor maior que R$ 0,00"),
   startDate: z.string().min(1, "Selecione a data de vencimento ou início"),
   installmentsCount: z.coerce.number().min(1).max(60).default(1),
-  frequency: z.enum(["MONTHLY", "WEEKLY", "YEARLY"]).optional(),
+  frequency: z.enum(["DAILY", "WEEKLY", "BIWEEKLY", "MONTHLY", "YEARLY"]).optional(),
   pixKey: z.string().optional(),
 });
 
 type NewAccountFormData = z.infer<typeof newAccountSchema>;
 
+import { FinancialItemMock } from "@/types";
+
 interface NewAccountModalProps {
   isOpen: boolean;
   onClose: () => void;
+  editItem?: FinancialItemMock | null;
+  defaultDirection?: "PAYABLE" | "RECEIVABLE";
 }
 
-export const NewAccountModal: React.FC<NewAccountModalProps> = ({ isOpen, onClose }) => {
+export const NewAccountModal: React.FC<NewAccountModalProps> = ({
+  isOpen,
+  onClose,
+  editItem,
+  defaultDirection = "PAYABLE",
+}) => {
   const [installmentsList, setInstallmentsList] = useState<
     { sequence: number; amount: number; dueDate: string }[]
   >([]);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [isCustomCategory, setIsCustomCategory] = useState(false);
 
   const {
     register,
@@ -44,16 +54,17 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({ isOpen, onClos
   } = useForm<NewAccountFormData>({
     resolver: zodResolver(newAccountSchema),
     defaultValues: {
-      direction: "PAYABLE",
+      direction: defaultDirection,
       kind: "ONE_TIME",
       title: "",
       description: "",
-      contactId: MOCK_CONTACTS[0].id,
+      contactName: "",
       category: "Moradia",
       totalAmount: 100,
       startDate: new Date().toISOString().split("T")[0],
       installmentsCount: 1,
       frequency: "MONTHLY",
+      pixKey: "",
     },
   });
 
@@ -62,17 +73,74 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({ isOpen, onClos
   const totalAmount = watch("totalAmount");
   const startDate = watch("startDate");
   const installmentsCount = watch("installmentsCount");
+  const frequency = watch("frequency");
 
-  // Recalcular parcelas quando o tipo for parcelado
   React.useEffect(() => {
-    if (kind === "INSTALLMENT_PLAN" && totalAmount > 0 && installmentsCount > 0) {
+    if (isOpen) {
+      setSuccessMessage(null);
+      if (editItem) {
+        reset({
+          direction: editItem.direction,
+          kind: editItem.kind,
+          title: editItem.title,
+          description: editItem.description || "",
+          contactName: editItem.contact?.name || "",
+          category: editItem.category || "Moradia",
+          totalAmount: editItem.totalAmountCents / 100,
+          startDate: editItem.startDate ? editItem.startDate.split("T")[0] : new Date().toISOString().split("T")[0],
+          installmentsCount: editItem.installments?.length || 1,
+          frequency: "MONTHLY",
+          pixKey: editItem.pixKey || "",
+        });
+
+        if (editItem.installments && editItem.installments.length > 0) {
+          setInstallmentsList(
+            editItem.installments.map((inst) => ({
+              sequence: inst.sequence,
+              amount: inst.amountCents / 100,
+              dueDate: inst.dueDate ? inst.dueDate.split("T")[0] : new Date().toISOString().split("T")[0],
+            }))
+          );
+        }
+      } else {
+        reset({
+          direction: defaultDirection,
+          kind: "ONE_TIME",
+          title: "",
+          description: "",
+          contactName: "",
+          category: "Moradia",
+          totalAmount: 100,
+          startDate: new Date().toISOString().split("T")[0],
+          installmentsCount: 1,
+          frequency: "MONTHLY",
+          pixKey: "",
+        });
+        setInstallmentsList([]);
+      }
+    }
+  }, [isOpen, editItem, defaultDirection, reset]);
+
+  React.useEffect(() => {
+    if (!editItem && kind === "INSTALLMENT_PLAN" && totalAmount > 0 && installmentsCount > 0) {
       const perInstallment = Number((totalAmount / installmentsCount).toFixed(2));
       const list = [];
       const baseDate = startDate ? new Date(startDate) : new Date();
 
       for (let i = 0; i < installmentsCount; i++) {
         const d = new Date(baseDate);
-        d.setMonth(d.getMonth() + i);
+        if (frequency === "DAILY") {
+          d.setDate(d.getDate() + i);
+        } else if (frequency === "WEEKLY") {
+          d.setDate(d.getDate() + (i * 7));
+        } else if (frequency === "BIWEEKLY") {
+          d.setDate(d.getDate() + (i * 14));
+        } else if (frequency === "YEARLY") {
+          d.setFullYear(d.getFullYear() + i);
+        } else {
+          d.setMonth(d.getMonth() + i);
+        }
+        
         list.push({
           sequence: i + 1,
           amount: perInstallment,
@@ -81,33 +149,115 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({ isOpen, onClos
       }
       setInstallmentsList(list);
     }
-  }, [kind, totalAmount, installmentsCount, startDate]);
+  }, [kind, totalAmount, installmentsCount, startDate, frequency, editItem]);
+
+  const handleCloseModal = () => {
+    reset();
+    setInstallmentsList([]);
+    onClose();
+  };
 
   if (!isOpen) return null;
 
-  const onSubmit = (data: NewAccountFormData) => {
-    console.log("Nova conta criada (Local state mock):", data, installmentsList);
-    alert(`Sucesso! ${data.direction === "PAYABLE" ? "Conta a pagar" : "Conta a receber"} "${data.title}" cadastrada.`);
-    reset();
-    onClose();
+  const onSubmit = async (data: NewAccountFormData) => {
+    try {
+      const finalInstallments =
+        data.kind === "INSTALLMENT_PLAN" && installmentsList.length > 0
+          ? installmentsList.map((inst) => ({
+              sequence: inst.sequence,
+              amountCents: Math.round(inst.amount * 100),
+              dueDate: inst.dueDate,
+            }))
+          : [
+              {
+                sequence: 1,
+                amountCents: Math.round(data.totalAmount * 100),
+                dueDate: data.startDate,
+              },
+            ];
+
+      if (editItem) {
+        const { updateFinancialItem } = await import("@/server/actions/financial-items");
+        const res = await updateFinancialItem({
+          id: editItem.id,
+          direction: data.direction,
+          kind: data.kind,
+          title: data.title,
+          description: data.description,
+          contactName: data.contactName,
+          pixKey: data.pixKey,
+          categoryName: data.category,
+          totalAmountCents: Math.round(data.totalAmount * 100),
+          startDate: data.startDate,
+          installments: finalInstallments,
+        });
+
+        if (!res.success) {
+          throw new Error((res as any).error || "Erro desconhecido ao atualizar");
+        }
+      } else {
+        const { createFinancialItem } = await import("@/server/actions/financial-items");
+        const res = await createFinancialItem({
+          direction: data.direction,
+          kind: data.kind,
+          title: data.title,
+          description: data.description,
+          contactName: data.contactName,
+          pixKey: data.pixKey,
+          categoryName: data.category,
+          totalAmountCents: Math.round(data.totalAmount * 100),
+          startDate: data.startDate,
+          installments: finalInstallments,
+        });
+
+        if (!res.success) {
+          throw new Error((res as any).error || "Erro desconhecido ao salvar");
+        }
+      }
+
+      const { notifyStoreChange } = await import("@/services/financial-store");
+      notifyStoreChange();
+    } catch (err) {
+      console.warn("Erro ao salvar conta no banco de dados:", err);
+    }
+
+    setSuccessMessage(
+      `Sucesso! ${data.direction === "PAYABLE" ? "Conta a pagar" : "Conta a receber"} "${data.title}" (${data.contactName}) ${editItem ? "atualizada" : "cadastrada"} com sucesso.`
+    );
+    setTimeout(() => {
+      setSuccessMessage(null);
+      reset();
+      onClose();
+    }, 1200);
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
       <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl border border-novex-border bg-novex-surface1 p-6 shadow-2xl relative animate-in fade-in zoom-in duration-200">
         <button
-          onClick={onClose}
+          onClick={handleCloseModal}
           className="absolute top-4 right-4 text-novex-text-muted hover:text-novex-text-primary"
         >
           <X className="h-5 w-5" />
         </button>
 
         <div className="border-b border-novex-border pb-4 mb-6">
-          <h2 className="text-xl font-bold text-novex-text-primary">Cadastrar Nova Conta / Compromisso</h2>
+          <h2 className="text-xl font-bold text-novex-text-primary">
+            {editItem ? "Editar Conta / Compromisso" : "Cadastrar Nova Conta / Compromisso"}
+          </h2>
           <p className="text-xs text-novex-text-secondary mt-0.5">
-            Cadastre compromissos previstos a pagar ou a receber com parcelas variáveis e conciliação automática.
+            {editItem
+              ? "Altere os dados da conta ou compromisso selecionado."
+              : "Cadastre compromissos a pagar ou a receber com vinculação de Chave Pix para cobranças e pagamentos automáticos."}
           </p>
         </div>
+
+        {successMessage && (
+          <div className="mb-4 flex items-center gap-2 rounded-lg bg-emerald-500/20 p-3 text-xs text-emerald-300 border border-emerald-500/40">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            <span>{successMessage}</span>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-5 text-xs">
           {/* Seletor Pagar vs Receber */}
@@ -121,7 +271,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({ isOpen, onClos
                   : "text-novex-text-muted hover:text-novex-text-primary"
               }`}
             >
-              Conta a Pagar (Débito)
+              Conta a Pagar (Saída / Despesa)
             </button>
             <button
               type="button"
@@ -132,11 +282,11 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({ isOpen, onClos
                   : "text-novex-text-muted hover:text-novex-text-primary"
               }`}
             >
-              Conta a Receber (Crédito)
+              Conta a Receber (Entrada / Receita)
             </button>
           </div>
 
-          {/* Tipo de Obrigação: Avulsa, Parcelada, Recorrente */}
+          {/* Tipo de Obrigação */}
           <div className="grid grid-cols-3 gap-3">
             {[
               { id: "ONE_TIME", label: "Avulsa" },
@@ -164,53 +314,98 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({ isOpen, onClos
               <label className="font-semibold text-novex-text-secondary block mb-1">Título da Conta *</label>
               <input
                 {...register("title")}
-                placeholder="Ex: Aluguel, Servidor VPS, Consultoria"
+                placeholder="Ex: Pensão Alimentícia, Aluguel, Servidor"
                 className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-novex-text-primary focus:border-novex-cyan focus:outline-none"
               />
               {errors.title?.message && <span className="text-red-400 text-[10px] mt-1 block">{String(errors.title.message)}</span>}
             </div>
 
             <div>
-              <label className="font-semibold text-novex-text-secondary block mb-1">Contato / Favorecido *</label>
-              <select
-                {...register("contactId")}
+              <label className="font-semibold text-novex-text-secondary block mb-1">Contato / Favorecido (Digite o nome) *</label>
+              <input
+                {...register("contactName")}
+                placeholder="Digite o nome do contato, empresa ou pessoa..."
                 className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-novex-text-primary focus:border-novex-cyan focus:outline-none"
-              >
-                {MOCK_CONTACTS.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} ({c.type === "COMPANY" ? "PJ" : "PF"})
-                  </option>
-                ))}
-              </select>
+              />
+              {errors.contactName?.message && <span className="text-red-400 text-[10px] mt-1 block">{String(errors.contactName.message)}</span>}
             </div>
+          </div>
+
+          {/* Campo Chave Pix para Pagamento / Cobrança */}
+          <div className="rounded-lg border border-novex-border bg-novex-surface2/40 p-3 space-y-2">
+            <label className="font-semibold text-novex-cyan flex items-center gap-1.5">
+              <QrCode className="h-4 w-4" />
+              <span>Chave Pix do Favorecido / Recebedor (Opcional)</span>
+            </label>
+            <input
+              {...register("pixKey")}
+              placeholder="Cole aqui a Chave Pix (CPF, CNPJ, E-mail, Celular ou Aleatória)..."
+              className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-novex-text-primary font-mono focus:border-novex-cyan focus:outline-none"
+            />
+            <span className="text-[10px] text-novex-text-muted flex items-center gap-1">
+              <Info className="h-3 w-3 shrink-0 text-novex-cyan" />
+              <span>A Chave Pix informada será utilizada na emissão instantânea de QR Code e cobranças automatizadas.</span>
+            </span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="font-semibold text-novex-text-secondary block mb-1">Valor Total (R$) *</label>
               <input
-                type="number"
-                step="0.01"
-                {...register("totalAmount")}
-                className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-novex-text-primary focus:border-novex-cyan focus:outline-none"
+                type="text"
+                value={
+                  totalAmount > 0
+                    ? totalAmount.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                    : "0,00"
+                }
+                onChange={(e) => {
+                  const rawDigits = e.target.value.replace(/\D/g, "");
+                  const numericVal = Number(rawDigits) / 100;
+                  setValue("totalAmount", numericVal, { shouldValidate: true });
+                }}
+                placeholder="0,00"
+                className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 font-mono text-base font-bold text-novex-cyan focus:border-novex-cyan focus:outline-none"
               />
               {errors.totalAmount?.message && <span className="text-red-400 text-[10px] mt-1 block">{String(errors.totalAmount.message)}</span>}
             </div>
 
             <div>
-              <label className="font-semibold text-novex-text-secondary block mb-1">Categoria *</label>
-              <select
-                {...register("category")}
-                className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-novex-text-primary focus:border-novex-cyan focus:outline-none"
-              >
-                <option value="Moradia">Moradia</option>
-                <option value="Contas Básicas">Contas Básicas</option>
-                <option value="Serviços & Tech">Serviços & Tech</option>
-                <option value="Serviços Prestados">Serviços Prestados</option>
-                <option value="Transferências & Acertos">Transferências & Acertos</option>
-                <option value="Alimentação">Alimentação</option>
-                <option value="Transporte & Veículo">Transporte & Veículo</option>
-              </select>
+              <div className="flex items-center justify-between mb-1">
+                <label className="font-semibold text-novex-text-secondary block">Categoria *</label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsCustomCategory(!isCustomCategory);
+                    if (!isCustomCategory) setValue("category", "");
+                    else setValue("category", "Moradia");
+                  }}
+                  className="text-[10px] text-novex-cyan hover:underline font-medium"
+                >
+                  {isCustomCategory ? "← Escolher da lista" : "+ Digitar outra"}
+                </button>
+              </div>
+
+              {isCustomCategory ? (
+                <input
+                  {...register("category")}
+                  placeholder="Digite o nome da categoria..."
+                  className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-novex-text-primary focus:border-novex-cyan focus:outline-none"
+                />
+              ) : (
+                <select
+                  {...register("category")}
+                  className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-novex-text-primary focus:border-novex-cyan focus:outline-none"
+                >
+                  <option value="Pessoal">Pessoal</option>
+                  <option value="Moradia">Moradia</option>
+                  <option value="Contas Básicas">Contas Básicas</option>
+                  <option value="Serviços & Tech">Serviços & Tech</option>
+                  <option value="Serviços Prestados">Serviços Prestados</option>
+                  <option value="Transferências & Acertos">Transferências & Acertos</option>
+                  <option value="Alimentação">Alimentação</option>
+                  <option value="Transporte & Veículo">Transporte & Veículo</option>
+                </select>
+              )}
             </div>
 
             <div>
@@ -222,6 +417,23 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({ isOpen, onClos
               />
             </div>
           </div>
+
+          {/* Frequência (Para Parceladas e Recorrentes) */}
+          {(kind === "INSTALLMENT_PLAN" || kind === "RECURRING") && (
+            <div>
+              <label className="font-semibold text-novex-text-secondary block mb-1">Frequência da Movimentação *</label>
+              <select
+                {...register("frequency")}
+                className="w-full rounded-lg border border-novex-border bg-novex-surface2/40 p-2.5 text-novex-text-primary focus:border-novex-cyan focus:outline-none"
+              >
+                <option value="DAILY">Diário</option>
+                <option value="WEEKLY">Semanal</option>
+                <option value="BIWEEKLY">Quinzenal</option>
+                <option value="MONTHLY">Mensal</option>
+                <option value="YEARLY">Anual</option>
+              </select>
+            </div>
+          )}
 
           {/* Configuração de Parcelamento se for Parcelada */}
           {kind === "INSTALLMENT_PLAN" && (
@@ -240,7 +452,6 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({ isOpen, onClos
                 </div>
               </div>
 
-              {/* Lista de Parcelas Editáveis */}
               <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
                 {installmentsList.map((inst, idx) => (
                   <div key={idx} className="flex items-center gap-2 bg-novex-bg p-2 rounded border border-novex-border/60">
@@ -287,7 +498,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({ isOpen, onClos
           <div className="flex items-center justify-end gap-3 pt-4 border-t border-novex-border">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleCloseModal}
               className="rounded-lg border border-novex-border px-4 py-2.5 font-semibold text-novex-text-secondary hover:bg-novex-surface2"
             >
               Cancelar
@@ -297,7 +508,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({ isOpen, onClos
               disabled={isSubmitting}
               className="rounded-lg bg-novex-cyan px-6 py-2.5 font-semibold text-novex-bg hover:bg-novex-cyan-hover shadow-sm glow-cyan-subtle"
             >
-              Salvar Conta
+              {isSubmitting ? "Salvando..." : editItem ? "Salvar Alterações" : "Salvar Conta"}
             </button>
           </div>
         </form>

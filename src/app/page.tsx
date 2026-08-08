@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -19,16 +19,9 @@ import {
   ShieldCheck,
   CheckCircle2,
 } from "lucide-react";
-import {
-  MOCK_BALANCE_SUMMARY,
-  MOCK_PAYABLES,
-  MOCK_RECEIVABLES,
-  MOCK_CONTACTS,
-  MOCK_EXTERNAL_TRANSACTIONS,
-  MOCK_CHART_DATA,
-} from "@/mocks/financial-data";
+
 import { formatCurrency, formatDate } from "@/lib/formatters";
-import { FinancialItemMock, InstallmentMock } from "@/types";
+import { FinancialItemMock, InstallmentMock, BalanceSummaryMock } from "@/types";
 import {
   ResponsiveContainer,
   BarChart,
@@ -44,10 +37,46 @@ export default function DashboardPage() {
   const [selectedDrawerItem, setSelectedDrawerItem] = useState<FinancialItemMock | null>(null);
   const [paymentInstallment, setPaymentInstallment] = useState<InstallmentMock | null>(null);
   const [paymentAccountTitle, setPaymentAccountTitle] = useState("");
+  const [mpConnected, setMpConnected] = useState(false);
+  const [summary, setSummary] = useState<BalanceSummaryMock | null>(null);
+  const [chartData, setChartData] = useState<any[]>([]);
+  const [recentTxs, setRecentTxs] = useState<any[]>([]);
+  const [payables, setPayables] = useState<any[]>([]);
+  const [debtorsCount, setDebtorsCount] = useState<number>(0);
+
+  useEffect(() => {
+    import("@/server/actions/integrations").then(({ getMercadoPagoIntegrationStatus }) => {
+      getMercadoPagoIntegrationStatus().then((res) => {
+        setMpConnected(res.isConnected);
+      }).catch(() => setMpConnected(false));
+    });
+
+    import("@/server/actions/workspace").then(({ getDashboardData }) => {
+      getDashboardData().then((res) => {
+        setSummary(res.summary);
+        setChartData(res.chartData);
+        setRecentTxs(res.recentTransactions);
+      }).catch(() => setSummary(null));
+    });
+  }, []);
 
   const handleOpenPayment = (item: FinancialItemMock, inst: InstallmentMock) => {
     setPaymentAccountTitle(item.title);
     setPaymentInstallment(inst);
+  };
+
+  const displaySummary = summary || {
+    currentBalanceCents: 0,
+    projectedBalanceCents: 0,
+    totalPayableMonthCents: 0,
+    totalReceivableMonthCents: 0,
+    totalOverdueCents: 0,
+    totalDebtorsOwedCents: 0,
+    lastSyncAt: new Date().toISOString(),
+    syncSource: "N/A",
+    accountDisplayName: "-",
+    unresolvedTransactionsCount: 0,
+    uncategorizedCount: 0,
   };
 
   return (
@@ -58,7 +87,7 @@ export default function DashboardPage() {
         actions={
           <div className="flex items-center gap-2 text-xs text-novex-text-secondary bg-novex-surface1 px-3 py-1.5 rounded-lg border border-novex-border">
             <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-            <span>Último sync: {formatDate(MOCK_BALANCE_SUMMARY.lastSyncAt)}</span>
+            <span>Último sync: {formatDate(displaySummary.lastSyncAt)}</span>
           </div>
         }
       />
@@ -66,34 +95,34 @@ export default function DashboardPage() {
       {/* Grid de Cards Métricos Principais */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         <MetricCard
-          title="Saldo Atual Mercado Pago"
-          amountCents={MOCK_BALANCE_SUMMARY.currentBalanceCents}
-          subtitle={`Fonte: ${MOCK_BALANCE_SUMMARY.syncSource}`}
+          title="Saldo Atual"
+          amountCents={displaySummary.currentBalanceCents}
+          subtitle={mpConnected ? "Sincronizado via Mercado Pago API" : "Conta Local"}
           icon={Wallet}
           variant="cyan"
-          badgeText="Sincronizado"
+          badgeText={mpConnected ? "Conectado MP" : "Não Conectado"}
         />
 
         <MetricCard
           title="Saldo Projetado no Mês"
-          amountCents={MOCK_BALANCE_SUMMARY.projectedBalanceCents}
+          amountCents={displaySummary.projectedBalanceCents}
           subtitle="Saldo + Recebimentos - Pagamentos"
           icon={TrendingUp}
           variant="default"
         />
 
         <MetricCard
-          title="Total a Pagar no Mês"
-          amountCents={MOCK_BALANCE_SUMMARY.totalPayableMonthCents}
-          subtitle="3 compromissos pendentes"
+          title="Total a Pagar (Pendente)"
+          amountCents={displaySummary.totalPayableMonthCents}
+          subtitle="Geral pendente em aberto"
           icon={ArrowUpRight}
           variant="default"
         />
 
         <MetricCard
-          title="Total a Receber no Mês"
-          amountCents={MOCK_BALANCE_SUMMARY.totalReceivableMonthCents}
-          subtitle="2 clientes / devedores"
+          title="Total a Receber (Pendente)"
+          amountCents={displaySummary.totalReceivableMonthCents}
+          subtitle="Geral previsto a entrar"
           icon={ArrowDownLeft}
           variant="success"
         />
@@ -102,27 +131,31 @@ export default function DashboardPage() {
       {/* Grid de Avisos e Alertas Importantes */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Banner Vencimento Crítico */}
-        <div className="lg:col-span-2 rounded-xl border border-red-500/30 bg-gradient-to-r from-red-950/30 via-novex-surface1 to-novex-surface1 p-5 flex items-start gap-4 shadow-sm">
-          <div className="rounded-lg bg-red-500/20 p-2.5 text-red-400 border border-red-500/40 shrink-0">
+        <div className="lg:col-span-2 rounded-xl border border-novex-border bg-novex-surface1 p-5 flex items-start gap-4 shadow-sm">
+          <div className="rounded-lg bg-novex-cyan/10 p-2.5 text-novex-cyan border border-novex-cyan/30 shrink-0">
             <AlertTriangle className="h-6 w-6" />
           </div>
           <div className="flex-1">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-red-400">Aviso de Conta Vencida</h3>
-              <span className="text-xs font-bold text-red-400">
-                {formatCurrency(MOCK_BALANCE_SUMMARY.totalOverdueCents)}
+              <h3 className="text-sm font-bold text-novex-text-primary">Status Financeiro do Workspace</h3>
+              <span className="text-xs font-bold text-emerald-400">
+                {formatCurrency(displaySummary.currentBalanceCents)}
               </span>
             </div>
             <p className="text-xs text-novex-text-secondary mt-1">
-              A parcela da <strong>Conta de Energia Elétrica (Enel)</strong> venceu em 05/08/2026. Clique abaixo para pagar via QR Code Pix.
+              {payables.length > 0
+                ? "Existem contas cadastradas prontas para acompanhamento."
+                : "Nenhuma conta em atraso no momento. Clique em 'Nova Conta' para cadastrar seu primeiro lançamento real."}
             </p>
-            <button
-              onClick={() => handleOpenPayment(MOCK_PAYABLES[1], MOCK_PAYABLES[1].installments[0])}
-              className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-red-500 hover:bg-red-600 text-white px-3.5 py-1.5 text-xs font-semibold transition-colors"
-            >
-              <span>Pagar Pix Agora</span>
-              <ArrowRight className="h-3.5 w-3.5" />
-            </button>
+            {payables.length > 0 && payables[0]?.installments?.[0] && (
+              <button
+                onClick={() => handleOpenPayment(payables[0], payables[0].installments[0])}
+                className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-novex-cyan hover:bg-novex-cyan/90 text-novex-bg px-3.5 py-1.5 text-xs font-bold transition-colors"
+              >
+                <span>Pagar Pix Agora</span>
+                <ArrowRight className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -134,10 +167,10 @@ export default function DashboardPage() {
               <Users className="h-4 w-4 text-novex-cyan" />
             </div>
             <div className="text-2xl font-bold text-emerald-400">
-              {formatCurrency(MOCK_BALANCE_SUMMARY.totalDebtorsOwedCents)}
+              {formatCurrency(displaySummary.totalDebtorsOwedCents)}
             </div>
             <p className="text-xs text-novex-text-muted mt-1">
-              {MOCK_CONTACTS.filter((c) => c.isDebtor && (c.totalOwedCents || 0) > 0).length} devedor(es) com pendências ativas.
+              {debtorsCount} devedor(es) com pendências ativas.
             </p>
           </div>
           <a
@@ -163,7 +196,7 @@ export default function DashboardPage() {
 
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={MOCK_CHART_DATA} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#2A354D" vertical={false} />
                 <XAxis dataKey="month" stroke="#94A3B8" fontSize={12} tickLine={false} />
                 <YAxis stroke="#94A3B8" fontSize={12} tickLine={false} />
@@ -175,7 +208,7 @@ export default function DashboardPage() {
                     color: "#F1F5F9",
                     fontSize: "12px",
                   }}
-                  formatter={(value: any) => [`R$ ${value.toLocaleString("pt-BR")},00`, ""]}
+                  formatter={(value: any) => [`R$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`, ""]}
                 />
                 <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "10px" }} />
                 <Bar dataKey="entradas" fill="#10B981" radius={[4, 4, 0, 0]} name="Entradas" />
@@ -195,7 +228,7 @@ export default function DashboardPage() {
           </div>
 
           <div className="space-y-3 flex-1 overflow-y-auto max-h-[300px] pr-1">
-            {MOCK_EXTERNAL_TRANSACTIONS.map((tx) => (
+            {recentTxs.map((tx) => (
               <div
                 key={tx.id}
                 className="flex items-center justify-between p-3 rounded-lg border border-novex-border bg-novex-surface2/50 text-xs"
@@ -247,7 +280,7 @@ export default function DashboardPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-novex-border/60">
-              {MOCK_PAYABLES.map((item) => {
+              {payables.map((item) => {
                 const inst = item.installments[0];
                 return (
                   <tr key={item.id} className="hover:bg-novex-surface2/40 transition-colors">

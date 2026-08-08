@@ -6,6 +6,17 @@ Idioma: **Português do Brasil**
 
 Este pacote é a fonte de verdade para a criação do novo NOVEX Finance Pessoal. Ele consolida as decisões tomadas após o abandono da adaptação do ERPNext e descreve o produto, os fluxos, a arquitetura, o modelo de dados, a integração com Mercado Pago, a conciliação automática, o Docker, a segurança, os testes e a ordem de implementação.
 
+## ✨ Visão Geral de Funcionalidades
+
+- **Dashboard:** Visão consolidada (receitas, despesas, saldos e histórico).
+- **Gestão de Contas:** Controle de pendências, com suporte a parcelamentos e lançamentos recorrentes.
+- **Conciliação Bancária:** Integração oficial com **Mercado Pago** para sincronização automática de Pix, transferências, etc.
+- **Pagamentos via Pix (BACEN EMV):** Geração nativa e em tempo real do QR Code Pix (Copia e Cola) seguindo os rígidos padrões do Banco Central com cálculo de assinatura CRC16-CCITT, permitindo que a tela seja escaneada por qualquer app bancário.
+- **Motor de Notificações WhatsApp (Evolution API):** 
+  > ⚠️ **Status Atual:** Módulo em Pausa.
+  > A arquitetura deste módulo já está projetada para usar a Evolution API. Porém, como Webhooks externos não conseguem alcançar o servidor em testes locais fechados (`localhost`), a integração das mensagens está temporariamente pausada. O sistema entrará em operação real de disparo via WhatsApp somente quando publicarmos a aplicação na Fase 2 em um ambiente aberto (Servidor Cloud / VPS).
+- **Personalização:** Suporte a White Label e relatórios analíticos em gráficos.
+
 ## O que este pacote resolve
 
 - elimina contradições entre prompts anteriores;

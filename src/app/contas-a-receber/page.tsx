@@ -1,14 +1,14 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { ReceivablePixChargeModal } from "@/components/modals/ReceivablePixChargeModal";
 import { NewAccountModal } from "@/components/ui/NewAccountModal";
-import { Search, Plus, QrCode, Eye, ArrowDownLeft, Send } from "lucide-react";
-import { MOCK_RECEIVABLES } from "@/mocks/financial-data";
+import { Search, Plus, QrCode, Eye, ArrowDownLeft, Send, Trash2, Edit3 } from "lucide-react";
+
 import { formatCurrency, formatDate } from "@/lib/formatters";
-import { InstallmentMock } from "@/types";
+import { FinancialItemMock, InstallmentMock } from "@/types";
 
 export default function ContasAReceberPage() {
   const [searchTerm, setSearchTerm] = useState("");
@@ -16,8 +16,26 @@ export default function ContasAReceberPage() {
   const [selectedItemTitle, setSelectedItemTitle] = useState("");
   const [debtorName, setDebtorName] = useState("");
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<FinancialItemMock | null>(null);
+  const [receivablesList, setReceivablesList] = useState<FinancialItemMock[]>([]);
 
-  const filteredReceivables = MOCK_RECEIVABLES.filter((item) =>
+  const loadItems = async () => {
+    const { getFinancialItems } = await import("@/server/actions/financial-items");
+    const items = await getFinancialItems("RECEIVABLE");
+    setReceivablesList(items as unknown as FinancialItemMock[]);
+  };
+
+  useEffect(() => {
+    loadItems();
+    import("@/services/financial-store").then(({ subscribeFinancialStore }) => {
+      const unsubscribe = subscribeFinancialStore(() => {
+        loadItems();
+      });
+      return () => unsubscribe();
+    });
+  }, []);
+
+  const filteredReceivables = receivablesList.filter((item) =>
     item.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
     (item.contact?.name && item.contact.name.toLowerCase().includes(searchTerm.toLowerCase()))
   );
@@ -29,7 +47,10 @@ export default function ContasAReceberPage() {
         description="Cobranças Pix Mercado Pago Orders, controle de entradas previstas e acertos de devedores."
         actions={
           <button
-            onClick={() => setIsNewModalOpen(true)}
+            onClick={() => {
+              setEditingItem(null);
+              setIsNewModalOpen(true);
+            }}
             className="flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-600 transition-colors shadow-sm cursor-pointer"
           >
             <Plus className="h-4 w-4 stroke-[2.5]" />
@@ -57,7 +78,12 @@ export default function ContasAReceberPage() {
         {filteredReceivables.map((item) => (
           <div
             key={item.id}
-            className="rounded-xl border border-novex-border bg-novex-surface1 p-5 space-y-4 hover:border-emerald-500/50 transition-all"
+            onDoubleClick={() => {
+              setEditingItem(item);
+              setIsNewModalOpen(true);
+            }}
+            title="Dar 2 cliques para editar este recebível"
+            className="rounded-xl border border-novex-border bg-novex-surface1 p-5 space-y-4 hover:border-emerald-500/50 transition-all relative group cursor-pointer"
           >
             <div className="flex items-start justify-between">
               <div>
@@ -68,10 +94,38 @@ export default function ContasAReceberPage() {
                 <p className="text-xs text-novex-text-muted mt-1">{item.contact?.name}</p>
               </div>
 
-              <div className="text-right">
-                <span className="text-lg font-bold text-emerald-400">
-                  {formatCurrency(item.totalAmountCents)}
-                </span>
+              <div className="flex flex-col items-end gap-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-lg font-bold text-emerald-400">
+                    {formatCurrency(item.totalAmountCents)}
+                  </span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingItem(item);
+                      setIsNewModalOpen(true);
+                    }}
+                    className="p-1 text-novex-text-muted hover:bg-emerald-500/20 hover:text-emerald-400 rounded transition-colors"
+                    title="Editar recebível"
+                  >
+                    <Edit3 className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      if (confirm(`Tem certeza que deseja excluir permanentemente "${item.title}"?`)) {
+                        const { deleteFinancialItem } = await import("@/server/actions/financial-items");
+                        await deleteFinancialItem(item.id);
+                        const { notifyStoreChange } = await import("@/services/financial-store");
+                        notifyStoreChange();
+                      }
+                    }}
+                    className="p-1 text-novex-text-muted hover:bg-red-500/20 hover:text-red-400 rounded transition-colors"
+                    title="Excluir recebível"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
                 <span className="text-[10px] text-novex-text-muted block mt-0.5">
                   {item.installments.length} parcela(s)
                 </span>
@@ -135,7 +189,12 @@ export default function ContasAReceberPage() {
 
       <NewAccountModal
         isOpen={isNewModalOpen}
-        onClose={() => setIsNewModalOpen(false)}
+        onClose={() => {
+          setIsNewModalOpen(false);
+          setEditingItem(null);
+        }}
+        editItem={editingItem}
+        defaultDirection="RECEIVABLE"
       />
     </div>
   );

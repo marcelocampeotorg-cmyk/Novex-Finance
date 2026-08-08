@@ -25,9 +25,7 @@ export const navItems = [
   { label: "Início", href: "/", icon: LayoutDashboard },
   { label: "Contas a Pagar", href: "/contas-a-pagar", icon: ArrowUpRight },
   { label: "Contas a Receber", href: "/contas-a-receber", icon: ArrowDownLeft },
-  { label: "Devedores", href: "/devedores", icon: Users },
   { label: "Movimentações", href: "/movimentacoes", icon: ArrowRightLeft },
-  { label: "Recorrências", href: "/recorrencias", icon: Repeat },
   { label: "Lembretes", href: "/lembretes", icon: Bell },
   { label: "Relatórios", href: "/relatorios", icon: BarChart3 },
   { label: "Configurações", href: "/configuracoes", icon: Settings },
@@ -52,18 +50,17 @@ export const AppSidebar: React.FC = () => {
             <Image
               src="/brand/novex_symbol_original.png"
               alt="NOVEXBR"
-              width={36}
-              height={36}
-              className="object-contain"
+              width={32}
+              height={32}
+              className="h-8 w-auto object-contain"
             />
           ) : (
             <Image
               src="/brand/novex_logo_horizontal_original.png"
               alt="NOVEXBR Finance"
               width={160}
-              height={40}
-              priority
-              className="object-contain"
+              height={32}
+              className="h-8 w-auto max-w-[160px] object-contain"
             />
           )}
         </Link>

@@ -15,7 +15,7 @@ export async function getFinancialItems(direction?: "PAYABLE" | "RECEIVABLE") {
         ...(direction ? { direction } : {}),
       },
       include: {
-        contact: true,
+        contact: { include: { pixKeys: true } },
         category: true,
         installments: {
           orderBy: { sequence: "asc" },
@@ -43,9 +43,15 @@ export async function getFinancialItems(direction?: "PAYABLE" | "RECEIVABLE") {
             phone: item.contact.phone || undefined,
             isDebtor: item.contact.isDebtor,
             isPayee: item.contact.isPayee,
-            pixKeys: [],
+            pixKeys: item.contact.pixKeys.map((k: any) => ({
+              id: k.id,
+              type: k.type,
+              value: k.value,
+              isDefault: k.isDefault,
+            })),
           }
         : undefined,
+      pixKey: item.contact?.pixKeys?.[0]?.value || undefined,
       category: item.category?.name || "Geral",
       categoryColor: item.category?.colorToken || "#3B82F6",
       totalAmountCents: Number(item.totalAmountCents),
@@ -84,6 +90,8 @@ export async function createFinancialItem(input: {
   title: string;
   description?: string;
   contactId?: string;
+  contactName?: string;
+  pixKey?: string;
   categoryName?: string;
   totalAmountCents: number;
   startDate: string;
@@ -114,6 +122,46 @@ export async function createFinancialItem(input: {
         }
       }
 
+      // Localizar ou criar Contato
+      let finalContactId = input.contactId;
+      if (!finalContactId && input.contactName) {
+        const existingContact = await tx.contact.findFirst({
+          where: { workspaceId, name: input.contactName }
+        });
+        
+        if (existingContact) {
+          finalContactId = existingContact.id;
+        } else {
+          const newContact = await tx.contact.create({
+            data: {
+              workspaceId,
+              name: input.contactName,
+              type: "PERSON",
+              isPayee: input.direction === "PAYABLE",
+              isDebtor: input.direction === "RECEIVABLE",
+            }
+          });
+          finalContactId = newContact.id;
+        }
+      }
+
+      // Salvar Chave Pix se fornecida
+      if (finalContactId && input.pixKey && input.direction === "PAYABLE") {
+        const existingKey = await tx.pixKey.findFirst({
+          where: { contactId: finalContactId, value: input.pixKey }
+        });
+        if (!existingKey) {
+          await tx.pixKey.create({
+            data: {
+              contactId: finalContactId,
+              type: "RANDOM", // Poderia ser extraída a inteligência do tipo, mas RANDOM é fallback
+              value: input.pixKey,
+              isDefault: true
+            }
+          });
+        }
+      }
+
       // Criar item pai
       const item = await tx.financialItem.create({
         data: {
@@ -122,7 +170,7 @@ export async function createFinancialItem(input: {
           kind: input.kind,
           title: input.title,
           description: input.description,
-          contactId: input.contactId,
+          contactId: finalContactId,
           categoryId,
           totalAmountCents: BigInt(input.totalAmountCents),
           startDate: new Date(input.startDate),
@@ -208,3 +256,168 @@ export async function settleInstallment(installmentId: string, amountCentsPaid?:
     return { success: false, error: error.message };
   }
 }
+
+export async function deleteFinancialItem(itemId: string) {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+    await db.financialItem.update({
+      where: { id: itemId, workspaceId },
+      data: { deletedAt: new Date() },
+    });
+    revalidatePath("/");
+    revalidatePath("/contas-a-pagar");
+    revalidatePath("/contas-a-receber");
+    return { success: true };
+  } catch (error: any) {
+    console.error("Erro ao excluir item financeiro:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function updateFinancialItem(input: {
+  id: string;
+  direction: "PAYABLE" | "RECEIVABLE";
+  kind: "ONE_TIME" | "INSTALLMENT_PLAN" | "RECURRING";
+  title: string;
+  description?: string;
+  contactName?: string;
+  pixKey?: string;
+  categoryName?: string;
+  totalAmountCents: number;
+  startDate: string;
+  installments?: { sequence: number; amountCents: number; dueDate: string }[];
+}) {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+
+    return await db.$transaction(async (tx) => {
+      const existing = await tx.financialItem.findFirst({
+        where: { id: input.id, workspaceId, deletedAt: null },
+      });
+      if (!existing) throw new Error("Item não encontrado");
+
+      let categoryId: string | undefined = existing.categoryId || undefined;
+      if (input.categoryName) {
+        const cat = await tx.category.findFirst({
+          where: { workspaceId, name: input.categoryName },
+        });
+        if (cat) {
+          categoryId = cat.id;
+        } else {
+          const newCat = await tx.category.create({
+            data: {
+              workspaceId,
+              name: input.categoryName,
+              direction: input.direction === "PAYABLE" ? "EXPENSE" : "INCOME",
+              colorToken: "#3B82F6",
+            },
+          });
+          categoryId = newCat.id;
+        }
+      }
+
+      let finalContactId = existing.contactId;
+      if (input.contactName) {
+        const existingContact = await tx.contact.findFirst({
+          where: { workspaceId, name: input.contactName },
+        });
+        if (existingContact) {
+          finalContactId = existingContact.id;
+        } else {
+          const newContact = await tx.contact.create({
+            data: {
+              workspaceId,
+              name: input.contactName,
+              type: "PERSON",
+              isPayee: input.direction === "PAYABLE",
+              isDebtor: input.direction === "RECEIVABLE",
+            },
+          });
+          finalContactId = newContact.id;
+        }
+      }
+
+      if (finalContactId && input.pixKey && input.direction === "PAYABLE") {
+        const existingKey = await tx.pixKey.findFirst({
+          where: { contactId: finalContactId, value: input.pixKey },
+        });
+        if (!existingKey) {
+          await tx.pixKey.create({
+            data: {
+              contactId: finalContactId,
+              type: "RANDOM",
+              value: input.pixKey,
+              isDefault: true,
+            },
+          });
+        }
+      }
+
+      await tx.financialItem.update({
+        where: { id: input.id },
+        data: {
+          direction: input.direction,
+          kind: input.kind,
+          title: input.title,
+          description: input.description,
+          contactId: finalContactId,
+          categoryId,
+          totalAmountCents: BigInt(input.totalAmountCents),
+          startDate: new Date(input.startDate),
+        },
+      });
+
+      const existingInsts = await tx.installment.findMany({
+        where: { financialItemId: input.id },
+        orderBy: { sequence: "asc" },
+      });
+
+      const installmentsToSet =
+        input.installments && input.installments.length > 0
+          ? input.installments
+          : [{ sequence: 1, amountCents: input.totalAmountCents, dueDate: input.startDate }];
+
+      if (existingInsts.length === installmentsToSet.length) {
+        for (let i = 0; i < existingInsts.length; i++) {
+          const inst = existingInsts[i];
+          const newInstData = installmentsToSet[i];
+          if (inst.status !== "SETTLED") {
+            await tx.installment.update({
+              where: { id: inst.id },
+              data: {
+                amountCents: BigInt(newInstData.amountCents),
+                dueDate: new Date(newInstData.dueDate),
+              },
+            });
+          }
+        }
+      } else {
+        const hasSettled = existingInsts.some((i) => i.status === "SETTLED");
+        if (!hasSettled) {
+          await tx.installment.deleteMany({ where: { financialItemId: input.id } });
+          for (const inst of installmentsToSet) {
+            await tx.installment.create({
+              data: {
+                financialItemId: input.id,
+                sequence: inst.sequence,
+                amountCents: BigInt(inst.amountCents),
+                dueDate: new Date(inst.dueDate),
+                status: "SCHEDULED",
+                uniqueReference: `NOVEX-${input.direction.slice(0, 3)}-${Date.now().toString().slice(-6)}-${inst.sequence}`,
+              },
+            });
+          }
+        }
+      }
+
+      revalidatePath("/");
+      revalidatePath("/contas-a-pagar");
+      revalidatePath("/contas-a-receber");
+      return { success: true };
+    });
+  } catch (error: any) {
+    console.error("Erro ao atualizar item financeiro:", error);
+    return { success: false, error: error.message };
+  }
+}
+

@@ -14,26 +14,43 @@ import {
   RefreshCw,
   Power,
   Info,
+  MessageSquare,
+  QrCode,
+  Send,
+  Sliders,
+  Wallet,
+  AlertTriangle,
 } from "lucide-react";
 import { changePassword } from "@/server/actions/user";
+import { updateWorkspaceName, getWorkspaceName } from "@/server/actions/workspace";
 import {
   getMercadoPagoIntegrationStatus,
   saveMercadoPagoCredentials,
   validateMercadoPagoConnection,
   disconnectMercadoPagoIntegration,
+  getEvolutionApiStatus,
+  saveEvolutionApiCredentials,
   IntegrationStatusResult,
 } from "@/server/actions/integrations";
+import {
+  checkEvolutionConnectionState,
+  fetchEvolutionQRCode,
+  sendWhatsAppDebtorReminder,
+} from "@/server/actions/notifications";
 
 export default function ConfiguracoesPage() {
   const [saved, setSaved] = useState(false);
+  const [workspaceName, setWorkspaceName] = useState("");
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [pwdStatus, setPwdStatus] = useState<{ type: "success" | "error"; msg: string } | null>(null);
   const [pwdLoading, setPwdLoading] = useState(false);
 
-  // Estados do Mercado Pago Sandbox
+  // Mercado Pago States (Public Key + Access Token)
   const [mpStatus, setMpStatus] = useState<IntegrationStatusResult | null>(null);
+  const [publicKeyInput, setPublicKeyInput] = useState("");
   const [tokenInput, setTokenInput] = useState("");
   const [showToken, setShowToken] = useState(false);
   const [mpLoading, setMpLoading] = useState(false);
@@ -41,22 +58,59 @@ export default function ConfiguracoesPage() {
   const [mpFeedback, setMpFeedback] = useState<{ type: "success" | "error"; msg: string } | null>(null);
   const [showDisconnectModal, setShowDisconnectModal] = useState(false);
 
+  // WhatsApp / Evolution API States (Desacoplado & Simplificado)
+  const [showAdvancedEvo, setShowAdvancedEvo] = useState(false);
+  const [evoUrl, setEvoUrl] = useState("http://localhost:8081");
+  const [evoApiKey, setEvoApiKey] = useState("");
+  const [evoInstance, setEvoInstance] = useState("novex-finance");
+  const [waConnected, setWaConnected] = useState(false);
+  const [qrCodeBase64, setQrCodeBase64] = useState<string | null>(null);
+  const [waLoading, setWaLoading] = useState(false);
+  const [waFeedback, setWaFeedback] = useState<{ type: "success" | "error"; msg: string } | null>(null);
+  const [testPhone, setTestPhone] = useState("5511999999999");
+  const [manualBalanceInput, setManualBalanceInput] = useState("82,73");
+  const [balanceLoading, setBalanceLoading] = useState(false);
+  const [balanceStatus, setBalanceStatus] = useState<{ type: "success" | "error"; msg: string } | null>(null);
+
   useEffect(() => {
     loadIntegrationStatus();
   }, []);
 
   const loadIntegrationStatus = async () => {
     try {
+      const wks = await getWorkspaceName();
+      if (wks.success) setWorkspaceName(wks.name);
+
       const status = await getMercadoPagoIntegrationStatus();
       setMpStatus(status);
+      if (status?.publicKey) {
+        setPublicKeyInput(status.publicKey);
+      }
+
+      const evo = await getEvolutionApiStatus();
+      if (evo.baseUrl) setEvoUrl(evo.baseUrl);
+      if (evo.apiKey) setEvoApiKey(evo.apiKey);
+      if (evo.instanceName) setEvoInstance(evo.instanceName);
     } catch (e) {
-      console.error("Erro ao carregar status do Mercado Pago:", e);
+      console.error("Erro ao carregar status:", e);
     }
   };
 
-  const handleSaveWorkspace = () => {
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+  const handleSaveWorkspace = async () => {
+    setWorkspaceLoading(true);
+    try {
+      const res = await updateWorkspaceName({ name: workspaceName });
+      if (res.success) {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+      } else {
+        alert(res.error || "Erro ao salvar workspace");
+      }
+    } catch (e) {
+      alert("Erro ao salvar workspace");
+    } finally {
+      setWorkspaceLoading(false);
+    }
   };
 
   const handleChangePassword = async (e: React.FormEvent) => {
@@ -76,11 +130,7 @@ export default function ConfiguracoesPage() {
     setPwdLoading(true);
 
     try {
-      const res = await changePassword({
-        currentPassword,
-        newPassword,
-      });
-
+      const res = await changePassword({ currentPassword, newPassword });
       if (res.success) {
         setPwdStatus({ type: "success", msg: "Sua senha foi alterada com sucesso!" });
         setCurrentPassword("");
@@ -101,7 +151,7 @@ export default function ConfiguracoesPage() {
     setMpFeedback(null);
 
     if (!tokenInput.trim()) {
-      setMpFeedback({ type: "error", msg: "Por favor, digite o Access Token de Sandbox." });
+      setMpFeedback({ type: "error", msg: "Por favor, informe seu Access Token de Sandbox." });
       return;
     }
 
@@ -110,16 +160,17 @@ export default function ConfiguracoesPage() {
     try {
       const res = await saveMercadoPagoCredentials({
         accessToken: tokenInput.trim(),
+        publicKey: publicKeyInput.trim(),
         environment: "SANDBOX",
       });
 
       if (res.success) {
-        setMpFeedback({ type: "success", msg: "Credencial validada e salva com sucesso!" });
-        setTokenInput(""); // Limpar o formulário imediatamente
+        setMpFeedback({ type: "success", msg: "Credenciais do Mercado Pago salvas e validadas com sucesso!" });
+        setTokenInput("");
         setShowToken(false);
         await loadIntegrationStatus();
       } else {
-        setMpFeedback({ type: "error", msg: res.error || "Erro ao conectar credencial." });
+        setMpFeedback({ type: "error", msg: res.error || "Erro ao conectar credenciais." });
       }
     } catch (err: any) {
       setMpFeedback({ type: "error", msg: "Erro ao comunicar com o servidor." });
@@ -156,6 +207,7 @@ export default function ConfiguracoesPage() {
       const res = await disconnectMercadoPagoIntegration();
       if (res.success) {
         setMpFeedback({ type: "success", msg: "Integração desconectada com sucesso." });
+        setPublicKeyInput("");
         await loadIntegrationStatus();
       } else {
         setMpFeedback({ type: "error", msg: res.error || "Erro ao desconectar." });
@@ -167,11 +219,136 @@ export default function ConfiguracoesPage() {
     }
   };
 
+  // WhatsApp Evolution API Actions
+  const handleCheckWhatsAppStatus = async () => {
+    setWaLoading(true);
+    setWaFeedback(null);
+    try {
+      const res = await checkEvolutionConnectionState({
+        baseUrl: evoUrl || undefined,
+        apiKey: evoApiKey || undefined,
+        instanceName: evoInstance || undefined,
+      });
+
+      if (res.success && res.state === "open") {
+        setWaConnected(true);
+        setQrCodeBase64(null);
+        setWaFeedback({ type: "success", msg: "WhatsApp Conectado com sucesso!" });
+      } else {
+        setWaConnected(false);
+        setWaFeedback({ type: "error", msg: res.error || "Instância do WhatsApp não está conectada no momento." });
+      }
+    } catch (err: any) {
+      setWaConnected(false);
+      setWaFeedback({ type: "error", msg: "Erro ao consultar estado da instância." });
+    } finally {
+      setWaLoading(false);
+    }
+  };
+
+  const handleFetchQRCode = async () => {
+    setWaLoading(true);
+    setWaFeedback(null);
+
+    try {
+      const res = await fetchEvolutionQRCode({
+        baseUrl: evoUrl || undefined,
+        apiKey: evoApiKey || undefined,
+        instanceName: evoInstance || undefined,
+      });
+
+      if (res.success && "base64" in res && res.base64) {
+        setQrCodeBase64(res.base64);
+        setWaFeedback({ type: "success", msg: "QR Code gerado! Escaneie no quadro ao lado com seu celular." });
+      } else {
+        setWaFeedback({ type: "error", msg: res.error || "Aguardando inicialização da instância WhatsApp." });
+      }
+    } catch (err: any) {
+      setWaFeedback({ type: "error", msg: "Erro de comunicação ao buscar QR Code." });
+    } finally {
+      setWaLoading(false);
+    }
+  };
+
+  const handleSaveEvoCredentials = async () => {
+    setWaLoading(true);
+    setWaFeedback(null);
+    try {
+      const res = await saveEvolutionApiCredentials({
+        baseUrl: evoUrl,
+        apiKey: evoApiKey,
+        instanceName: evoInstance,
+      });
+      if (res.success) {
+        setWaFeedback({ type: "success", msg: "Credenciais do WhatsApp salvas no banco com sucesso!" });
+      } else {
+        setWaFeedback({ type: "error", msg: res.error || "Erro ao salvar configurações do WhatsApp." });
+      }
+    } catch (err: any) {
+      setWaFeedback({ type: "error", msg: "Erro ao salvar." });
+    } finally {
+      setWaLoading(false);
+    }
+  };
+
+  const handleSendTestWhatsApp = async () => {
+    if (!testPhone.trim()) {
+      setWaFeedback({ type: "error", msg: "Informe um número de telefone com DDD para teste." });
+      return;
+    }
+
+    setWaLoading(true);
+    setWaFeedback(null);
+
+    try {
+      const res = await sendWhatsAppDebtorReminder({
+        debtorName: "Cliente Teste",
+        debtorPhone: testPhone,
+        amountCents: 15000,
+        dueDate: "10/08/2026",
+        pixCopiaECola: "00020126580014br.gov.bcb.pix.teste.novex.finance",
+        baseUrl: evoUrl,
+        apiKey: evoApiKey,
+        instanceName: evoInstance,
+      });
+
+      if (res.success) {
+        setWaFeedback({ type: "success", msg: `Mensagem de teste enviada com sucesso para ${testPhone}!` });
+      } else {
+        setWaFeedback({ type: "error", msg: res.error || "Falha ao enviar mensagem de teste via Evolution API." });
+      }
+    } catch (err: any) {
+      setWaFeedback({ type: "error", msg: "Erro de comunicação ao disparar WhatsApp." });
+    } finally {
+      setWaLoading(false);
+    }
+  };
+
+  const handleSaveManualBalance = async () => {
+    setBalanceLoading(true);
+    setBalanceStatus(null);
+    try {
+      const rawDigits = manualBalanceInput.replace(/\D/g, "");
+      const targetCents = Number(rawDigits);
+      const { setManualInitialBalance } = await import("@/server/actions/workspace");
+      const res = await setManualInitialBalance(targetCents);
+      if (res.success) {
+        setBalanceStatus({ type: "success", msg: "Saldo Atual atualizado no sistema com sucesso!" });
+      } else {
+        setBalanceStatus({ type: "error", msg: res.error || "Erro ao atualizar saldo." });
+      }
+    } catch (e: any) {
+      setBalanceStatus({ type: "error", msg: "Erro ao comunicar com o servidor." });
+    } finally {
+      setBalanceLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <PageHeader
         title="Configurações do Sistema"
-        description="Parâmetros do Workspace, alteração de senha e credenciais do Mercado Pago."
+        description="Parâmetros do Workspace, ajuste manual de saldo, alteração de senha, credenciais Mercado Pago e WhatsApp."
       />
 
       <div className="max-w-3xl space-y-6">
@@ -187,7 +364,8 @@ export default function ConfiguracoesPage() {
               <label className="font-semibold text-novex-text-secondary block mb-1">Nome do Workspace</label>
               <input
                 type="text"
-                defaultValue="Finanças pessoais"
+                value={workspaceName}
+                onChange={(e) => setWorkspaceName(e.target.value)}
                 className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-novex-text-primary focus:border-novex-cyan focus:outline-none"
               />
             </div>
@@ -204,10 +382,61 @@ export default function ConfiguracoesPage() {
 
           <button
             onClick={handleSaveWorkspace}
-            className="flex items-center justify-center gap-2 rounded-lg bg-novex-cyan hover:bg-novex-cyan-hover text-novex-bg px-5 py-2 font-semibold text-xs transition-colors shadow-sm glow-cyan-subtle cursor-pointer"
+            disabled={workspaceLoading}
+            className="flex items-center justify-center gap-2 rounded-lg bg-novex-cyan hover:bg-novex-cyan-hover text-novex-bg px-5 py-2 font-semibold text-xs transition-colors shadow-sm glow-cyan-subtle cursor-pointer disabled:opacity-50"
           >
-            {saved ? <Check className="h-4 w-4" /> : null}
-            <span>{saved ? "Alterações Salvas!" : "Salvar Workspace"}</span>
+            {workspaceLoading ? <span className="animate-spin block w-4 h-4 border-2 border-novex-bg border-t-transparent rounded-full" /> : saved ? <Check className="h-4 w-4" /> : null}
+            <span>{saved ? "Alterações Salvas!" : workspaceLoading ? "Salvando..." : "Salvar Workspace"}</span>
+          </button>
+        </div>
+
+        {/* Ajuste Manual de Saldo em Conta */}
+        <div className="rounded-xl border border-novex-border bg-novex-surface1 p-6 space-y-4">
+          <div className="flex items-center gap-3 border-b border-novex-border pb-3">
+            <Wallet className="h-5 w-5 text-emerald-400" />
+            <div>
+              <h3 className="text-base font-bold text-novex-text-primary">Ajuste Manual do Saldo Atual em Conta</h3>
+              <p className="text-xs text-novex-text-muted">Altere diretamente o seu saldo base caso queira ajustar divergências históricas sem complicação.</p>
+            </div>
+          </div>
+
+          {balanceStatus && (
+            <div
+              className={`p-3 rounded-lg border text-xs flex items-center gap-2 ${
+                balanceStatus.type === "success"
+                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                  : "bg-red-500/10 border-red-500/30 text-red-400"
+              }`}
+            >
+              {balanceStatus.type === "success" ? <Check className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+              <span>{balanceStatus.msg}</span>
+            </div>
+          )}
+
+          <div className="max-w-xs text-xs">
+            <label className="font-semibold text-novex-text-secondary block mb-1">Novo Saldo Atual Desejado (R$)</label>
+            <input
+              type="text"
+              value={manualBalanceInput}
+              onChange={(e) => {
+                const rawDigits = e.target.value.replace(/\D/g, "");
+                const num = Number(rawDigits) / 100;
+                setManualBalanceInput(
+                  num.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                );
+              }}
+              placeholder="0,00"
+              className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 font-mono text-lg font-bold text-emerald-400 focus:border-emerald-400 focus:outline-none"
+            />
+          </div>
+
+          <button
+            onClick={handleSaveManualBalance}
+            disabled={balanceLoading}
+            className="flex items-center justify-center gap-2 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white px-5 py-2 font-semibold text-xs transition-colors shadow-sm cursor-pointer disabled:opacity-50"
+          >
+            {balanceLoading ? <span className="animate-spin block w-4 h-4 border-2 border-white border-t-transparent rounded-full" /> : <Check className="h-4 w-4" />}
+            <span>{balanceLoading ? "Atualizando..." : "Atualizar Saldo Atual"}</span>
           </button>
         </div>
 
@@ -287,18 +516,17 @@ export default function ConfiguracoesPage() {
           </form>
         </div>
 
-        {/* Integração Mercado Pago — Marco 4 */}
+        {/* Integração Mercado Pago (Public Key + Access Token) */}
         <div className="rounded-xl border border-novex-border bg-novex-surface1 p-6 space-y-4">
           <div className="flex items-center justify-between border-b border-novex-border pb-3">
             <div className="flex items-center gap-3">
               <ShieldCheck className="h-5 w-5 text-emerald-400" />
               <div>
                 <h3 className="text-base font-bold text-novex-text-primary">Integração Mercado Pago</h3>
-                <span className="text-[11px] text-novex-text-muted">Ambiente: Sandbox (Testes SEGUROS)</span>
+                <span className="text-[11px] text-novex-text-muted">Credenciais do Desenvolvedor (Sandbox)</span>
               </div>
             </div>
 
-            {/* Badge de Status do Banco */}
             <div>
               {mpStatus?.isConnected ? (
                 <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 font-semibold text-xs flex items-center gap-1.5 border border-emerald-500/30">
@@ -318,7 +546,6 @@ export default function ConfiguracoesPage() {
             </div>
           </div>
 
-          {/* Feedback de erro ou sucesso */}
           {mpFeedback && (
             <div
               className={`p-3 rounded-lg border text-xs flex items-center gap-2 ${
@@ -336,13 +563,13 @@ export default function ConfiguracoesPage() {
             </div>
           )}
 
-          {/* Informações da Integração Conectada */}
+          {/* Informações se Conectado */}
           {mpStatus?.isConnected && (
             <div className="rounded-lg bg-novex-surface2 p-4 border border-novex-border/60 space-y-3 text-xs">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
                 <div>
                   <span className="text-novex-text-muted text-[11px] block uppercase font-semibold tracking-wider">
-                    Credencial Ativa (Mascarada)
+                    Access Token Ativo (Mascarado)
                   </span>
                   <span className="font-mono font-bold text-novex-cyan text-sm tracking-widest">
                     {mpStatus.maskedToken || "••••••••••••"}
@@ -359,96 +586,270 @@ export default function ConfiguracoesPage() {
                 )}
               </div>
 
-              {/* Botões de Ação para Conectados */}
-              {mpStatus.canManage && (
-                <div className="pt-2 flex flex-wrap items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={handleTestConnection}
-                    disabled={mpTestLoading}
-                    className="flex items-center gap-2 rounded-lg bg-novex-surface1 border border-novex-border px-3.5 py-1.5 text-xs font-semibold text-novex-text-primary hover:border-novex-cyan hover:text-novex-cyan transition-colors disabled:opacity-50 cursor-pointer"
-                  >
-                    <RefreshCw className={`h-3.5 w-3.5 ${mpTestLoading ? "animate-spin text-novex-cyan" : ""}`} />
-                    <span>{mpTestLoading ? "Testando..." : "Testar Conexão"}</span>
-                  </button>
+              <div className="pt-2 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleTestConnection}
+                  disabled={mpTestLoading}
+                  className="flex items-center gap-2 rounded-lg bg-novex-surface1 border border-novex-border px-3.5 py-1.5 text-xs font-semibold text-novex-text-primary hover:border-novex-cyan hover:text-novex-cyan transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${mpTestLoading ? "animate-spin text-novex-cyan" : ""}`} />
+                  <span>{mpTestLoading ? "Testando..." : "Testar Conexão"}</span>
+                </button>
 
-                  <button
-                    type="button"
-                    onClick={() => setShowDisconnectModal(true)}
-                    disabled={mpLoading}
-                    className="flex items-center gap-2 rounded-lg bg-red-500/10 border border-red-500/30 px-3.5 py-1.5 text-xs font-semibold text-red-400 hover:bg-red-500/20 transition-colors disabled:opacity-50 cursor-pointer"
-                  >
-                    <Power className="h-3.5 w-3.5" />
-                    <span>Desconectar Integração</span>
-                  </button>
-                </div>
-              )}
+                <button
+                  type="button"
+                  onClick={() => setShowDisconnectModal(true)}
+                  disabled={mpLoading}
+                  className="flex items-center gap-2 rounded-lg bg-red-500/10 border border-red-500/30 px-3.5 py-1.5 text-xs font-semibold text-red-400 hover:bg-red-500/20 transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  <Power className="h-3.5 w-3.5" />
+                  <span>Desconectar Integração</span>
+                </button>
+              </div>
             </div>
           )}
 
-          {/* Formulário de Conexão / Substituição */}
-          {mpStatus?.canManage && (
-            <form onSubmit={handleConnectMercadoPago} className="space-y-4 text-xs">
-              <div>
-                <label className="font-semibold text-novex-text-secondary block mb-1">
-                  {mpStatus.isConnected ? "Substituir Access Token (Sandbox)" : "Novo Access Token (Sandbox)"}
-                </label>
+          {/* Formulário de Conexão com Public Key e Access Token */}
+          <form onSubmit={handleConnectMercadoPago} className="space-y-4 text-xs pt-2">
+            <div>
+              <label className="font-semibold text-novex-text-secondary block mb-1">
+                Public Key (Chave Pública Sandbox)
+              </label>
+              <input
+                type="text"
+                value={publicKeyInput}
+                onChange={(e) => setPublicKeyInput(e.target.value)}
+                placeholder="APP_USR-c5511c56-3ddc-425e-80fb-..."
+                className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-novex-text-primary font-mono focus:border-novex-cyan focus:outline-none"
+              />
+            </div>
 
-                <div className="relative">
-                  <input
-                    type={showToken ? "text" : "password"}
-                    required
-                    value={tokenInput}
-                    onChange={(e) => setTokenInput(e.target.value)}
-                    placeholder="Cole seu Access Token de Sandbox do Mercado Pago..."
-                    className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 pr-10 text-novex-text-primary font-mono focus:border-novex-cyan focus:outline-none"
-                  />
+            <div>
+              <label className="font-semibold text-novex-text-secondary block mb-1">
+                Access Token (Sandbox) *
+              </label>
+
+              <div className="relative">
+                <input
+                  type={showToken ? "text" : "password"}
+                  required
+                  value={tokenInput}
+                  onChange={(e) => setTokenInput(e.target.value)}
+                  placeholder="APP_USR-..."
+                  className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 pr-10 text-novex-text-primary font-mono focus:border-novex-cyan focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowToken(!showToken)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-novex-text-muted hover:text-novex-text-primary transition-colors cursor-pointer"
+                >
+                  {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+
+              <span className="text-[10px] text-novex-text-muted mt-1.5 block">
+                🔒 Criptografado com **AES-256-GCM** no servidor. Validação em tempo real via `https://api.mercadolibre.com/users/me`.
+              </span>
+            </div>
+
+            <button
+              type="submit"
+              disabled={mpLoading || !tokenInput.trim()}
+              className="flex items-center justify-center gap-2 rounded-lg bg-novex-cyan hover:bg-novex-cyan-hover text-novex-bg px-5 py-2.5 font-semibold text-xs transition-colors shadow-sm glow-cyan-subtle disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            >
+              {mpLoading ? (
+                <span className="inline-block h-4 w-4 border-2 border-novex-bg border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <Key className="h-4 w-4" />
+              )}
+              <span>
+                {mpLoading
+                  ? "Validando e Criptografando..."
+                  : mpStatus?.isConnected
+                  ? "Substituir Credenciais Mercado Pago"
+                  : "Salvar e Conectar Mercado Pago"}
+              </span>
+            </button>
+          </form>
+        </div>
+
+        {/* Integração WhatsApp via Evolution API (Interface Direta & QR Code Instantâneo) */}
+        <div className="rounded-xl border border-novex-border bg-novex-surface1 p-6 space-y-4">
+          <div className="flex items-center justify-between border-b border-novex-border pb-3">
+            <div className="flex items-center gap-3">
+              <MessageSquare className="h-5 w-5 text-emerald-400" />
+              <div>
+                <h3 className="text-base font-bold text-novex-text-primary">Conexão WhatsApp (Evolution API)</h3>
+                <span className="text-[11px] text-novex-text-muted">Disparo de lembretes e cobranças Pix para devedores</span>
+              </div>
+            </div>
+
+            <div>
+              {waConnected ? (
+                <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 font-semibold text-xs flex items-center gap-1.5 border border-emerald-500/30">
+                  <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                  Conectado
+                </span>
+              ) : (
+                <span className="px-3 py-1 rounded-full bg-slate-500/20 text-slate-400 font-semibold text-xs flex items-center gap-1.5 border border-slate-500/30">
+                  Desconectado
+                </span>
+              )}
+            </div>
+          </div>
+
+          {waFeedback && (
+            <div
+              className={`p-3 rounded-lg border text-xs flex items-center gap-2 ${
+                waFeedback.type === "success"
+                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                  : "bg-red-500/10 border-red-500/30 text-red-400"
+              }`}
+            >
+              {waFeedback.type === "success" ? (
+                <Check className="h-4 w-4 shrink-0" />
+              ) : (
+                <AlertCircle className="h-4 w-4 shrink-0" />
+              )}
+              <span>{waFeedback.msg}</span>
+            </div>
+          )}
+
+          {/* Painel do WhatsApp Simplificado para o Usuário Final */}
+          <div className="space-y-4 text-xs">
+            <p className="text-novex-text-secondary text-xs">
+              Clique em <strong>&quot;Gerar QR Code de Conexão&quot;</strong> e escaneie o código com seu aplicativo do WhatsApp no celular (em <em>Dispositivos Conectados &gt; Conectar um aparelho</em>).
+            </p>
+
+            {/* Layout Flex: Ações + QR Code no Canto */}
+            <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 pt-2 border-t border-novex-border/60">
+              <div className="space-y-3 flex-1">
+                <div className="flex flex-wrap items-center gap-3">
                   <button
                     type="button"
-                    onClick={() => setShowToken(!showToken)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-novex-text-muted hover:text-novex-text-primary transition-colors cursor-pointer"
+                    onClick={handleFetchQRCode}
+                    disabled={waLoading}
+                    className="flex items-center gap-2 rounded-xl bg-novex-cyan hover:bg-novex-cyan/90 text-novex-bg font-bold px-4 py-2.5 text-xs transition-all shadow-md cursor-pointer disabled:opacity-50"
                   >
-                    {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    <QrCode className="h-4 w-4" />
+                    <span>{waLoading ? "Gerando QR Code..." : "Gerar QR Code de Conexão"}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleCheckWhatsAppStatus}
+                    disabled={waLoading}
+                    className="flex items-center gap-2 rounded-xl bg-novex-surface2 hover:bg-novex-border text-novex-text-primary font-semibold px-4 py-2.5 text-xs border border-novex-border transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${waLoading ? "animate-spin" : ""}`} />
+                    <span>Verificar Conexão</span>
                   </button>
                 </div>
 
-                <span className="text-[10px] text-novex-text-muted mt-1.5 block">
-                  🔒 Criptografado com **AES-256-GCM** no servidor. Validação em tempo real via `https://api.mercadolibre.com/users/me`.
-                </span>
+                {/* Seção de Teste de Disparo Real */}
+                <div className="pt-3 space-y-2">
+                  <span className="font-semibold text-novex-text-primary block">Testar Disparo de Mensagem</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={testPhone}
+                      onChange={(e) => setTestPhone(e.target.value)}
+                      placeholder="DDD + Número (ex: 5511999999999)"
+                      className="rounded-lg border border-novex-border bg-novex-bg py-2 px-3 text-xs text-novex-text-primary font-mono focus:border-novex-cyan focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSendTestWhatsApp}
+                      disabled={waLoading || !testPhone.trim()}
+                      className="flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3.5 py-2 text-xs transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      <Send className="h-3.5 w-3.5" />
+                      <span>{waLoading ? "Disparando..." : "Enviar Mensagem Teste"}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Sanfonado de Configurações Avançadas (Opcional) */}
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvancedEvo(!showAdvancedEvo)}
+                    className="flex items-center gap-1.5 text-[11px] text-novex-text-muted hover:text-novex-cyan transition-colors"
+                  >
+                    <Sliders className="h-3.5 w-3.5" />
+                    <span>{showAdvancedEvo ? "Ocultar Parâmetros Avançados" : "Configurações Avançadas do Servidor"}</span>
+                  </button>
+
+                  {showAdvancedEvo && (
+                    <div className="mt-3 p-3 rounded-lg bg-novex-surface2/60 border border-novex-border/60 space-y-3 animate-in fade-in">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <label className="font-semibold text-novex-text-secondary block mb-1">URL da API</label>
+                          <input
+                            type="text"
+                            value={evoUrl}
+                            onChange={(e) => setEvoUrl(e.target.value)}
+                            placeholder="https://api.evolution-api.com"
+                            className="w-full rounded-lg border border-novex-border bg-novex-bg p-2 text-novex-text-primary font-mono"
+                          />
+                        </div>
+                        <div>
+                          <label className="font-semibold text-novex-text-secondary block mb-1">Instância</label>
+                          <input
+                            type="text"
+                            value={evoInstance}
+                            onChange={(e) => setEvoInstance(e.target.value)}
+                            placeholder="novex-finance"
+                            className="w-full rounded-lg border border-novex-border bg-novex-bg p-2 text-novex-text-primary font-mono"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="font-semibold text-novex-text-secondary block mb-1">API Key Personalizada</label>
+                        <input
+                          type="password"
+                          value={evoApiKey}
+                          onChange={(e) => setEvoApiKey(e.target.value)}
+                          placeholder="Chave customizada do servidor Evolution API"
+                          className="w-full rounded-lg border border-novex-border bg-novex-bg p-2 text-novex-text-primary font-mono"
+                        />
+                      </div>
+                      <div className="pt-2">
+                        <button
+                          type="button"
+                          onClick={handleSaveEvoCredentials}
+                          disabled={waLoading}
+                          className="flex items-center justify-center gap-2 w-full rounded-lg bg-novex-cyan text-novex-bg font-semibold px-4 py-2.5 text-xs transition-all cursor-pointer hover:bg-novex-cyan/90 disabled:opacity-50"
+                        >
+                          {waLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                          Salvar Configurações no Banco
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
-              <button
-                type="submit"
-                disabled={mpLoading || !tokenInput.trim()}
-                className="flex items-center justify-center gap-2 rounded-lg bg-novex-cyan hover:bg-novex-cyan-hover text-novex-bg px-5 py-2.5 font-semibold text-xs transition-colors shadow-sm glow-cyan-subtle disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-              >
-                {mpLoading ? (
-                  <span className="inline-block h-4 w-4 border-2 border-novex-bg border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <Key className="h-4 w-4" />
-                )}
-                <span>
-                  {mpLoading
-                    ? "Validando e Criptografando..."
-                    : mpStatus.isConnected
-                    ? "Substituir Credencial"
-                    : "Conectar Mercado Pago Sandbox"}
-                </span>
-              </button>
-            </form>
-          )}
-
-          {/* Aviso sobre os próximos marcos */}
-          <div className="p-3 rounded-lg bg-novex-surface2/60 border border-novex-border/40 text-[11px] text-novex-text-muted flex items-start gap-2.5">
-            <Info className="h-4 w-4 text-novex-cyan shrink-0 mt-0.5" />
-            <span>
-              <strong>Nota Arquitetural:</strong> Neste Marco 4, apenas o token e a conectividade Sandbox são validados e salvos com criptografia autenticada. A criação de cobranças Pix via **Orders API** (Marco 5) e a importação de extrato completo via **Relatório Dinheiro em Conta** (Marco 6) serão ativadas nos próximos marcos.
-            </span>
+              {/* Quadro do QR Code no Canto Superior Direito do Card */}
+              {qrCodeBase64 && (
+                <div className="rounded-xl border-2 border-novex-cyan/60 bg-white p-3 text-center space-y-2 shrink-0 self-center md:self-start shadow-lg">
+                  <span className="text-[10px] font-bold text-slate-800 uppercase block">Escaneie no WhatsApp</span>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={qrCodeBase64.startsWith("data:") ? qrCodeBase64 : `data:image/png;base64,${qrCodeBase64}`}
+                    alt="QR Code WhatsApp Evolution API"
+                    className="w-36 h-36 mx-auto rounded border border-slate-200"
+                  />
+                  <span className="text-[9px] text-slate-500 block">Dispositivos Conectados &gt; Conectar</span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Modal de Confirmação para Desconectar */}
+      {/* Modal de Confirmação para Desconectar Mercado Pago */}
       {showDisconnectModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-200">
           <div className="w-full max-w-md bg-novex-surface1 border border-novex-border rounded-xl p-6 space-y-4 shadow-2xl">
@@ -458,7 +859,7 @@ export default function ConfiguracoesPage() {
             </div>
 
             <p className="text-xs text-novex-text-secondary">
-              Esta ação removerá o Access Token criptografado do seu Workspace. Transações financeiras e registros de auditoria existentes <strong>NÃO</strong> serão apagados.
+              Esta ação removerá as credenciais do Mercado Pago do seu Workspace. Transações financeiras e registros de auditoria existentes <strong>NÃO</strong> serão apagados.
             </p>
 
             <div className="flex items-center justify-end gap-3 pt-2">

@@ -50,6 +50,7 @@ export interface FinancialItemMock {
   title: string;
   description?: string;
   contact?: ContactMock;
+  pixKey?: string;
   category: string;
   categoryColor: string;
   totalAmountCents: number;
