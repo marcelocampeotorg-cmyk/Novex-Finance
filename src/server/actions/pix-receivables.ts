@@ -161,7 +161,7 @@ export async function generateReceivablePixCharge(input: {
   }
 
   // 8. Chave de Idempotência Única e Determinística (Regra 24)
-  const uniqueHash = crypto.createHash("sha256").update(`${context.workspaceId}:${installment.id}:${chargeAmountCents}:${Date.now()}`).digest("hex").slice(0, 12);
+  const uniqueHash = crypto.createHash("sha256").update(`${context.workspaceId}:${installment.id}:${chargeAmountCents}`).digest("hex").slice(0, 12);
   const idempotencyKey = `nvx_idemp_${installment.id}_${uniqueHash}`;
   const externalReference = `NVX-REC-${installment.id.slice(0, 8)}-${uniqueHash}`;
 
@@ -218,7 +218,7 @@ export async function generateReceivablePixCharge(input: {
       status: "PENDING",
       qrCode: orderResult.qrCode || null,
       ticketUrl: orderResult.ticketUrl || null,
-      expiresAt: orderResult.expiresAt ? new Date(orderResult.expiresAt) : new Date(Date.now() + 30 * 60 * 1000),
+      expiresAt: orderResult.expiresAt ? new Date(orderResult.expiresAt) : null,
     },
   });
 
@@ -262,10 +262,6 @@ export async function generateReceivablePixCharge(input: {
  */
 export async function getReceivablePixChargeStatus(input: { pixChargeId: string }): Promise<PixChargeStatusResult> {
   const context = await requireAuthenticatedWorkspace();
-
-  if (input.pixChargeId.startsWith("pix_mock_")) {
-    return { success: false, status: "FAILED", isPaid: false, error: "Cobrança Pix inválida (Mock)." };
-  }
 
   const pixCharge = await db.pixCharge.findFirst({
     where: {
@@ -312,8 +308,12 @@ export async function getReceivablePixChargeStatus(input: { pixChargeId: string 
       const remoteOrder = await getOrderById({ accessToken, orderId: pixCharge.externalOrderId });
 
       if (remoteOrder.success && remoteOrder.isPaid) {
+        if (!remoteOrder.paidAt || !remoteOrder.paymentId || remoteOrder.externalReference !== pixCharge.externalReference ||
+            remoteOrder.amountCents !== Number(pixCharge.amountCents)) {
+          return { success: false, status: "INCOMPLETE", isPaid: false, error: "Order processada sem evidências oficiais completas ou com valor/referência divergente." };
+        }
         // LIQUIDAÇÃO ATÔMICA DA PARCELA VIA TRANSAÇÃO PRISMA
-        const paidAt = remoteOrder.paidAt ? new Date(remoteOrder.paidAt) : new Date();
+        const paidAt = new Date(remoteOrder.paidAt);
 
         await db.$transaction(async (tx) => {
           const currentCharge = await tx.pixCharge.findUnique({ where: { id: pixCharge.id } });
@@ -347,20 +347,6 @@ export async function getReceivablePixChargeStatus(input: { pixChargeId: string 
               settledAmountCents: BigInt(newSettled),
               status: newStatus,
               settlementDate: paidAt,
-            },
-          });
-
-          // Criar Entrada de Caixa (LedgerEntry)
-          await tx.ledgerEntry.create({
-            data: {
-              workspaceId: context.workspaceId,
-              installmentId: pixCharge.installmentId,
-              direction: "CREDIT",
-              amountCents: BigInt(chargeAmt),
-              occurredAt: paidAt,
-              sourceType: "MERCADO_PAGO_PIX",
-              sourceId: pixCharge.externalOrderId,
-              categoryId: pixCharge.installment.financialItem.categoryId,
             },
           });
 
@@ -445,6 +431,4 @@ export async function getActivePixChargeForInstallment(input: { installmentId: s
     expiresAt: charge.expiresAt?.toISOString(),
   };
 }
-
-
 

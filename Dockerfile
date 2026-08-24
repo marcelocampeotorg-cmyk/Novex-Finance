@@ -13,6 +13,8 @@ RUN pnpm install --frozen-lockfile || pnpm install
 
 COPY . .
 
+ENV DOCKER_BUILD=true
+
 # Gerar Prisma Client e compilar Next.js em standalone
 RUN npx prisma generate
 RUN pnpm build

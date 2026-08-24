@@ -1,9 +1,8 @@
 "use server";
 
 import { db } from "@/server/db";
-import { BalanceSummaryMock } from "@/types";
 import { requireAuthenticatedWorkspace } from "@/server/auth-context";
-import { IntegrationAccount } from "@prisma/client";
+import { getActiveMercadoPagoIntegration } from "@/server/actions/integrations";
 
 export type IntegrationAccountDTO = {
   id: string;
@@ -20,45 +19,6 @@ export type IntegrationAccountDTO = {
  * Obtém a integração ativa do Mercado Pago para o Workspace atual,
  * de forma determinística e segura.
  */
-export async function getActiveMercadoPagoIntegration(workspaceIdParam?: string): Promise<IntegrationAccountDTO | null> {
-  const context = await requireAuthenticatedWorkspace();
-  const workspaceId = workspaceIdParam || context.workspaceId;
-  
-  if (workspaceId !== context.workspaceId) {
-    throw new Error("Unauthorized workspace access");
-  }
-
-  const integrations = await db.integrationAccount.findMany({
-    where: {
-      workspaceId,
-      provider: "MERCADO_PAGO",
-      status: "CONNECTED",
-    },
-    select: {
-      id: true,
-      provider: true,
-      status: true,
-      environment: true,
-      displayName: true,
-      lastSyncAt: true,
-      lastValidatedAt: true,
-      lastValidationErrorCode: true,
-    },
-  });
-
-  if (integrations.length === 0) return null;
-
-  if (integrations.length > 1) {
-    // Tenta desambiguar preferindo ambiente PRODUCTION ativo
-    const prodIntegrations = integrations.filter((i) => i.environment === "PRODUCTION");
-    if (prodIntegrations.length === 1) {
-      return prodIntegrations[0] as IntegrationAccountDTO;
-    }
-    throw new Error("Múltiplas integrações ativas conectadas para o mesmo workspace. Mantenha apenas uma conta conectada.");
-  }
-
-  return integrations[0] as IntegrationAccountDTO;
-}
 export async function getWorkspaceSummary() {
   try {
     const context = await requireAuthenticatedWorkspace();
@@ -132,7 +92,7 @@ export async function getWorkspaceSummary() {
       });
       let balance = 0;
       for (const tx of txs) {
-        const netVal = Number(tx.netAmountCents || tx.amountCents);
+      const netVal = Number(tx.netAmountCents);
         if (tx.direction === "CREDIT") balance += netVal;
         if (tx.direction === "DEBIT") balance -= netVal;
       }
@@ -174,12 +134,12 @@ export async function getWorkspaceSummary() {
       syncSource,
       accountDisplayName,
       unresolvedTransactionsCount: unmatchesCount,
-      uncategorizedCount: 0,
+      uncategorizedCount: unmatchesCount,
       isOutdated,
       role: context.role,
       workspaceName: context.workspaceName,
       mpStatus: mpIntegration?.status || "DISCONNECTED",
-      mpEnv: mpIntegration?.environment || "SANDBOX",
+      mpEnv: mpIntegration?.environment || "NAO_DETECTADO",
     };
   } catch (error: any) {
     console.error("Erro ao calcular resumo:", error);
@@ -228,7 +188,7 @@ export async function getDashboardData() {
     const recentTransactions = txs.map((tx: any) => ({
       id: tx.id,
       direction: tx.direction,
-      amountCents: Number(tx.netAmountCents || tx.amountCents),
+      amountCents: Number(tx.netAmountCents),
       description: tx.description,
       counterpartName: tx.counterpartName,
       category: "Movimentação",
@@ -287,7 +247,7 @@ export async function getDashboardData() {
       let saidas = 0;
       monthTxs.forEach((t: any) => {
         if (t.type !== "TRANSFER") {
-          const val = Number(t.netAmountCents || t.amountCents) / 100;
+          const val = Number(t.netAmountCents) / 100;
           if (t.direction === "CREDIT") entradas += val;
           if (t.direction === "DEBIT") saidas += val;
         }

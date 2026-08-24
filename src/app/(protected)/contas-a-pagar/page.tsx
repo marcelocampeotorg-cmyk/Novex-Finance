@@ -20,23 +20,23 @@ import {
 } from "lucide-react";
 
 import { formatCurrency, formatDate } from "@/lib/formatters";
-import { FinancialItemMock, InstallmentMock } from "@/types";
+import { FinancialItemDTO, InstallmentDTO } from "@/types";
 
 export default function ContasAPagarPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
-  const [selectedDrawerItem, setSelectedDrawerItem] = useState<FinancialItemMock | null>(null);
-  const [paymentInstallment, setPaymentInstallment] = useState<InstallmentMock | null>(null);
+  const [selectedDrawerItem, setSelectedDrawerItem] = useState<FinancialItemDTO | null>(null);
+  const [paymentInstallment, setPaymentInstallment] = useState<InstallmentDTO | null>(null);
   const [paymentAccountTitle, setPaymentAccountTitle] = useState("");
   const [paymentPixKey, setPaymentPixKey] = useState<string | undefined>();
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState<FinancialItemMock | null>(null);
-  const [payablesList, setPayablesList] = useState<FinancialItemMock[]>([]);
+  const [editingItem, setEditingItem] = useState<FinancialItemDTO | null>(null);
+  const [payablesList, setPayablesList] = useState<FinancialItemDTO[]>([]);
 
   const loadItems = async () => {
     const { getFinancialItems } = await import("@/server/actions/financial-items");
     const items = await getFinancialItems("PAYABLE");
-    setPayablesList(items as unknown as FinancialItemMock[]);
+    setPayablesList(items as unknown as FinancialItemDTO[]);
   };
 
   useEffect(() => {

@@ -11,10 +11,10 @@ services:
       - "3000:3000"
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://novex:novex_dev_password@db:5432/novex_finance
+      DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER obrigatorio}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obrigatoria}@db:5432/${POSTGRES_DB:?POSTGRES_DB obrigatorio}
       REDIS_URL: redis://redis:6379
       EVOLUTION_API_URL: http://evolution:8080
-      EVOLUTION_API_KEY: 42960010999
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:?EVOLUTION_API_KEY obrigatoria}
     depends_on:
       db:
         condition: service_healthy
@@ -26,13 +26,14 @@ services:
     container_name: novexfinance-db
     restart: always
     environment:
-      POSTGRES_USER: novex
-      POSTGRES_PASSWORD: novex_dev_password
-      POSTGRES_DB: novex_finance
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER obrigatorio}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obrigatoria}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB obrigatorio}
     ports:
       - "5432:5432"
     volumes:
       - novex_postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U novex"]
       interval: 10s
@@ -62,9 +63,9 @@ services:
     environment:
       SERVER_URL: http://127.0.0.1:8080
       AUTHENTICATION_TYPE: apikey
-      AUTHENTICATION_API_KEY: 42960010999
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?EVOLUTION_API_KEY obrigatoria}
       DATABASE_PROVIDER: postgresql
-      DATABASE_CONNECTION_URI: postgresql://novex:novex_dev_password@db:5432/evolution_db?schema=public
+      DATABASE_CONNECTION_URI: postgresql://${POSTGRES_USER:?POSTGRES_USER obrigatorio}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obrigatoria}@db:5432/evolution_db?schema=public
       DATABASE_CONNECTION_CLIENT_NAME: evolution_api
       CACHE_REDIS_ENABLED: false
       CACHE_REDIS_URI: redis://redis:6379/1

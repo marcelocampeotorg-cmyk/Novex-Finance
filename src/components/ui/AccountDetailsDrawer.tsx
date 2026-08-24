@@ -4,14 +4,14 @@ import React from "react";
 import { X, Calendar, User, Tag, Paperclip, CreditCard, History, CheckCircle2, Clock, Trash2 } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { FinancialItemMock } from "@/types";
+import { FinancialItemDTO } from "@/types";
 
 interface AccountDetailsDrawerProps {
   isOpen: boolean;
   onClose: () => void;
-  item: FinancialItemMock | null;
+  item: FinancialItemDTO | null;
   onPayClick?: (installment: any) => void;
-  onDelete?: (item: FinancialItemMock) => void;
+  onDelete?: (item: FinancialItemDTO) => void;
 }
 
 export const AccountDetailsDrawer: React.FC<AccountDetailsDrawerProps> = ({
@@ -28,8 +28,9 @@ export const AccountDetailsDrawer: React.FC<AccountDetailsDrawerProps> = ({
       if (onDelete) {
         onDelete(item);
       } else {
-        const { deleteFinancialItem } = await import("@/services/financial-store");
-        deleteFinancialItem(item.id);
+        const { deleteFinancialItem } = await import("@/server/actions/financial-items");
+        const result = await deleteFinancialItem(item.id);
+        if (!result.success) throw new Error(result.error || "Falha ao excluir conta.");
       }
       onClose();
     }

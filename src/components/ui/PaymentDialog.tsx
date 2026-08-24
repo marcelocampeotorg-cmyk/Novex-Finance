@@ -3,14 +3,14 @@
 import React, { useState, useEffect } from "react";
 import { QrCode, Copy, Check, X, AlertCircle, Loader2 } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/formatters";
-import { InstallmentMock } from "@/types";
+import { InstallmentDTO } from "@/types";
 import { QRCodeSVG } from "qrcode.react";
 import { getOrCreatePaymentIntention } from "@/server/actions/financial-items";
 
 interface PaymentDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  installment: InstallmentMock | null;
+  installment: InstallmentDTO | null;
   accountTitle: string;
   pixKey?: string;
 }

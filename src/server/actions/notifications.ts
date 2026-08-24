@@ -293,3 +293,26 @@ export async function sendWhatsAppDebtorReminder(input: {
     return { success: false, error: error.message };
   }
 }
+
+export async function sendNeutralWhatsAppTest(input: { phone: string }) {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+    const creds = await resolveEvolutionCredentials(workspaceId);
+    const { evolutionAPIClient } = await import("@/integrations/evolution-api/client");
+    const result = await evolutionAPIClient.sendTextMessage({
+      number: input.phone,
+      text: "Mensagem de teste do NOVEX Finance. Sua integração com o WhatsApp está funcionando.",
+      baseUrl: creds.baseUrl,
+      apiKey: creds.apiKey,
+      instanceName: creds.instanceName,
+    });
+    await db.whatsAppDeliveryLog.create({ data: {
+      workspaceId, recipientPhone: input.phone, messageType: "CONNECTION_TEST",
+      remoteMessageId: result.messageId || null, status: result.success ? "SENT" : "FAILED",
+      errorMessage: result.success ? null : result.error || "Falha no envio",
+    }});
+    return result;
+  } catch (error: any) {
+    return { success: false, error: error.message || String(error) };
+  }
+}

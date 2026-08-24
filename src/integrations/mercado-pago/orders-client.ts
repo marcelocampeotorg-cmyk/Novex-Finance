@@ -31,6 +31,9 @@ export interface GetOrderResult {
   isPaid?: boolean;
   amountCents?: number;
   paidAt?: string;
+  paymentId?: string;
+  externalReference?: string;
+  statusDetail?: string;
   errorCode?: string;
   errorMessage?: string;
 }
@@ -198,16 +201,12 @@ export async function getOrderById(input: { accessToken: string; orderId: string
       const paymentsArray = data.transactions?.payments || data.payments || [];
       const paymentObj = paymentsArray[0];
 
-      const orderStatus = String(data.status || "").toUpperCase();
+      const orderStatus = String(data.status || "").toLowerCase();
       const paymentStatus = String(paymentObj?.status || "").toLowerCase();
       const statusDetail = String(paymentObj?.status_detail || "").toLowerCase();
 
       // Regra 26: Validação estrita de status, payment transaction status e status_detail (acreditado)
-      const isOrderStatusPaid = ["PAID", "PROCESSED", "CLOSED"].includes(orderStatus);
-      const isPaymentApproved = paymentStatus === "approved";
-      const isAccredited = statusDetail === "accredited" || statusDetail === "approved" || statusDetail === "";
-
-      const isPaid = isOrderStatusPaid && isPaymentApproved && isAccredited;
+      const isPaid = orderStatus === "processed" && paymentStatus === "processed" && statusDetail === "accredited";
 
       // Regra 27: Nunca inventar data de pagamento. Sem data oficial de aprovação -> paidAt = null
       const paidAt = paymentObj?.date_approved || data.date_approved || null;
@@ -218,6 +217,10 @@ export async function getOrderById(input: { accessToken: string; orderId: string
         status: orderStatus,
         isPaid,
         paidAt: paidAt || undefined,
+        paymentId: paymentObj?.id ? String(paymentObj.id) : paymentObj?.reference_id ? String(paymentObj.reference_id) : undefined,
+        externalReference: data.external_reference || undefined,
+        statusDetail,
+        amountCents: paymentObj?.paid_amount != null ? Math.round(Number(paymentObj.paid_amount) * 100) : undefined,
       };
     }
 

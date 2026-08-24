@@ -80,7 +80,7 @@ export async function getFinancialItems(direction?: "PAYABLE" | "RECEIVABLE") {
     }));
   } catch (error) {
     console.error("Erro ao buscar itens financeiros:", error);
-    return [];
+    throw new Error(`Falha ao consultar itens financeiros: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -299,7 +299,7 @@ export async function updateFinancialItem(input: {
           await tx.pixKey.create({
             data: {
               contactId: finalContactId,
-              type: input.pixKeyType as any,
+              type: input.pixKeyType === "EVP" ? "RANDOM" : input.pixKeyType,
               value: input.pixKey,
               isDefault: true,
             },
@@ -400,13 +400,16 @@ export async function getOrCreatePaymentIntention(installmentId: string) {
     const contact = inst.financialItem.contact;
     const pixKeyObj = inst.selectedPixKey || contact?.pixKeys?.[0];
     const pixKeyValue = pixKeyObj?.value;
-    const pixKeyType = pixKeyObj?.type || "EMAIL";
+    const pixKeyType = pixKeyObj?.type;
 
-    if (!pixKeyValue) {
-      return { success: false, error: "Favorecido não possui chave Pix cadastrada." };
+    if (!pixKeyValue || !pixKeyType) {
+      return { success: false, error: "Favorecido precisa possuir chave Pix e tipo de chave cadastrados." };
     }
 
-    const favoredName = contact?.name || "Favorecido";
+    const favoredName = contact?.name?.trim();
+    if (!favoredName) return { success: false, error: "Nome real do favorecido não cadastrado." };
+    const merchantCity = process.env.PIX_MERCHANT_CITY?.trim();
+    if (!merchantCity) return { success: false, error: "PIX_MERCHANT_CITY não configurada para gerar BR Code válido." };
 
     // Procurar intenção de pagamento ativa existente
     const existingIntention = await db.paymentIntention.findFirst({
@@ -442,7 +445,7 @@ export async function getOrCreatePaymentIntention(installmentId: string) {
       pixKey: pixKeyValue,
       amount: Number(inst.amountCents) / 100,
       merchantName: favoredName,
-      merchantCity: "BRASIL",
+      merchantCity,
       txId: txid,
     });
 
@@ -479,4 +482,3 @@ export async function getOrCreatePaymentIntention(installmentId: string) {
     return { success: false, error: error.message || String(error) };
   }
 }
-

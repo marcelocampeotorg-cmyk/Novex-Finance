@@ -71,7 +71,7 @@ export async function getMercadoPagoIntegrationStatus(): Promise<IntegrationStat
     return {
       isConnected: false,
       status: "DISCONNECTED",
-      environment: "SANDBOX",
+      environment: "NAO_DETECTADO",
       canManage: isAdmin,
     };
   }
@@ -421,9 +421,22 @@ export async function saveEvolutionApiCredentials(input: {
   try {
     const context = await requireWorkspaceRole(["OWNER", "ADMIN"]);
 
+    if (/[•*]{3,}/.test(input.apiKey)) {
+      return { success: false, error: "A máscara da API key não pode ser salva como credencial." };
+    }
+    const existing = await db.integrationAccount.findUnique({
+      where: { workspaceId_provider_environment: { workspaceId: context.workspaceId, provider: "EVOLUTION_API", environment: "PRODUCTION" } },
+    });
+    let apiKey = input.apiKey.trim();
+    if (!apiKey && existing?.encryptedCredentials) {
+      const previous = JSON.parse(decryptCredentials(existing.encryptedCredentials));
+      apiKey = String(previous.apiKey || "").trim();
+    }
+    if (!apiKey) return { success: false, error: "API key da Evolution é obrigatória." };
+
     const credentialsPayload = JSON.stringify({
       baseUrl: input.baseUrl.trim(),
-      apiKey: input.apiKey.trim(),
+      apiKey,
       instanceName: input.instanceName.trim(),
     });
 
@@ -476,5 +489,3 @@ export async function saveEvolutionApiCredentials(input: {
     return { success: false, error: error.message || "Erro interno ao salvar." };
   }
 }
-
-

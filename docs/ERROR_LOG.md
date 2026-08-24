@@ -12,7 +12,7 @@ Este arquivo deve ser atualizado pela skill `SKILL_02_REGISTRO_DE_ERROS.md`.
 ## Erros conhecidos iniciais
 
 ### ERR-001 — Migrations não reproduzíveis
-Status: RESOLVIDO  
+Status: RESOLVIDO
 Base: commit 5128674  
 Resumo: GitHub continha somente migration_lock, apesar de histórico local aparentar migrations aplicadas.  
 Correção: Adicionada a regra `!prisma/migrations/**/*.sql` no `.gitignore`, versionando todas as migrations SQL no Git. Validadas 4 migrations ativas com `prisma migrate status`.
@@ -128,12 +128,56 @@ Status: EM_CORRECAO
 Resumo: Diversos módulos e formulários fixavam `environment: "SANDBOX"` em vez de utilizar o resolver server-side da integração ativa.
 
 ### ERR-028 — Evolution API Key exposta no frontend e com fallback embutido no código
-Status: EM_CORRECAO  
+Status: IMPLEMENTADO — AGUARDA VALIDAÇÃO EXTERNA
 Resumo: `getEvolutionApiStatus` e `client.ts` devolviam a chave criptografada/decriptografada para o navegador ou usavam fallback `"42960010999"`.
 
 ### ERR-029 — Assets da PWA ausentes e Service Worker com estratégia de cache insegura
-Status: EM_CORRECAO  
+Status: RESOLVIDO
 Resumo: `manifest.json` e `sw.js` apontavam para `/brand/logo-novex-dark.svg` inexistente e o Service Worker aplicava cache-first na raiz.
+Correção: Manifest passou a usar asset NOVEX existente; o service worker limita cache a assets públicos explícitos e exclui navegação/API.
+Teste de regressão: `tests/audit-hardening.test.js`.
+
+### ERR-030 — Drift entre schema Prisma e migrations
+Status: RESOLVIDO
+Resumo: Campos e índices financeiros presentes no schema não existiam na migration de domínio.
+Correção: migration forward-only `20260824000003_audit_hardening`, sem editar migrations anteriores.
+Teste de regressão: `tests/audit-hardening.test.js`; fresh DB ainda depende de Docker/PostgreSQL disponível.
+
+### ERR-031 — Account Money continuava run arbitrário e aceitava fallbacks do provedor
+Status: IMPLEMENTADO — AGUARDA VALIDAÇÃO EXTERNA
+Resumo: `syncRunId` era ignorado; status `processed`, tipo obrigatório, zero líquido e payload bruto não eram tratados corretamente.
+Correção: continuação vinculada ao run/conta/workspace, parser fail-closed, status `processed` e `rawProviderData` preservado.
+Teste de regressão: `tests/account-money-settlement.test.js`; falta credencial real Mercado Pago.
+
+### ERR-032 — Orders/webhook usavam status legado e criavam segundo ledger
+Status: IMPLEMENTADO — AGUARDA VALIDAÇÃO EXTERNA
+Resumo: `approved` era aceito e polling/webhook criavam ledger provisório duplicável pelo Account Money.
+Correção: somente `processed/accredited`, com payment ID, referência, valor e data oficiais; Orders baixa planejamento sem criar fato no ledger.
+Teste de regressão: `tests/pix-receivables.test.js`; falta sandbox oficial.
+
+### ERR-033 — Evolution com segredo fixo, máscara sobrescrevível e teste financeiro falso
+Status: IMPLEMENTADO — AGUARDA VALIDAÇÃO EXTERNA
+Resumo: API key hardcoded, máscara regravável e teste com cliente/valor/Pix fictícios.
+Correção: configuração fail-closed, máscara rejeitada, campo vazio preserva segredo e teste envia somente mensagem neutra.
+Teste de regressão: `tests/audit-hardening.test.js`; falta instância Evolution real.
+
+### ERR-034 — Store financeiro paralelo e tipos Mock no runtime
+Status: RESOLVIDO
+Resumo: `financial-store.ts` mantinha entidades em memória com IDs aleatórios e DTOs produtivos usavam nomes `*Mock`.
+Correção: store reduzido a barramento de invalidação, exclusão usa Server Action/PostgreSQL e tipos renomeados para `*DTO`.
+Teste: typecheck e build.
+
+### ERR-035 — Segredos e banco Evolution na infraestrutura Docker
+Status: IMPLEMENTADO — AGUARDA VALIDAÇÃO EXTERNA
+Resumo: compose continha senhas/chaves fixas e não criava `evolution_db`.
+Correção: variáveis obrigatórias sem defaults secretos, placeholders em `.env.example` e init SQL idempotente do banco Evolution.
+Evidência pendente: daemon Docker indisponível nesta execução.
+
+### ERR-036 — Descoberta de recorrências ausente
+Status: RESOLVIDO
+Resumo: somente regras manuais eram processadas; o histórico real não gerava sugestões determinísticas.
+Correção: detecção mensal por descrição normalizada, intervalo, histórico e faixa de valor; gera apenas notificação auditável, nunca compromisso.
+Teste de regressão: `tests/recurrence-discovery.test.js`.
 
 ---
 

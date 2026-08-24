@@ -3,6 +3,8 @@ import { processActiveRecurrences } from "@/server/actions/recurrence";
 import { processNotificationAlerts } from "@/server/actions/notifications";
 import { runAutomaticReconciliationEngine } from "@/server/actions/reconciliation";
 import { syncMercadoPagoStatement } from "@/server/actions/transactions";
+import { INTERNAL_WORKER_CONTEXT } from "@/server/internal-context";
+import { discoverWorkspaceRecurrences } from "@/services/recurrence-discovery";
 
 export interface WorkerRunResult {
   success: boolean;
@@ -46,6 +48,11 @@ export class WorkerDaemonService {
         } catch (e: any) {
           console.warn(`[WorkerDaemon] Erro ao processar recorrências para workspace ${ws.id}:`, e.message);
         }
+        try {
+          await discoverWorkspaceRecurrences(ws.id);
+        } catch (e: any) {
+          console.warn(`[WorkerDaemon] Erro ao descobrir recorrências para workspace ${ws.id}:`, e.message);
+        }
 
         // 2. Avaliar alertas de notificação do workspace
         try {
@@ -57,7 +64,7 @@ export class WorkerDaemonService {
 
         // 3. Executar motor de conciliação automática do workspace
         try {
-          const reconRes = await runAutomaticReconciliationEngine(ws.id);
+          const reconRes = await runAutomaticReconciliationEngine(INTERNAL_WORKER_CONTEXT, ws.id);
           if (reconRes.success && reconRes.autoMatchedCount) {
             totalReconciled += reconRes.autoMatchedCount;
           }
@@ -80,6 +87,7 @@ export class WorkerDaemonService {
             await syncMercadoPagoStatement({
               syncRunId: syncRun.id,
               integrationAccountId: syncRun.integrationAccountId,
+              internalContext: INTERNAL_WORKER_CONTEXT,
             });
             resumedSyncs++;
           }

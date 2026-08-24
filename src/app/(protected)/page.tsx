@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 
 import { formatCurrency, formatDate } from "@/lib/formatters";
-import { FinancialItemMock, InstallmentMock, BalanceSummaryMock } from "@/types";
+import { FinancialItemDTO, InstallmentDTO, BalanceSummaryDTO } from "@/types";
 import {
   ResponsiveContainer,
   BarChart,
@@ -34,11 +34,11 @@ import {
 } from "recharts";
 
 export default function DashboardPage() {
-  const [selectedDrawerItem, setSelectedDrawerItem] = useState<FinancialItemMock | null>(null);
-  const [paymentInstallment, setPaymentInstallment] = useState<InstallmentMock | null>(null);
+  const [selectedDrawerItem, setSelectedDrawerItem] = useState<FinancialItemDTO | null>(null);
+  const [paymentInstallment, setPaymentInstallment] = useState<InstallmentDTO | null>(null);
   const [paymentAccountTitle, setPaymentAccountTitle] = useState("");
   const [mpConnected, setMpConnected] = useState(false);
-  const [summary, setSummary] = useState<BalanceSummaryMock | null>(null);
+  const [summary, setSummary] = useState<BalanceSummaryDTO | null>(null);
   const [chartData, setChartData] = useState<any[]>([]);
   const [recentTxs, setRecentTxs] = useState<any[]>([]);
   const [payables, setPayables] = useState<any[]>([]);
@@ -99,7 +99,7 @@ export default function DashboardPage() {
     };
   }, []);
 
-  const handleOpenPayment = (item: FinancialItemMock, inst: InstallmentMock) => {
+  const handleOpenPayment = (item: FinancialItemDTO, inst: InstallmentDTO) => {
     setPaymentAccountTitle(item.title);
     setPaymentInstallment(inst);
   };

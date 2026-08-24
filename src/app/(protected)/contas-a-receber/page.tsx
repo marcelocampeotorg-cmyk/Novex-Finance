@@ -8,21 +8,21 @@ import { NewAccountModal } from "@/components/ui/NewAccountModal";
 import { Search, Plus, QrCode, Eye, ArrowDownLeft, Send, Trash2, Edit3 } from "lucide-react";
 
 import { formatCurrency, formatDate } from "@/lib/formatters";
-import { FinancialItemMock, InstallmentMock } from "@/types";
+import { FinancialItemDTO, InstallmentDTO } from "@/types";
 
 export default function ContasAReceberPage() {
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedInstallment, setSelectedInstallment] = useState<InstallmentMock | null>(null);
+  const [selectedInstallment, setSelectedInstallment] = useState<InstallmentDTO | null>(null);
   const [selectedItemTitle, setSelectedItemTitle] = useState("");
   const [debtorName, setDebtorName] = useState("");
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState<FinancialItemMock | null>(null);
-  const [receivablesList, setReceivablesList] = useState<FinancialItemMock[]>([]);
+  const [editingItem, setEditingItem] = useState<FinancialItemDTO | null>(null);
+  const [receivablesList, setReceivablesList] = useState<FinancialItemDTO[]>([]);
 
   const loadItems = async () => {
     const { getFinancialItems } = await import("@/server/actions/financial-items");
     const items = await getFinancialItems("RECEIVABLE");
-    setReceivablesList(items as unknown as FinancialItemMock[]);
+    setReceivablesList(items as unknown as FinancialItemDTO[]);
   };
 
   useEffect(() => {

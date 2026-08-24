@@ -35,7 +35,7 @@ import {
 import {
   checkEvolutionConnectionState,
   fetchEvolutionQRCode,
-  sendWhatsAppDebtorReminder,
+  sendNeutralWhatsAppTest,
 } from "@/server/actions/notifications";
 
 export default function ConfiguracoesPage() {
@@ -86,7 +86,7 @@ export default function ConfiguracoesPage() {
 
       const evo = await getEvolutionApiStatus();
       if (evo.baseUrl) setEvoUrl(evo.baseUrl);
-      if (evo.maskedApiKey) setEvoApiKey(evo.maskedApiKey);
+      setEvoApiKey("");
       if (evo.instanceName) setEvoInstance(evo.instanceName);
     } catch (e) {
       console.error("Erro ao carregar status:", e);
@@ -153,7 +153,7 @@ export default function ConfiguracoesPage() {
     setMpFeedback(null);
 
     if (!tokenInput.trim()) {
-      setMpFeedback({ type: "error", msg: "Por favor, informe seu Access Token de Sandbox." });
+      setMpFeedback({ type: "error", msg: "Informe seu Access Token do Mercado Pago; o ambiente será detectado no servidor." });
       return;
     }
 
@@ -163,7 +163,6 @@ export default function ConfiguracoesPage() {
       const res = await saveMercadoPagoCredentials({
         accessToken: tokenInput.trim(),
         publicKey: publicKeyInput.trim(),
-        environment: "SANDBOX",
       });
 
       if (res.success) {
@@ -295,13 +294,7 @@ export default function ConfiguracoesPage() {
     setWaFeedback(null);
 
     try {
-      const res = await sendWhatsAppDebtorReminder({
-        debtorName: "Cliente Teste",
-        debtorPhone: testPhone,
-        amountCents: 15000,
-        dueDate: "10/08/2026",
-        pixCopiaECola: "00020126580014br.gov.bcb.pix.teste.novex.finance",
-      });
+      const res = await sendNeutralWhatsAppTest({ phone: testPhone });
 
       if (res.success) {
         setWaFeedback({ type: "success", msg: `Mensagem de teste enviada com sucesso para ${testPhone}!` });
@@ -734,7 +727,7 @@ export default function ConfiguracoesPage() {
                           type="password"
                           value={evoApiKey}
                           onChange={(e) => setEvoApiKey(e.target.value)}
-                          placeholder="Chave customizada do servidor Evolution API"
+                          placeholder="Deixe vazio para preservar a chave atual"
                           className="w-full rounded-lg border border-novex-border bg-novex-bg p-2 text-novex-text-primary font-mono"
                         />
                       </div>

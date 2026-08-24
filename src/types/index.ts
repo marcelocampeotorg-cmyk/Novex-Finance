@@ -7,7 +7,7 @@ export type TransactionDirection = "CREDIT" | "DEBIT";
 export type ContactType = "PERSON" | "COMPANY";
 export type PixKeyType = "CPF" | "CNPJ" | "EMAIL" | "PHONE";
 
-export interface PixKeyMock {
+export interface PixKeyDTO {
   id: string;
   type: PixKeyType;
   value: string;
@@ -15,7 +15,7 @@ export interface PixKeyMock {
   isDefault: boolean;
 }
 
-export interface ContactMock {
+export interface ContactDTO {
   id: string;
   name: string;
   type: ContactType;
@@ -25,11 +25,11 @@ export interface ContactMock {
   isDebtor: boolean;
   isPayee: boolean;
   notes?: string;
-  pixKeys: PixKeyMock[];
+  pixKeys: PixKeyDTO[];
   totalOwedCents?: number;
 }
 
-export interface InstallmentMock {
+export interface InstallmentDTO {
   id: string;
   financialItemId: string;
   sequence: number;
@@ -38,30 +38,30 @@ export interface InstallmentMock {
   settledAmountCents: number;
   dueDate: string;
   status: InstallmentStatus;
-  pixKey?: PixKeyMock;
+  pixKey?: PixKeyDTO;
   settlementDate?: string;
   uniqueReference: string;
 }
 
-export interface FinancialItemMock {
+export interface FinancialItemDTO {
   id: string;
   direction: FinancialDirection;
   kind: FinancialKind;
   title: string;
   description?: string;
-  contact?: ContactMock;
+  contact?: ContactDTO;
   pixKey?: string;
   category: string;
   categoryColor: string;
   totalAmountCents: number;
   startDate: string;
   status: FinancialStatus;
-  installments: InstallmentMock[];
+  installments: InstallmentDTO[];
   attachmentsCount: number;
   notes?: string;
 }
 
-export interface ExternalTransactionMock {
+export interface ExternalTransactionDTO {
   id: string;
   provider: "MERCADO_PAGO";
   externalId: string;
@@ -80,7 +80,7 @@ export interface ExternalTransactionMock {
   confidenceScore?: number;
 }
 
-export interface RecurrenceRuleMock {
+export interface RecurrenceRuleDTO {
   id: string;
   title: string;
   contactName: string;
@@ -94,7 +94,7 @@ export interface RecurrenceRuleMock {
   active: boolean;
 }
 
-export interface NotificationRuleMock {
+export interface NotificationRuleDTO {
   id: string;
   daysBefore: number[];
   onDueDate: boolean;
@@ -104,7 +104,7 @@ export interface NotificationRuleMock {
   enabled: boolean;
 }
 
-export interface BalanceSummaryMock {
+export interface BalanceSummaryDTO {
   currentBalanceCents: number;
   projectedBalanceCents: number;
   totalPayableMonthCents: number;

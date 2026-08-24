@@ -79,12 +79,16 @@ export async function POST(req: NextRequest) {
     const sigVerification = verifyWebhookSignature(req, dataId);
 
     // Regra 30: Determinar ambiente antes de criar registro idempotente
-    const isLive = body.live_mode === true || body.action === "order.paid";
+    if (typeof body.live_mode !== "boolean") {
+      return NextResponse.json({ error: "live_mode ausente na notificação" }, { status: 400 });
+    }
+    const isLive = body.live_mode;
     const environment = isLive ? "PRODUCTION" : "SANDBOX";
 
     // Regra 29: Identificador único baseado na NOTIFICAÇÃO (x-request-id ou ID único de webhook), não na action
     const xRequestId = req.headers.get("x-request-id");
-    const eventId = xRequestId ? `ev_${xRequestId}` : `ev_ord_${dataId}_${Date.now()}`;
+    if (!xRequestId) return NextResponse.json({ error: "x-request-id ausente" }, { status: 400 });
+    const eventId = `ev_${xRequestId}`;
 
     // 2. Inbox Idempotente de Webhook
     const existingEvent = await db.webhookEvent.findUnique({
@@ -171,7 +175,12 @@ export async function POST(req: NextRequest) {
     const remoteOrder = await getOrderById({ accessToken: creds.accessToken, orderId: dataId });
 
     if (remoteOrder.success && remoteOrder.isPaid) {
-      const paidAt = remoteOrder.paidAt ? new Date(remoteOrder.paidAt) : new Date();
+      if (!remoteOrder.paidAt || !remoteOrder.paymentId || remoteOrder.externalReference !== pixCharge.externalReference ||
+          remoteOrder.amountCents !== Number(pixCharge.amountCents)) {
+        await db.webhookEvent.update({ where: { id: webhookEvent.id }, data: { status: "FAILED", lastErrorCode: "INCOMPLETE_PAYMENT_EVIDENCE" } });
+        return NextResponse.json({ received: true, processed: false, reason: "Evidência oficial incompleta ou divergente" }, { status: 202 });
+      }
+      const paidAt = new Date(remoteOrder.paidAt);
 
       // BAIXA ATÔMICA DA PARCELA
       await db.$transaction(async (tx) => {
@@ -205,25 +214,6 @@ export async function POST(req: NextRequest) {
             settlementDate: paidAt,
           },
         });
-
-        // Regra 31: Notificação Webhook dá baixa na parcela e vincula o LedgerEntry existente ou cria provisório com sourceId único
-        const existingLedger = await tx.ledgerEntry.findFirst({
-          where: { workspaceId: pixCharge.workspaceId, sourceType: "MERCADO_PAGO_PIX", sourceId: dataId },
-        });
-
-        if (!existingLedger) {
-          await tx.ledgerEntry.create({
-            data: {
-              workspaceId: pixCharge.workspaceId,
-              installmentId: pixCharge.installmentId,
-              direction: "CREDIT",
-              amountCents: BigInt(chargeAmount),
-              occurredAt: paidAt,
-              sourceType: "MERCADO_PAGO_PIX",
-              sourceId: dataId,
-            },
-          });
-        }
 
         await tx.webhookEvent.update({
           where: { id: webhookEvent.id },

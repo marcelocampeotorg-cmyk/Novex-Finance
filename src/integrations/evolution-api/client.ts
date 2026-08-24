@@ -8,7 +8,7 @@ export interface SendWhatsAppMessageInput {
 
 export interface EvolutionAPIResponse {
   success: boolean;
-  messageId?: string;
+  messageId?: string | null;
   error?: string;
 }
 
@@ -46,7 +46,9 @@ export class EvolutionAPIClient {
   }
 
   private getApiKey(customKey?: string): string {
-    return customKey || process.env.EVOLUTION_API_KEY || "42960010999";
+    const apiKey = customKey || process.env.EVOLUTION_API_KEY;
+    if (!apiKey) throw new Error("EVOLUTION_API_KEY não configurada.");
+    return apiKey;
   }
 
   private getInstanceName(customInstance?: string): string {
@@ -177,7 +179,7 @@ export class EvolutionAPIClient {
           const data = await response.json();
           return {
             success: true,
-            messageId: data.key?.id || String(data.id || Date.now()),
+            messageId: data.key?.id || (data.id != null ? String(data.id) : null),
           };
         }
       } catch (e) {}

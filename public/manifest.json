@@ -3,9 +3,10 @@
   "name": "NOVEX Finance",
   "icons": [
     {
-      "src": "/brand/logo-novex-dark.svg",
-      "type": "image/svg+xml",
-      "sizes": "512x512 192x192 any"
+      "src": "/brand/novex_symbol_original.png",
+      "type": "image/png",
+      "sizes": "any",
+      "purpose": "any maskable"
     }
   ],
   "start_url": "/",

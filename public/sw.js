@@ -1,10 +1,9 @@
 // NOVEX Finance Service Worker (Offline cache & PWA standalone support)
-const CACHE_NAME = "novex-cache-v1";
+const CACHE_NAME = "novex-static-v2";
 const ASSETS = [
-  "/",
   "/manifest.json",
-  "/brand/logo-novex-dark.svg",
-  "/brand/icon-novex.png"
+  "/brand/novex_symbol_original.png",
+  "/brand/novex_logo_horizontal_original.png"
 ];
 
 self.addEventListener("install", (event) => {
@@ -22,10 +21,12 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET") return;
+  if (event.request.method !== "GET" || event.request.mode === "navigate") return;
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin || url.pathname.startsWith("/api/") || !ASSETS.includes(url.pathname)) return;
   event.respondWith(
     caches.match(event.request).then((cached) => {
-      return cached || fetch(event.request).catch(() => caches.match("/"));
+      return cached || fetch(event.request);
     })
   );
 });

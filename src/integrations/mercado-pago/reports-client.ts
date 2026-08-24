@@ -21,6 +21,7 @@ export interface MercadoPagoRawTransaction {
   counterpartDocument?: string;
   txid?: string;
   rawReference?: string;
+  rawProviderData?: Record<string, string>;
 }
 
 export interface ParseCsvResult {
@@ -186,7 +187,8 @@ export class MercadoPagoReportsClient {
       totalAmountCents: f.total_amount !== undefined ? Math.round(Number(f.total_amount) * 100) : 0,
       transactionCount: f.transaction_count || 0,
       downloadUrl: f.download_url || undefined,
-      status: f.status === "created" || f.status === "READY" ? "READY" : "PROCESSING",
+      status: ["processed", "ready", "created"].includes(String(f.status || "").toLowerCase()) ? "READY" :
+        String(f.status || "").toLowerCase() === "failed" ? "FAILED" : "PROCESSING",
     }));
   }
 
@@ -247,7 +249,7 @@ export class MercadoPagoReportsClient {
     const descIdx = findExactHeaderIndex(["DESCRIPTION"]);
     const refIdx = findExactHeaderIndex(["EXTERNAL_REFERENCE"]);
 
-    if (sourceIdIdx === -1 && netAmountIdx === -1 && amountIdx === -1) {
+    if (sourceIdIdx === -1 || typeIdx === -1 || dateIdx === -1 || netAmountIdx === -1) {
       return {
         transactions: [],
         validCount: 0,
@@ -297,7 +299,7 @@ export class MercadoPagoReportsClient {
       const rawNetAmountStr = netAmountIdx >= 0 ? cols[netAmountIdx] : undefined;
       const rawAmountStr = amountIdx >= 0 ? cols[amountIdx] : undefined;
 
-      const parsedNetVal = parseMonetaryValue(rawNetAmountStr || rawAmountStr);
+      const parsedNetVal = parseMonetaryValue(rawNetAmountStr);
       if (parsedNetVal === null) {
         rejectedCount++;
         errors.push(`Linha ${rowLineNum}: Rejeitada por formato numérico de valor líquido inválido.`);
@@ -320,8 +322,13 @@ export class MercadoPagoReportsClient {
       const direction: "CREDIT" | "DEBIT" = netAmountCents >= 0 ? "CREDIT" : "DEBIT";
       const absNetAmountCents = Math.abs(netAmountCents);
 
-      const typeStr = typeIdx >= 0 && cols[typeIdx] ? cols[typeIdx] : "SETTLEMENT";
-      const descStr = descIdx >= 0 && cols[descIdx] ? cols[descIdx] : `Relatório Liquidação ${typeStr}`;
+      const typeStr = typeIdx >= 0 ? cols[typeIdx]?.trim() : "";
+      if (!typeStr) {
+        rejectedCount++;
+        errors.push(`Linha ${rowLineNum}: Rejeitada por ausência de TRANSACTION_TYPE oficial.`);
+        continue;
+      }
+      const descStr = descIdx >= 0 && cols[descIdx] ? cols[descIdx] : typeStr;
       const refStr = refIdx >= 0 && cols[refIdx] ? cols[refIdx] : undefined;
 
       transactions.push({
@@ -334,6 +341,7 @@ export class MercadoPagoReportsClient {
         feeCents,
         netAmountCents: absNetAmountCents,
         rawReference: refStr,
+        rawProviderData: Object.fromEntries(headers.map((header, index) => [header, cols[index] ?? ""])),
       });
     }
 

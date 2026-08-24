@@ -13,15 +13,12 @@ services:
       - NODE_ENV=development
       - PORT=3000
       - APP_URL=http://localhost:3000
-      - DATABASE_URL=postgresql://novex:novex_dev_password@postgres:5432/novex_finance
+      - DATABASE_URL=postgresql://${POSTGRES_USER:?POSTGRES_USER obrigatorio}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obrigatoria}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB obrigatorio}
       - REDIS_URL=redis://redis:6379
-      - AUTH_SECRET=novex_dev_secret_key_change_in_production_32chars
+      - AUTH_SECRET=${AUTH_SECRET:?AUTH_SECRET obrigatorio}
       - ALLOW_PUBLIC_SIGNUP=false
-      - DEV_SEED_EMAIL=franklinjr18@hotmail.com
-      - DEV_SEED_PASSWORD=Novexbr159===
-      - CREDENTIALS_ENCRYPTION_KEY=novex_dev_encryption_key_32chars_long
-      - MERCADO_PAGO_ACCESS_TOKEN=REMOVIDO
-      - MERCADO_PAGO_WEBHOOK_SECRET=REMOVIDO
+      - CREDENTIALS_ENCRYPTION_KEY_BASE64=${CREDENTIALS_ENCRYPTION_KEY_BASE64:?CREDENTIALS_ENCRYPTION_KEY_BASE64 obrigatoria}
+      - MERCADO_PAGO_WEBHOOK_SECRET=${MERCADO_PAGO_WEBHOOK_SECRET:?MERCADO_PAGO_WEBHOOK_SECRET obrigatorio}
       - UPLOADS_DIR=/app/uploads
     depends_on:
       postgres:
@@ -36,13 +33,14 @@ services:
     container_name: novex_postgres
     restart: always
     environment:
-      POSTGRES_USER: novex
-      POSTGRES_PASSWORD: novex_dev_password
-      POSTGRES_DB: novex_finance
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER obrigatorio}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obrigatoria}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB obrigatorio}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U novex -d novex_finance"]
       interval: 5s

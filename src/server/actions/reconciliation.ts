@@ -3,6 +3,7 @@
 import { db } from "@/server/db";
 import { revalidatePath } from "next/cache";
 import { requireAuthenticatedWorkspace } from "@/server/auth-context";
+import { INTERNAL_WORKER_CONTEXT } from "@/server/internal-context";
 
 export interface ReconciliationScoreResult {
   score: number;
@@ -143,9 +144,11 @@ export async function categorizeTransactionDescription(description: string, work
 /**
  * Executar motor de conciliação automática para movimentações pendentes
  */
-export async function runAutomaticReconciliationEngine(targetWorkspaceId?: string) {
+export async function runAutomaticReconciliationEngine(internalContext?: symbol, targetWorkspaceId?: string) {
   try {
-    const workspaceId = targetWorkspaceId || (await requireAuthenticatedWorkspace()).workspaceId;
+    const workspaceId = internalContext === INTERNAL_WORKER_CONTEXT && targetWorkspaceId
+      ? targetWorkspaceId
+      : (await requireAuthenticatedWorkspace()).workspaceId;
 
     const unmatchedTxs = await db.externalTransaction.findMany({
       where: {
@@ -244,7 +247,7 @@ export async function runAutomaticReconciliationEngine(targetWorkspaceId?: strin
             data: {
               settledAmountCents: newSettled,
               status: isFullyPaid ? "SETTLED" : "PARTIAL",
-              settlementDate: new Date(),
+              settlementDate: currentTx.occurredAt,
             },
           });
 
@@ -344,7 +347,7 @@ export async function confirmSuggestedMatch(reconciliationId: string) {
           data: {
             settledAmountCents: newSettled,
             status: isFullyPaid ? "SETTLED" : "PARTIAL",
-            settlementDate: new Date(),
+            settlementDate: rec.externalTransaction!.occurredAt,
           },
         });
 
@@ -430,7 +433,7 @@ export async function unmatchTransaction(reconciliationId: string) {
 
         for (const rem of remainingMatches) {
           if (rem.externalTransaction) {
-            remainingSettled += rem.externalTransaction.netAmountCents || rem.externalTransaction.amountCents;
+            remainingSettled += rem.externalTransaction.netAmountCents;
             if (!latestOccurred || rem.externalTransaction.occurredAt > latestOccurred) {
               latestOccurred = rem.externalTransaction.occurredAt;
             }

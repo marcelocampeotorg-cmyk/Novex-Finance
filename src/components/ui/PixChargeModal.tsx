@@ -3,12 +3,12 @@
 import React, { useState } from "react";
 import { QrCode, Copy, Check, X, Send, ExternalLink } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/formatters";
-import { InstallmentMock } from "@/types";
+import { InstallmentDTO } from "@/types";
 
 interface PixChargeModalProps {
   isOpen: boolean;
   onClose: () => void;
-  installment: InstallmentMock | null;
+  installment: InstallmentDTO | null;
   debtorName?: string;
 }
 

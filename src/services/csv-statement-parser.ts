@@ -63,11 +63,12 @@ export function parseCSVStatement(csvContent: string): MercadoPagoRawTransaction
       if (!isNaN(feeVal)) feeCents = Math.round(Math.abs(feeVal) * 100);
     }
 
-    const description = descIdx !== -1 && row[descIdx] ? row[descIdx] : `Transação Extrato ${i}`;
-    const externalId = idIdx !== -1 && row[idIdx] ? row[idIdx] : `CSV-EXT-${Date.now()}-${i}`;
+    const description = descIdx !== -1 && row[descIdx] ? row[descIdx] : "Importação CSV";
+    const externalId = idIdx !== -1 ? row[idIdx]?.trim() : "";
+    if (!externalId) continue;
     
     // Parse de data
-    let occurredAtStr = new Date().toISOString();
+    let occurredAtStr = "";
     if (dateIdx !== -1 && row[dateIdx]) {
       const dateVal = row[dateIdx];
       // Tratar formato BR "DD/MM/YYYY" ou "DD/MM/YYYY HH:mm"
@@ -90,6 +91,7 @@ export function parseCSVStatement(csvContent: string): MercadoPagoRawTransaction
       }
     }
 
+    if (!occurredAtStr) continue;
     parsedTransactions.push({
       externalId,
       occurredAt: occurredAtStr,
@@ -98,7 +100,7 @@ export function parseCSVStatement(csvContent: string): MercadoPagoRawTransaction
       direction,
       amountCents,
       feeCents,
-      netAmountCents: amountCents - feeCents > 0 ? amountCents - feeCents : amountCents,
+      netAmountCents: Math.max(0, amountCents - feeCents),
       counterpartName: counterpartIdx !== -1 ? row[counterpartIdx] : undefined,
       counterpartDocument: docIdx !== -1 ? row[docIdx] : undefined,
       txid: txidIdx !== -1 ? row[txidIdx] : undefined,

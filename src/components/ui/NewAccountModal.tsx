@@ -26,12 +26,12 @@ const newAccountSchema = z.object({
 
 type NewAccountFormData = z.infer<typeof newAccountSchema>;
 
-import { FinancialItemMock } from "@/types";
+import { FinancialItemDTO } from "@/types";
 
 interface NewAccountModalProps {
   isOpen: boolean;
   onClose: () => void;
-  editItem?: FinancialItemMock | null;
+  editItem?: FinancialItemDTO | null;
   defaultDirection?: "PAYABLE" | "RECEIVABLE";
 }
 

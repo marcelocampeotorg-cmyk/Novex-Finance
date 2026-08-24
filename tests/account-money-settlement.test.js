@@ -55,6 +55,31 @@ test("Account Money: Preservacao distinta de amountCents (nominal) vs netAmountC
   assert.strictEqual(result.transactions[0].feeCents, 1000, "feeCents deve conter a tarifa (10.00)");
 });
 
+test("Account Money: TRANSACTION_TYPE e SETTLEMENT_NET_AMOUNT ausentes falham sem fallback", () => {
+  const client = new MercadoPagoReportsClient("APP_USR-VALID-TEST-TOKEN");
+  const missingType = client.parseSettlementReportCsv(
+    "SOURCE_ID;SETTLEMENT_NET_AMOUNT;SETTLEMENT_DATE\nTX1;10.00;2026-08-24T10:00:00Z"
+  );
+  assert.strictEqual(missingType.validCount, 0);
+  assert.match(missingType.errors[0], /colunas obrigatórias/i);
+
+  const missingNet = client.parseSettlementReportCsv(
+    "SOURCE_ID;TRANSACTION_TYPE;TRANSACTION_AMOUNT;SETTLEMENT_DATE\nTX1;SETTLEMENT;10.00;2026-08-24T10:00:00Z"
+  );
+  assert.strictEqual(missingNet.validCount, 0);
+  assert.match(missingNet.errors[0], /colunas obrigatórias/i);
+});
+
+test("Account Money: payload bruto do provedor e zero líquido real são preservados", () => {
+  const client = new MercadoPagoReportsClient("APP_USR-VALID-TEST-TOKEN");
+  const result = client.parseSettlementReportCsv(
+    "SOURCE_ID;TRANSACTION_TYPE;TRANSACTION_AMOUNT;SETTLEMENT_NET_AMOUNT;FEE_AMOUNT;SETTLEMENT_DATE;METADATA\nTX0;SETTLEMENT;10.00;0.00;10.00;2026-08-24T10:00:00Z;fee-total"
+  );
+  assert.strictEqual(result.transactions[0].netAmountCents, 0);
+  assert.strictEqual(result.transactions[0].amountCents, 1000);
+  assert.strictEqual(result.transactions[0].rawProviderData.METADATA, "fee-total");
+});
+
 test("Governança: Ausencia de /v1/payments/search e scripts destrutivos no repositório", () => {
   const reportsClientPath = path.join(__dirname, "../src/integrations/mercado-pago/reports-client.ts");
   const content = fs.readFileSync(reportsClientPath, "utf-8");

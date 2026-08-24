@@ -7,6 +7,7 @@ import { getActiveMercadoPagoIntegration } from "@/server/actions/integrations";
 import { parseMercadoPagoCredentials } from "@/lib/server/credentials-crypto";
 import { MercadoPagoReportsClient, MercadoPagoRawTransaction } from "@/integrations/mercado-pago/reports-client";
 import { categorizeTransactionDescription, runAutomaticReconciliationEngine } from "@/server/actions/reconciliation";
+import { INTERNAL_WORKER_CONTEXT } from "@/server/internal-context";
 
 export async function getExternalTransactions(period: string = "MONTHLY") {
   try {
@@ -51,7 +52,7 @@ export async function getExternalTransactions(period: string = "MONTHLY") {
 
     const results = await Promise.all(txs.map(async (tx) => {
       const activeRec = tx.reconciliations[0];
-      const category = await categorizeTransactionDescription(tx.description);
+      const category = await categorizeTransactionDescription(tx.description, workspaceId);
       return {
         id: tx.id,
         provider: tx.provider,
@@ -90,10 +91,14 @@ export async function importExternalTransactions(
   rawTransactions: MercadoPagoRawTransaction[],
   integrationAccountId: string | null = null,
   source: "MERCADO_PAGO_API" | "CSV_IMPORT" | "MANUAL_ADJUSTMENT" = "MERCADO_PAGO_API",
-  provider: "MERCADO_PAGO" | "EVOLUTION_API" | null = "MERCADO_PAGO"
+  provider: "MERCADO_PAGO" | "EVOLUTION_API" | null = "MERCADO_PAGO",
+  internalContext?: symbol,
+  internalWorkspaceId?: string,
 ) {
   try {
-    const { workspaceId } = await requireAuthenticatedWorkspace();
+    const workspaceId = internalContext === INTERNAL_WORKER_CONTEXT && internalWorkspaceId
+      ? internalWorkspaceId
+      : (await requireAuthenticatedWorkspace()).workspaceId;
 
     let insertedCount = 0;
     let updatedCount = 0;
@@ -136,14 +141,15 @@ export async function importExternalTransactions(
                 type: raw.type,
                 status: "APPROVED",
                 amountCents: BigInt(raw.amountCents),
-                feeCents: BigInt(raw.feeCents || 0),
-                netAmountCents: BigInt(raw.netAmountCents || raw.amountCents),
+                feeCents: BigInt(raw.feeCents ?? 0),
+                netAmountCents: BigInt(raw.netAmountCents),
                 occurredAt: occurredDate,
                 counterpartName: raw.counterpartName || null,
                 counterpartDocument: raw.counterpartDocument || null,
                 txid: raw.txid || null,
                 description: raw.description,
                 rawReference: raw.rawReference || null,
+                rawProviderData: raw.rawProviderData || undefined,
               },
             });
 
@@ -170,7 +176,9 @@ export async function importExternalTransactions(
     }
 
     // Disparar motor de conciliação automática após importação
-    const reconResult = await runAutomaticReconciliationEngine();
+    const reconResult = internalContext === INTERNAL_WORKER_CONTEXT
+      ? await runAutomaticReconciliationEngine(INTERNAL_WORKER_CONTEXT, workspaceId)
+      : await runAutomaticReconciliationEngine();
 
     revalidatePath("/movimentacoes");
     revalidatePath("/relatorios");
@@ -193,16 +201,18 @@ export async function importExternalTransactions(
  * Pipeline Oficial do Relatório Dinheiro em Conta (Settlement Report - Assíncrono)
  */
 export async function syncMercadoPagoStatement(
-  opts?: { force?: boolean; syncRunId?: string; integrationAccountId?: string | null } | boolean
+  opts?: { force?: boolean; syncRunId?: string; integrationAccountId?: string | null; internalContext?: symbol } | boolean
 ) {
   const isForce = typeof opts === "boolean" ? opts : opts?.force ?? false;
   const syncRunId = typeof opts === "object" ? opts?.syncRunId : undefined;
   const targetIntegrationId = typeof opts === "object" ? opts?.integrationAccountId : undefined;
+  const isInternalWorker = typeof opts === "object" && opts.internalContext === INTERNAL_WORKER_CONTEXT;
 
   let workspaceId: string;
   let account: any;
 
   if (targetIntegrationId) {
+    if (!isInternalWorker || !syncRunId) throw new Error("Acesso interno do worker inválido.");
     const acc = await db.integrationAccount.findUnique({ where: { id: targetIntegrationId } });
     if (!acc) throw new Error("Conta de integração não encontrada.");
     workspaceId = acc.workspaceId;
@@ -232,14 +242,13 @@ export async function syncMercadoPagoStatement(
   }
 
   // 1. Verificar se existe SyncRun em andamento (PROCESSING) ou criar novo
-  let syncRun = await db.syncRun.findFirst({
-    where: {
-      workspaceId,
-      integrationAccountId: account.id,
-      status: "PROCESSING",
-    },
+  let syncRun = syncRunId ? await db.syncRun.findFirst({
+    where: { id: syncRunId, workspaceId, integrationAccountId: account.id, status: "PROCESSING" },
+  }) : await db.syncRun.findFirst({
+    where: { workspaceId, integrationAccountId: account.id, status: "PROCESSING" },
     orderBy: { createdAt: "desc" },
   });
+  if (syncRunId && !syncRun) throw new Error("SyncRun específico não encontrado ou não pertence à integração/workspace.");
 
   const beginDate = syncRun ? syncRun.beginDate : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   const endDate = syncRun ? syncRun.endDate : new Date();
@@ -328,7 +337,9 @@ export async function syncMercadoPagoStatement(
       parseResult.transactions,
       account.id,
       "MERCADO_PAGO_API",
-      "MERCADO_PAGO"
+      "MERCADO_PAGO",
+      INTERNAL_WORKER_CONTEXT,
+      workspaceId,
     );
 
     if (!importResult.success) {
@@ -567,29 +578,20 @@ export async function matchReconciliation(externalTransactionId: string, install
         where: { id: externalTransactionId },
       });
 
+      if (!extTx || extTx.workspaceId !== workspaceId) throw new Error("Movimentação não encontrada no workspace.");
+      const installment = await tx.installment.findFirst({ where: { id: installmentId, financialItem: { workspaceId } } });
+      if (!installment) throw new Error("Parcela não encontrada no workspace.");
+
       await tx.installment.update({
         where: { id: installmentId },
         data: {
           status: "SETTLED",
-          settlementDate: extTx ? extTx.occurredAt : new Date(),
-          settledAmountCents: extTx ? extTx.amountCents : undefined,
+          settlementDate: extTx.occurredAt,
+          settledAmountCents: extTx.amountCents,
         },
       });
 
-      if (extTx) {
-        await tx.ledgerEntry.create({
-          data: {
-            workspaceId,
-            externalTransactionId,
-            installmentId,
-            direction: extTx.direction,
-            amountCents: extTx.amountCents,
-            occurredAt: extTx.occurredAt,
-            sourceType: "CONCILIATION",
-            sourceId: rec.id,
-          },
-        });
-      }
+      await tx.ledgerEntry.updateMany({ where: { workspaceId, externalTransactionId }, data: { installmentId } });
 
       revalidatePath("/movimentacoes");
       revalidatePath("/contas-a-pagar");
