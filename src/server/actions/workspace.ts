@@ -5,13 +5,29 @@ import { BalanceSummaryMock } from "@/types";
 import { requireAuthenticatedWorkspace } from "@/server/auth-context";
 import { IntegrationAccount } from "@prisma/client";
 
+export type IntegrationAccountDTO = {
+  id: string;
+  provider: string;
+  status: string;
+  environment: string | null;
+  displayName: string | null;
+  lastSyncAt: Date | null;
+  lastValidatedAt: Date | null;
+  lastValidationErrorCode: string | null;
+};
+
 /**
  * Obtém a integração ativa do Mercado Pago para o Workspace atual,
  * de forma determinística e segura.
  */
-export async function getActiveMercadoPagoIntegration(workspaceId: string): Promise<IntegrationAccount | null> {
-  // A integração ativa é a primeira conectada (Production ou Sandbox).
-  // Se houver mais de uma (legado sujo), podemos preferir a que foi validada por último.
+export async function getActiveMercadoPagoIntegration(workspaceIdParam?: string): Promise<IntegrationAccountDTO | null> {
+  const context = await requireAuthenticatedWorkspace();
+  const workspaceId = workspaceIdParam || context.workspaceId;
+  
+  if (workspaceId !== context.workspaceId) {
+    throw new Error("Unauthorized workspace access");
+  }
+
   const integrations = await db.integrationAccount.findMany({
     where: {
       workspaceId,
@@ -21,10 +37,20 @@ export async function getActiveMercadoPagoIntegration(workspaceId: string): Prom
     orderBy: {
       lastValidatedAt: 'desc'
     },
-    take: 1
+    take: 1,
+    select: {
+      id: true,
+      provider: true,
+      status: true,
+      environment: true,
+      displayName: true,
+      lastSyncAt: true,
+      lastValidatedAt: true,
+      lastValidationErrorCode: true,
+    }
   });
 
-  return integrations.length > 0 ? integrations[0] : null;
+  return integrations.length > 0 ? (integrations[0] as IntegrationAccountDTO) : null;
 }
 export async function getWorkspaceSummary() {
   try {
@@ -104,6 +130,27 @@ export async function getWorkspaceSummary() {
       currentBalanceCents = balance;
     }
 
+    const debtorContacts = await db.contact.findMany({
+      where: { workspaceId, isDebtor: true, deletedAt: null },
+      select: { id: true }
+    });
+    let totalDebtorsOwedCents = 0;
+    if (debtorContacts.length > 0) {
+      const debtorItems = await db.installment.aggregate({
+        _sum: { amountCents: true },
+        where: {
+          financialItem: {
+            workspaceId,
+            contactId: { in: debtorContacts.map((c: any) => c.id) },
+            direction: "RECEIVABLE",
+            deletedAt: null,
+          },
+          status: { notIn: ["SETTLED", "CANCELED"] },
+        },
+      });
+      totalDebtorsOwedCents = Number(debtorItems._sum.amountCents) || 0;
+    }
+
     const projectedBalanceCents = currentBalanceCents + totalReceivableMonthCents - totalPayableMonthCents;
 
     return {
@@ -113,7 +160,7 @@ export async function getWorkspaceSummary() {
       totalPayableMonthCents,
       totalReceivableMonthCents,
       totalOverdueCents,
-      totalDebtorsOwedCents: 0,
+      totalDebtorsOwedCents,
       lastSyncAt,
       syncSource,
       accountDisplayName,
@@ -129,17 +176,16 @@ export async function getWorkspaceSummary() {
     console.error("Erro ao calcular resumo:", error);
     return {
       success: false as const,
-      errorCode: error.message?.includes("UNAUTHORIZED") ? "UNAUTHORIZED" : "DATABASE_ERROR",
-      error: error.message,
+      error: String(error),
     };
   }
 }
 
 export async function getWorkspaceName() {
   try {
-    const { workspaceId } = await requireAuthenticatedWorkspace();
+    const { workspaceId, workspaceName } = await requireAuthenticatedWorkspace();
     const ws = await db.workspace.findUnique({ where: { id: workspaceId } });
-    return { success: true, name: ws?.name || "Novex Finance" };
+    return { success: true, name: ws?.name || workspaceName || "Novex Finance" };
   } catch (err) {
     return { success: false, name: "Novex Finance", error: String(err) };
   }
@@ -193,7 +239,8 @@ export async function setManualInitialBalance(targetBalanceCents: number) {
         data: {
           workspaceId,
           integrationAccountId: mpIntegration.id,
-          provider: "MANUAL_ADJUSTMENT" as any, // Adicionado como cast pois precisamos garantir que MANUAL_ADJUSTMENT será processado sem erro ou adicionar ao Enum
+          provider: "MERCADO_PAGO",
+          source: "MANUAL_ADJUSTMENT",
           externalId: "SALDO_INICIAL_" + Date.now(),
           type: "TRANSFER",
           direction: isCredit ? "CREDIT" : "DEBIT",
@@ -216,7 +263,7 @@ export async function setManualInitialBalance(targetBalanceCents: number) {
 export async function getDashboardData() {
   const summary = await getWorkspaceSummary();
   if (!summary.success) {
-    return { summary: null, recentTransactions: [], chartData: [] };
+    return { summary: null, recentTransactions: [], chartData: [], payables: [], debtorsCount: 0 };
   }
   const { workspaceId } = await requireAuthenticatedWorkspace();
 
@@ -236,6 +283,37 @@ export async function getDashboardData() {
     category: "Movimentação", // simplificado para não precisar do async categorize
     reconciliationStatus: tx.reconciliations[0]?.status || "UNMATCHED",
   }));
+
+  const rawPayables = await db.financialItem.findMany({
+    where: { workspaceId, direction: "PAYABLE", status: "ACTIVE", deletedAt: null },
+    include: {
+      installments: { where: { status: { notIn: ["SETTLED", "CANCELED"] } }, orderBy: { dueDate: "asc" }, take: 1 },
+      contact: true,
+      category: true,
+    },
+    orderBy: { startDate: "asc" },
+    take: 5,
+  });
+
+  const payables = rawPayables.map((item: any) => ({
+    id: item.id,
+    title: item.title,
+    contact: item.contact,
+    category: item.category?.name || "Geral",
+    categoryColor: item.category?.colorToken || "#6B7280",
+    startDate: item.startDate.toISOString(),
+    installments: item.installments.map((inst: any) => ({
+      id: inst.id,
+      sequence: inst.sequence,
+      amountCents: Number(inst.amountCents),
+      dueDate: inst.dueDate.toISOString(),
+      status: inst.status,
+    })),
+  }));
+
+  const debtorsCount = await db.contact.count({
+    where: { workspaceId, isDebtor: true, deletedAt: null },
+  });
 
   // Chart data: agrupar por mês
   const now = new Date();
@@ -271,14 +349,14 @@ export async function getDashboardData() {
     });
   }
 
-  return { summary, recentTransactions, chartData };
+  return { summary, recentTransactions, chartData, payables, debtorsCount };
 }
 
 export async function triggerMercadoPagoSync(force: boolean = false) {
   try {
     const { syncMercadoPagoStatement } = await import('./transactions');
     return await syncMercadoPagoStatement(force);
-  } catch (error) {
-    return { success: false, error: String(error) };
+  } catch (error: any) {
+    return { success: false, error: error?.message || String(error) };
   }
 }

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { X, Copy, Check, RefreshCw, QrCode as QrIcon, AlertCircle, CheckCircle2, Clock } from "lucide-react";
-import { getReceivablePixChargeStatus, generateReceivablePixCharge, PixChargeStatusResult, refundPixCharge } from "@/server/actions/pix-receivables";
+import { getReceivablePixChargeStatus, generateReceivablePixCharge, PixChargeStatusResult } from "@/server/actions/pix-receivables";
 import { formatCurrency } from "@/lib/formatters";
 
 interface ReceivablePixChargeModalProps {
@@ -31,8 +31,6 @@ export function ReceivablePixChargeModal({
   const [refreshing, setRefreshing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [refunding, setRefunding] = useState(false);
-  const [refundSuccess, setRefundSuccess] = useState<string | null>(null);
 
   const pollingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const pollDelayRef = useRef(5000); // 5s inicial
@@ -57,7 +55,6 @@ export function ReceivablePixChargeModal({
   const initCharge = async () => {
     setLoading(true);
     setErrorMsg(null);
-    setRefundSuccess(null);
     stopPolling();
 
     try {
@@ -122,27 +119,6 @@ export function ReceivablePixChargeModal({
     setTimeout(() => setCopied(false), 2500);
   };
 
-  const handleRefund = async () => {
-    if (!chargeData?.pixChargeId) return;
-    if (!confirm("Tem certeza que deseja estornar este recebimento? O valor será devolvido ao pagador (Mercado Pago). Apenas o Proprietário (OWNER) tem permissão.")) return;
-    
-    setRefunding(true);
-    setErrorMsg(null);
-    try {
-      const res = await refundPixCharge({ pixChargeId: chargeData.pixChargeId });
-      if (res.success) {
-        setRefundSuccess(res.message || "Estorno processado com sucesso!");
-        if (onSuccess) onSuccess();
-      } else {
-        setErrorMsg(res.error || "Falha ao estornar pagamento.");
-      }
-    } catch (e: any) {
-      setErrorMsg("Erro de conexão ao tentar estornar.");
-    } finally {
-      setRefunding(false);
-    }
-  };
-
   if (!isOpen) return null;
 
   return (
@@ -184,52 +160,23 @@ export function ReceivablePixChargeModal({
           </div>
         ) : chargeData?.isPaid ? (
           <div className="py-8 flex flex-col items-center justify-center gap-4 text-center">
-            {refundSuccess ? (
-              <>
-                <div className="p-4 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">
-                  <CheckCircle2 className="h-12 w-12" />
-                </div>
-                <div className="space-y-1">
-                  <h4 className="text-xl font-bold text-blue-400">Pagamento Estornado</h4>
-                  <p className="text-xs text-novex-text-secondary">
-                    {refundSuccess}
-                  </p>
-                </div>
-                <button
-                  onClick={onClose}
-                  className="mt-2 px-6 py-2.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white font-bold text-xs transition-colors cursor-pointer"
-                >
-                  Fechar
-                </button>
-              </>
-            ) : (
-              <>
-                <div className="p-4 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 animate-bounce">
-                  <CheckCircle2 className="h-12 w-12" />
-                </div>
-                <div className="space-y-1">
-                  <h4 className="text-xl font-bold text-emerald-400">Pagamento Recebido!</h4>
-                  <p className="text-xs text-novex-text-secondary">
-                    A parcela de <strong>{formatCurrency(amountCents)}</strong> foi quitada e registrada no caixa.
-                  </p>
-                </div>
-                <div className="flex items-center gap-3 mt-2">
-                  <button
-                    onClick={onClose}
-                    className="px-6 py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-novex-bg font-bold text-xs transition-colors cursor-pointer"
-                  >
-                    Concluir
-                  </button>
-                  <button
-                    onClick={handleRefund}
-                    disabled={refunding}
-                    className="px-4 py-2.5 rounded-lg bg-novex-surface2 border border-novex-border hover:bg-rose-500/20 hover:border-rose-500/40 text-rose-400 font-bold text-xs transition-colors cursor-pointer disabled:opacity-50"
-                  >
-                    {refunding ? "Estornando..." : "Devolver Pix"}
-                  </button>
-                </div>
-              </>
-            )}
+            <div className="p-4 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 animate-bounce">
+              <CheckCircle2 className="h-12 w-12" />
+            </div>
+            <div className="space-y-1">
+              <h4 className="text-xl font-bold text-emerald-400">Pagamento Recebido!</h4>
+              <p className="text-xs text-novex-text-secondary">
+                A parcela de <strong>{formatCurrency(amountCents)}</strong> foi quitada e registrada no caixa.
+              </p>
+            </div>
+            <div className="flex items-center gap-3 mt-2">
+              <button
+                onClick={onClose}
+                className="px-6 py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-novex-bg font-bold text-xs transition-colors cursor-pointer"
+              >
+                Concluir
+              </button>
+            </div>
           </div>
         ) : (
           <div className="space-y-5">

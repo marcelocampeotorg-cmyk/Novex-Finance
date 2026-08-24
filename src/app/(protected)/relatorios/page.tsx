@@ -55,6 +55,32 @@ export default function RelatoriosPage() {
 
   const superavit = avgReceita - avgDespesa;
 
+  const [exporting, setExporting] = useState(false);
+
+  const handleExportCsv = async () => {
+    try {
+      setExporting(true);
+      const { generateTransactionsCsv } = await import("@/server/actions/export");
+      const res = await generateTransactionsCsv();
+      if (res.success && res.csvContent && res.filename) {
+        const blob = new Blob([res.csvContent], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute("download", res.filename);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } else {
+        alert(res.error || "Erro ao exportar CSV.");
+      }
+    } catch (e: any) {
+      alert("Falha de comunicação ao exportar.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <PageHeader
@@ -62,11 +88,12 @@ export default function RelatoriosPage() {
         description="Análise detalhada do fluxo de caixa, extrato de liquidação Dinheiro em Conta e distribuição por categoria."
         actions={
           <button
-            onClick={() => alert("Relatório exportado em formato CSV / PDF.")}
-            className="flex items-center gap-2 rounded-lg bg-novex-surface2 hover:bg-novex-border text-novex-text-primary border border-novex-border px-4 py-2 text-xs font-semibold transition-colors"
+            onClick={handleExportCsv}
+            disabled={exporting}
+            className="flex items-center gap-2 rounded-lg bg-novex-surface2 hover:bg-novex-border text-novex-text-primary border border-novex-border px-4 py-2 text-xs font-semibold transition-colors disabled:opacity-50 cursor-pointer"
           >
-            <Download className="h-4 w-4" />
-            <span>Exportar Relatório</span>
+            <Download className={`h-4 w-4 ${exporting ? "animate-spin text-novex-cyan" : ""}`} />
+            <span>{exporting ? "Exportando..." : "Exportar CSV Real"}</span>
           </button>
         }
       />

@@ -11,7 +11,7 @@
     "test": "node --experimental-strip-types --test tests/*.test.js",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
-    "db:seed": "ts-node prisma/seed.ts"
+    "db:seed": "npx tsx prisma/seed.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",

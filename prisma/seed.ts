@@ -1,5 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-import { auth } from "../src/lib/auth";
+import { hashPassword } from "better-auth/crypto";
 const prisma = new PrismaClient();
 
 async function main() {
@@ -13,7 +13,7 @@ async function main() {
     process.exit(1);
   }
 
-  const email = process.env.DEV_SEED_EMAIL || "frank@novexfinance.local";
+  const email = process.env.DEV_SEED_EMAIL || "franklinjr18@hotmail.com";
   const password = process.env.DEV_SEED_PASSWORD;
 
   console.log(`Iniciando seed de desenvolvimento para o usuário: ${email}...`);
@@ -22,22 +22,44 @@ async function main() {
     where: { email },
   });
 
-  if (!user) {
-    console.log("Usuário não existe. Criando com Better Auth...");
-    // @ts-ignore - simulando req/res se necessário, mas signUpEmail via Server API costuma funcionar
-    await auth.api.signUpEmail({
-      body: {
-        email,
-        password,
-        name: "Dev User",
-      },
-    });
-    user = await prisma.user.findUnique({ where: { email } });
-  }
+  const hashedPassword = await hashPassword(password);
 
   if (!user) {
-    console.error("Falha ao criar o usuário via Better Auth.");
-    process.exit(1);
+    console.log("Usuário não existe. Criando usuário e conta com hash...");
+    user = await prisma.user.create({
+      data: {
+        email,
+        name: "Dev User",
+        emailVerified: true,
+        accounts: {
+          create: {
+            accountId: email,
+            providerId: "credential",
+            password: hashedPassword,
+          },
+        },
+      },
+    });
+  } else {
+    console.log("Usuário existe. Sincronizando senha hash do dev seed...");
+    const account = await prisma.account.findFirst({
+      where: { userId: user.id, providerId: "credential" },
+    });
+    if (account) {
+      await prisma.account.update({
+        where: { id: account.id },
+        data: { password: hashedPassword },
+      });
+    } else {
+      await prisma.account.create({
+        data: {
+          userId: user.id,
+          accountId: user.id,
+          providerId: "credential",
+          password: hashedPassword,
+        },
+      });
+    }
   }
 
   await prisma.$transaction(async (tx) => {

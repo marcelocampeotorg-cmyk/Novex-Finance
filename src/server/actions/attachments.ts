@@ -17,7 +17,15 @@ export interface UploadAttachmentInput {
 
 export { validateAttachmentFile };
 
-export async function generatePresignedUrl(input: UploadAttachmentInput) {
+export interface PresignedUrlResult {
+  success: boolean;
+  uploadUrl?: string;
+  storageKey?: string;
+  metadata?: any;
+  error?: string;
+}
+
+export async function generatePresignedUrl(input: UploadAttachmentInput): Promise<PresignedUrlResult> {
   try {
     const { workspaceId, userId } = await requireAuthenticatedWorkspace();
 
@@ -26,26 +34,9 @@ export async function generatePresignedUrl(input: UploadAttachmentInput) {
       return { success: false, error: validation.error };
     }
 
-    const storageKey = `attachments/${workspaceId}/${Date.now()}-${crypto.randomBytes(4).toString("hex")}-${input.originalName}`;
-
-    // Em uma aplicação real, chamaríamos S3/GCS aqui para gerar a presigned URL
-    // const s3Client = new S3Client(...);
-    // const uploadUrl = await getSignedUrl(s3Client, new PutObjectCommand({ Bucket, Key: storageKey }), { expiresIn: 3600 });
-    const uploadUrl = `https://mock-storage.novexfinance.com/upload/${storageKey}`;
-
     return {
-      success: true,
-      uploadUrl,
-      storageKey,
-      metadata: {
-        workspaceId,
-        ownerType: input.ownerType,
-        ownerId: input.ownerId,
-        originalName: input.originalName,
-        mimeType: input.mimeType,
-        sizeBytes: input.sizeBytes,
-        uploadedBy: userId,
-      }
+      success: false,
+      error: "Armazenamento em nuvem (S3/GCS) não configurado nesta versão. Upload de anexos desativado por segurança."
     };
   } catch (error: any) {
     console.error("Erro ao gerar URL de upload:", error);

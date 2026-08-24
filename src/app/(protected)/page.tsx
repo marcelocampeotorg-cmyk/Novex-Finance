@@ -55,14 +55,22 @@ export default function DashboardPage() {
     setSyncError(null);
     try {
       const { triggerMercadoPagoSync, getDashboardData } = await import("@/server/actions/workspace");
-      const syncRes = await triggerMercadoPagoSync(forceSync);
-      if (!syncRes.success) {
-        setSyncError("error" in syncRes && typeof syncRes.error === "string" ? syncRes.error : "Falha na sincronização.");
+
+      try {
+        const syncRes = await triggerMercadoPagoSync(forceSync);
+        if (!syncRes.success && "error" in syncRes && typeof syncRes.error === "string") {
+          setSyncError(syncRes.error);
+        }
+      } catch (syncErr: any) {
+        console.warn("Mercado Pago sync ignorado ou com erro:", syncErr?.message);
       }
+
       const res = await getDashboardData();
-      setSummary(res.summary);
-      setChartData(res.chartData);
-      setRecentTxs(res.recentTransactions);
+      if (res.summary) setSummary(res.summary);
+      if (res.chartData) setChartData(res.chartData);
+      if (res.recentTransactions) setRecentTxs(res.recentTransactions);
+      if (res.payables) setPayables(res.payables);
+      if (typeof res.debtorsCount === "number") setDebtorsCount(res.debtorsCount);
     } catch (e) {
       console.error("Erro ao carregar dados do dashboard com auto-sync:", e);
       setSyncError("Erro de comunicação com o servidor.");

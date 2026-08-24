@@ -16,6 +16,7 @@
 *.log
 *.dump
 *.sql
+!prisma/migrations/**/*.sql
 *.sqlite
 npm-debug.log*
 yarn-debug.log*
