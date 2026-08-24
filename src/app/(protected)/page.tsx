@@ -111,7 +111,7 @@ export default function DashboardPage() {
     totalReceivableMonthCents: 0,
     totalOverdueCents: 0,
     totalDebtorsOwedCents: 0,
-    lastSyncAt: new Date().toISOString(),
+    lastSyncAt: null,
     syncSource: "CALCULADO" as const,
     accountDisplayName: "-",
     unresolvedTransactionsCount: 0,
@@ -121,8 +121,8 @@ export default function DashboardPage() {
   return (
     <div className="space-y-8 animate-in fade-in duration-300">
       <PageHeader
-        title="Visão Geral — Dashboard"
-        description="Acompanhamento automatizado de saldo, fluxo de caixa e conciliação Mercado Pago."
+        title="Visão Geral das Finanças"
+        description="Acompanhamento transparente do seu saldo, fluxo de caixa e conciliação financeira."
         actions={
           <button
             onClick={() => loadDashboard(true)}

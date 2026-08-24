@@ -138,8 +138,8 @@ export class MercadoPagoReportsClient {
       const cols = lines[i].split(delimiter).map((c) => c.trim().replace(/^"|"$/g, ""));
       if (cols.length < headers.length) continue;
 
-      const rawSourceId = sourceIdIdx >= 0 ? cols[sourceIdIdx] : `SETTLE_${i}_${Date.now()}`;
-      if (!rawSourceId) continue;
+      const rawSourceId = sourceIdIdx >= 0 ? cols[sourceIdIdx] : undefined;
+      if (!rawSourceId || rawSourceId.trim() === "") continue;
 
       const rawNetAmountStr = netAmountIdx >= 0 ? cols[netAmountIdx] : (amountIdx >= 0 ? cols[amountIdx] : "0");
       const parsedNetVal = parseFloat(rawNetAmountStr.replace(",", ".")) || 0;
@@ -151,12 +151,12 @@ export class MercadoPagoReportsClient {
       const rawFeeStr = feeIdx >= 0 ? cols[feeIdx] : "0";
       const feeCents = Math.round(Math.abs(parseFloat(rawFeeStr.replace(",", ".")) || 0) * 100);
 
-      const rawDateStr = dateIdx >= 0 ? cols[dateIdx] : new Date().toISOString();
-      let occurredAt = new Date().toISOString();
-      try {
-        const d = new Date(rawDateStr);
-        if (!isNaN(d.getTime())) occurredAt = d.toISOString();
-      } catch (_) {}
+      const rawDateStr = dateIdx >= 0 ? cols[dateIdx] : undefined;
+      if (!rawDateStr || rawDateStr.trim() === "") continue;
+
+      const d = new Date(rawDateStr);
+      if (isNaN(d.getTime())) continue;
+      const occurredAt = d.toISOString();
 
       const typeStr = typeIdx >= 0 ? cols[typeIdx] : "SETTLEMENT";
       const descStr = descIdx >= 0 && cols[descIdx] ? cols[descIdx] : `Relatório Liquidação ${typeStr}`;

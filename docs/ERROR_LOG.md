@@ -52,6 +52,21 @@ Status: RESOLVIDO
 Resumo: attachments/lixeira/export/Pix demonstrativo precisavam ser removidos ou desativados de forma honesta.  
 Correção: Implementada exportação CSV real com sanitização contra injeção em `export.ts`, lixeira real integrada com `deletedAt` no Prisma em `trash.ts`, desativação segura de presigned URLs em `attachments.ts` e remoção completa de botões de simulação em `PaymentDialog.tsx`.
 
+### ERR-012 — Registros de teste/demo e parcelas fictícias no banco local
+Status: RESOLVIDO
+Resumo: O banco local continha 150 movimentações originadas de `/v1/payments/search`, 4 itens recuperados e 5 SyncRuns fictícios gerando saldo artificial de R$ 5.333,73.
+Correção: Executada auditoria read-only completa e purga segura dos registros de teste/fixtures, deixando o banco limpo com saldo R$ 0,00 e lastSyncAt nulo.
+
+### ERR-013 — Status "Sincronizado" e data de sincronização fictícia sem importação real
+Status: RESOLVIDO
+Resumo: A UI exibia "Sincronizado" e inicializava `lastSyncAt` com a data atual mesmo quando a sincronização real não havia ocorrido.
+Correção: Atualizado `getWorkspaceSummary` e componentes visuais para manter `lastSyncAt: null` e exibir "Não Sincronizado" / "Pendente" até que uma sincronização real ocorra.
+
+### ERR-014 — Fallbacks artificiais (Date.now() / new Date()) no parser de liquidação
+Status: RESOLVIDO
+Resumo: O parser de liquidação fabricava IDs e datas artificiais em caso de omissão no CSV.
+Correção: Removidos fallbacks artificiais do parser; linhas sem identificador ou data oficiais válidos são rejeitadas deterministicamente.
+
 ---
 
 ## Template

@@ -213,56 +213,89 @@ export async function syncMercadoPagoStatement(force: boolean = false) {
     }
   }
 
-  // 1. Criar ou verificar SyncRun em andamento (Pipeline Assíncrono)
+  // 1. Verificar se existe SyncRun em andamento (PROCESSING) ou criar novo
+  let syncRun = await db.syncRun.findFirst({
+    where: {
+      workspaceId,
+      integrationAccountId: account.id,
+      status: "PROCESSING",
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
   const beginDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   const endDate = new Date();
 
-  const syncRun = await db.syncRun.create({
-    data: {
-      workspaceId,
-      integrationAccountId: account.id,
-      source: "MERCADO_PAGO_API",
-      status: "PROCESSING",
-      beginDate,
-      endDate,
-      startedAt: new Date(),
-    },
-  });
+  if (!syncRun) {
+    syncRun = await db.syncRun.create({
+      data: {
+        workspaceId,
+        integrationAccountId: account.id,
+        source: "MERCADO_PAGO_API",
+        status: "PROCESSING",
+        beginDate,
+        endDate,
+        startedAt: new Date(),
+      },
+    });
+  }
 
   try {
     const credentials = parseMercadoPagoCredentials(account.encryptedCredentials);
     const client = new MercadoPagoReportsClient(credentials.accessToken);
 
-    // 2. Solicitar geração assíncrona do Settlement Report
-    const requestRes = await client.requestSettlementReport(beginDate, endDate);
-
-    if (requestRes.reportId || requestRes.fileFileName) {
-      await db.syncRun.update({
-        where: { id: syncRun.id },
-        data: {
-          remoteReportId: requestRes.reportId,
-          remoteFileName: requestRes.fileFileName,
-        },
-      });
-    }
-
-    // 3. Consultar relatórios de liquidação disponíveis
-    const reports = await client.listSettlementReports();
-    const readyReport = reports.find((r) => r.status === "READY");
-
-    let rawTxs: MercadoPagoRawTransaction[] = [];
-
-    if (readyReport && readyReport.downloadUrl) {
-      const fileRes = await fetch(readyReport.downloadUrl, {
-        headers: { Authorization: `Bearer ${credentials.accessToken}` },
-      });
-      if (fileRes.ok) {
-        const csvContent = await fileRes.text();
-        rawTxs = client.parseSettlementReportCsv(csvContent);
+    // 2. Solicitar geração assíncrona do Settlement Report se ainda não tiver ID remoto
+    if (!syncRun.remoteReportId && !syncRun.remoteFileName) {
+      const requestRes = await client.requestSettlementReport(beginDate, endDate);
+      if (requestRes.reportId || requestRes.fileFileName) {
+        await db.syncRun.update({
+          where: { id: syncRun.id },
+          data: {
+            remoteReportId: requestRes.reportId,
+            remoteFileName: requestRes.fileFileName,
+          },
+        });
+        syncRun.remoteReportId = requestRes.reportId || null;
+        syncRun.remoteFileName = requestRes.fileFileName || null;
       }
     }
 
-    // 4. Executar importação oficial dos dados do extrato de liquidação
+    // 3. Consultar relatórios de liquidação disponíveis para localizar o relatório específico solicitado
+    const reports = await client.listSettlementReports();
+    const readyReport = reports.find(
+      (r) =>
+        r.status === "READY" &&
+        ((syncRun.remoteReportId && r.id === syncRun.remoteReportId) ||
+          (syncRun.remoteFileName && r.fileName === syncRun.remoteFileName) ||
+          (!syncRun.remoteReportId && !syncRun.remoteFileName))
+    );
+
+    if (!readyReport || !readyReport.downloadUrl) {
+      // Relatório ainda em processamento ou não disponível
+      return {
+        success: false,
+        status: "PROCESSING",
+        message: "Relatório de liquidação em processamento no Mercado Pago. Aguarde a conclusão da geração.",
+        insertedCount: 0,
+        updatedCount: 0,
+        skippedCount: 0,
+        autoMatchedCount: 0,
+      };
+    }
+
+    // 4. Efetuar download do relatório e parsear movimentações reais de liquidação
+    const fileRes = await fetch(readyReport.downloadUrl, {
+      headers: { Authorization: `Bearer ${credentials.accessToken}` },
+    });
+
+    if (!fileRes.ok) {
+      throw new Error(`Falha no download do relatório de liquidação (HTTP ${fileRes.status})`);
+    }
+
+    const csvContent = await fileRes.text();
+    const rawTxs = client.parseSettlementReportCsv(csvContent);
+
+    // 5. Executar importação oficial
     const importResult = await importExternalTransactions(
       rawTxs,
       account.id,
@@ -274,7 +307,7 @@ export async function syncMercadoPagoStatement(force: boolean = false) {
       throw new Error(importResult.error || "Erro ao importar transações do relatório");
     }
 
-    // 5. Finalizar SyncRun como SUCCESS e atualizar lastSyncAt na conta
+    // 6. Finalizar SyncRun como SUCCESS e atualizar lastSyncAt SOMENTE após a importação do relatório
     await db.syncRun.update({
       where: { id: syncRun.id },
       data: {
