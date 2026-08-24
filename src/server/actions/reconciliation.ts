@@ -1,7 +1,6 @@
 "use server";
 
 import { db } from "@/server/db";
-import { settleInstallment } from "@/server/actions/financial-items";
 import { revalidatePath } from "next/cache";
 import { requireAuthenticatedWorkspace } from "@/server/auth-context";
 
@@ -42,6 +41,8 @@ export async function calculateReconciliationScore(
     return { score: 0, reasons: ["Direção indevida"], recommendation: "UNMATCHED" };
   }
 
+  const isExactAmount = tx.amountCents === installment.amountCents;
+
   // 2. Referência Única ou TXID (Match Perfeito)
   if (
     (tx.txid && installment.uniqueReference && tx.txid === installment.uniqueReference) ||
@@ -52,9 +53,11 @@ export async function calculateReconciliationScore(
   }
 
   // 3. Valor Exato
-  if (tx.amountCents === installment.amountCents) {
+  if (isExactAmount) {
     score += 40;
     reasons.push("Valor exato da parcela (+40)");
+  } else {
+    reasons.push("Divergência de valor (exige decisão)");
   }
 
   // 4. Contato / Favorecido Semelhante
@@ -76,8 +79,13 @@ export async function calculateReconciliationScore(
     reasons.push(`Data próxima ao vencimento (${diffDays} dia(s)) (+20)`);
   }
 
+  // Regra 5: Hard Guard — Se o valor é divergente, NUNCA auto-conciliar como MATCHED
+  if (!isExactAmount && score >= 100) {
+    score = 75; // Teto de pontuação para divergência de valor -> exige aprovação visual
+  }
+
   let recommendation: "MATCHED" | "SUGGESTED" | "UNMATCHED" = "UNMATCHED";
-  if (score >= 100) {
+  if (score >= 100 && isExactAmount) {
     recommendation = "MATCHED";
   } else if (score >= 50) {
     recommendation = "SUGGESTED";
@@ -92,10 +100,26 @@ export async function calculateReconciliationScore(
 }
 
 /**
- * Regra de categorização automática baseada em texto da descrição
+ * Regra de categorização automática utilizando banco (CategoryRule) com fallback normalizado
  */
-export async function categorizeTransactionDescription(description: string): Promise<string> {
-  const descLower = description.toLowerCase();
+export async function categorizeTransactionDescription(description: string, workspaceId?: string): Promise<string> {
+  const descLower = description.toLowerCase().trim();
+
+  if (workspaceId) {
+    try {
+      const dbRules = await db.categoryRule.findMany({
+        where: { workspaceId, isEnabled: true },
+        include: { category: true },
+        orderBy: { confidenceScore: "desc" },
+      });
+
+      for (const rule of dbRules) {
+        if (descLower.includes(rule.pattern.toLowerCase().trim())) {
+          return rule.category.name;
+        }
+      }
+    } catch (e) {}
+  }
 
   if (descLower.includes("posto") || descLower.includes("shell") || descLower.includes("ipiranga") || descLower.includes("uber")) {
     return "Transporte & Veículo";
@@ -119,9 +143,9 @@ export async function categorizeTransactionDescription(description: string): Pro
 /**
  * Executar motor de conciliação automática para movimentações pendentes
  */
-export async function runAutomaticReconciliationEngine() {
+export async function runAutomaticReconciliationEngine(targetWorkspaceId?: string) {
   try {
-    const { workspaceId } = await requireAuthenticatedWorkspace();
+    const workspaceId = targetWorkspaceId || (await requireAuthenticatedWorkspace()).workspaceId;
 
     const unmatchedTxs = await db.externalTransaction.findMany({
       where: {
@@ -224,15 +248,14 @@ export async function runAutomaticReconciliationEngine() {
             },
           });
 
-          await txPrisma.ledgerEntry.create({
-            data: {
+          // Regra 4: Conciliação NÃO cria dinheiro/LedgerEntry novo! Atualiza o LedgerEntry existente gerado na ingestão.
+          await txPrisma.ledgerEntry.updateMany({
+            where: {
               workspaceId,
               externalTransactionId: tx.id,
+            },
+            data: {
               installmentId: currentInst.id,
-              direction: tx.direction,
-              amountCents: tx.amountCents,
-              occurredAt: tx.occurredAt,
-              sourceType: "AUTO_RECONCILIATION",
               categoryId: currentInst.financialItem.categoryId,
             },
           });
@@ -325,16 +348,14 @@ export async function confirmSuggestedMatch(reconciliationId: string) {
           },
         });
 
-        await txPrisma.ledgerEntry.create({
-          data: {
+        // Regra 4: Conciliação NÃO cria dinheiro/LedgerEntry novo! Atualiza o vínculo no LedgerEntry original.
+        await txPrisma.ledgerEntry.updateMany({
+          where: {
             workspaceId,
             externalTransactionId: rec.externalTransactionId,
+          },
+          data: {
             installmentId: currentRec.installmentId,
-            direction: rec.externalTransaction!.direction,
-            amountCents: rec.externalTransaction!.amountCents,
-            occurredAt: rec.externalTransaction!.occurredAt,
-            sourceType: "CONFIRMED_SUGGESTION",
-            sourceId: rec.id,
             categoryId: currentRec.installment.financialItem.categoryId,
           },
         });
@@ -355,7 +376,7 @@ export async function confirmSuggestedMatch(reconciliationId: string) {
 }
 
 /**
- * Reverter/Desconciliar uma movimentação
+ * Reverter/Desconciliar uma movimentação (Regra 6: Desconciliação atômica proporcional)
  */
 export async function unmatchTransaction(reconciliationId: string) {
   try {
@@ -363,33 +384,76 @@ export async function unmatchTransaction(reconciliationId: string) {
 
     const rec = await db.reconciliation.findFirst({
       where: { id: reconciliationId, workspaceId },
-      include: { installment: true },
+      include: { installment: true, externalTransaction: true },
     });
 
     if (!rec) {
       return { success: false, error: "Registro de conciliação não encontrado." };
     }
 
-    await db.reconciliation.update({
-      where: { id: reconciliationId },
-      data: {
-        status: "REVERSED",
-        reversedAt: new Date(),
-      },
-    });
-
-    if (rec.installmentId && rec.installment) {
-      // Retornar status da parcela para SCHEDULED ou OVERDUE conforme data de vencimento
-      const isOverdue = new Date() > rec.installment.dueDate;
-      await db.installment.update({
-        where: { id: rec.installmentId },
+    await db.$transaction(async (txPrisma) => {
+      // 1. Marcar a reconciliação como REVERSED
+      await txPrisma.reconciliation.update({
+        where: { id: reconciliationId },
         data: {
-          status: isOverdue ? "OVERDUE" : "SCHEDULED",
-          settlementDate: null,
-          settledAmountCents: 0,
+          status: "REVERSED",
+          reversedAt: new Date(),
         },
       });
-    }
+
+      // 2. Desvincular parcela do LedgerEntry sem apagar a transação ou o fato financeiro
+      if (rec.externalTransactionId) {
+        await txPrisma.ledgerEntry.updateMany({
+          where: {
+            workspaceId,
+            externalTransactionId: rec.externalTransactionId,
+          },
+          data: {
+            installmentId: null,
+          },
+        });
+      }
+
+      // 3. Recalcular acúmulo da parcela a partir das conciliações VÁLIDAS restantes
+      if (rec.installmentId) {
+        const remainingMatches = await txPrisma.reconciliation.findMany({
+          where: {
+            installmentId: rec.installmentId,
+            status: "MATCHED",
+            id: { not: reconciliationId },
+          },
+          include: { externalTransaction: true },
+        });
+
+        let remainingSettled = BigInt(0);
+        let latestOccurred: Date | null = null;
+
+        for (const rem of remainingMatches) {
+          if (rem.externalTransaction) {
+            remainingSettled += rem.externalTransaction.netAmountCents || rem.externalTransaction.amountCents;
+            if (!latestOccurred || rem.externalTransaction.occurredAt > latestOccurred) {
+              latestOccurred = rem.externalTransaction.occurredAt;
+            }
+          }
+        }
+
+        const inst = rec.installment!;
+        const isFullyPaid = remainingSettled >= inst.amountCents;
+        const isPartial = remainingSettled > BigInt(0);
+        const isOverdue = new Date() > inst.dueDate;
+
+        const newStatus = isFullyPaid ? "SETTLED" : isPartial ? "PARTIAL" : isOverdue ? "OVERDUE" : "SCHEDULED";
+
+        await txPrisma.installment.update({
+          where: { id: rec.installmentId },
+          data: {
+            settledAmountCents: remainingSettled,
+            status: newStatus,
+            settlementDate: latestOccurred,
+          },
+        });
+      }
+    });
 
     revalidatePath("/movimentacoes");
     revalidatePath("/contas-a-pagar");

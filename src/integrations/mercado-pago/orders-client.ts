@@ -119,14 +119,26 @@ export async function createPixOrder(input: CreatePixOrderInput): Promise<Create
 
     if (response.status === 201 || response.status === 200) {
       const paymentData = data.transactions?.payments?.[0];
-      const qrCode = paymentData?.point_of_interaction?.transaction_data?.qr_code || data.qr_code || undefined;
-      let qrCodeBase64 = paymentData?.point_of_interaction?.transaction_data?.qr_code_base64 || undefined;
-      
+      const qrCode =
+        paymentData?.payment_method?.qr_code ||
+        paymentData?.point_of_interaction?.transaction_data?.qr_code ||
+        data.qr_code ||
+        undefined;
+
+      let qrCodeBase64 =
+        paymentData?.payment_method?.qr_code_base64 ||
+        paymentData?.point_of_interaction?.transaction_data?.qr_code_base64 ||
+        undefined;
+
       if (qrCodeBase64 && !qrCodeBase64.startsWith("data:image")) {
         qrCodeBase64 = `data:image/png;base64,${qrCodeBase64}`;
       }
 
-      const ticketUrl = paymentData?.ticket_url || data.ticket_url || undefined;
+      const ticketUrl =
+        paymentData?.payment_method?.ticket_url ||
+        paymentData?.ticket_url ||
+        data.ticket_url ||
+        undefined;
 
       return {
         success: true,
@@ -186,18 +198,26 @@ export async function getOrderById(input: { accessToken: string; orderId: string
       const paymentsArray = data.transactions?.payments || data.payments || [];
       const paymentObj = paymentsArray[0];
 
-      const status = String(data.status || "").toUpperCase();
-      const paymentStatus = paymentObj?.status;
-      const isPaid = status === "PAID" || status === "PROCESSED" || status === "CLOSED" || paymentStatus === "approved";
+      const orderStatus = String(data.status || "").toUpperCase();
+      const paymentStatus = String(paymentObj?.status || "").toLowerCase();
+      const statusDetail = String(paymentObj?.status_detail || "").toLowerCase();
 
-      const paidAt = paymentObj?.date_approved || paymentObj?.date_created || data.date_created || new Date().toISOString();
+      // Regra 26: Validação estrita de status, payment transaction status e status_detail (acreditado)
+      const isOrderStatusPaid = ["PAID", "PROCESSED", "CLOSED"].includes(orderStatus);
+      const isPaymentApproved = paymentStatus === "approved";
+      const isAccredited = statusDetail === "accredited" || statusDetail === "approved" || statusDetail === "";
+
+      const isPaid = isOrderStatusPaid && isPaymentApproved && isAccredited;
+
+      // Regra 27: Nunca inventar data de pagamento. Sem data oficial de aprovação -> paidAt = null
+      const paidAt = paymentObj?.date_approved || data.date_approved || null;
 
       return {
         success: true,
         orderId: String(data.id),
-        status,
+        status: orderStatus,
         isPaid,
-        paidAt,
+        paidAt: paidAt || undefined,
       };
     }
 

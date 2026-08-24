@@ -132,8 +132,9 @@ export async function getWorkspaceSummary() {
       });
       let balance = 0;
       for (const tx of txs) {
-        if (tx.direction === "CREDIT") balance += Number(tx.amountCents);
-        if (tx.direction === "DEBIT") balance -= Number(tx.amountCents);
+        const netVal = Number(tx.netAmountCents || tx.amountCents);
+        if (tx.direction === "CREDIT") balance += netVal;
+        if (tx.direction === "DEBIT") balance -= netVal;
       }
       currentBalanceCents = balance;
     }
@@ -184,7 +185,7 @@ export async function getWorkspaceSummary() {
     console.error("Erro ao calcular resumo:", error);
     return {
       success: false as const,
-      error: String(error),
+      error: String(error.message || error),
     };
   }
 }
@@ -209,103 +210,101 @@ export async function updateWorkspaceName(data: { name: string }) {
   }
 }
 
-export async function setManualInitialBalance(targetBalanceCents: number) {
-  return {
-    success: false,
-    error: "Mecanismo de Saldo Inicial Manual desativado na V1. O saldo oficial é derivado exclusivamente de movimentações reais e relatórios de liquidação (Dinheiro em Conta).",
-  };
-}
-
 export async function getDashboardData() {
-  const summary = await getWorkspaceSummary();
-  if (!summary.success) {
-    return { summary: null, recentTransactions: [], chartData: [], payables: [], debtorsCount: 0 };
-  }
-  const { workspaceId } = await requireAuthenticatedWorkspace();
+  try {
+    const summary = await getWorkspaceSummary();
+    if (!summary.success) {
+      return { success: false as const, error: summary.error || "Falha ao carregar resumo do dashboard." };
+    }
+    const { workspaceId } = await requireAuthenticatedWorkspace();
 
-  const txs = await db.externalTransaction.findMany({
-    where: { workspaceId },
-    orderBy: { occurredAt: "desc" },
-    take: 10,
-    include: { reconciliations: { orderBy: { createdAt: "desc" }, take: 1 } },
-  });
+    const txs = await db.externalTransaction.findMany({
+      where: { workspaceId },
+      orderBy: { occurredAt: "desc" },
+      take: 10,
+      include: { reconciliations: { orderBy: { createdAt: "desc" }, take: 1 } },
+    });
 
-  const recentTransactions = txs.map((tx: any) => ({
-    id: tx.id,
-    direction: tx.direction,
-    amountCents: Number(tx.amountCents),
-    description: tx.description,
-    counterpartName: tx.counterpartName,
-    category: "Movimentação", // simplificado para não precisar do async categorize
-    reconciliationStatus: tx.reconciliations[0]?.status || "UNMATCHED",
-  }));
+    const recentTransactions = txs.map((tx: any) => ({
+      id: tx.id,
+      direction: tx.direction,
+      amountCents: Number(tx.netAmountCents || tx.amountCents),
+      description: tx.description,
+      counterpartName: tx.counterpartName,
+      category: "Movimentação",
+      reconciliationStatus: tx.reconciliations[0]?.status || "UNMATCHED",
+    }));
 
-  const rawPayables = await db.financialItem.findMany({
-    where: { workspaceId, direction: "PAYABLE", status: "ACTIVE", deletedAt: null },
-    include: {
-      installments: { where: { status: { notIn: ["SETTLED", "CANCELED"] } }, orderBy: { dueDate: "asc" }, take: 1 },
-      contact: true,
-      category: true,
-    },
-    orderBy: { startDate: "asc" },
-    take: 5,
-  });
+    const rawPayables = await db.financialItem.findMany({
+      where: { workspaceId, direction: "PAYABLE", status: "ACTIVE", deletedAt: null },
+      include: {
+        installments: { where: { status: { notIn: ["SETTLED", "CANCELED"] } }, orderBy: { dueDate: "asc" }, take: 1 },
+        contact: true,
+        category: true,
+      },
+      orderBy: { startDate: "asc" },
+      take: 5,
+    });
 
-  const payables = rawPayables.map((item: any) => ({
-    id: item.id,
-    title: item.title,
-    contact: item.contact,
-    category: item.category?.name || "Geral",
-    categoryColor: item.category?.colorToken || "#6B7280",
-    startDate: item.startDate.toISOString(),
-    installments: item.installments.map((inst: any) => ({
-      id: inst.id,
-      sequence: inst.sequence,
-      amountCents: Number(inst.amountCents),
-      dueDate: inst.dueDate.toISOString(),
-      status: inst.status,
-    })),
-  }));
+    const payables = rawPayables.map((item: any) => ({
+      id: item.id,
+      title: item.title,
+      contact: item.contact,
+      category: item.category?.name || "Geral",
+      categoryColor: item.category?.colorToken || "#6B7280",
+      startDate: item.startDate.toISOString(),
+      installments: item.installments.map((inst: any) => ({
+        id: inst.id,
+        sequence: inst.sequence,
+        amountCents: Number(inst.amountCents),
+        dueDate: inst.dueDate.toISOString(),
+        status: inst.status,
+      })),
+    }));
 
-  const debtorsCount = await db.contact.count({
-    where: { workspaceId, isDebtor: true, deletedAt: null },
-  });
+    const debtorsCount = await db.contact.count({
+      where: { workspaceId, isDebtor: true, deletedAt: null },
+    });
 
-  // Chart data: agrupar por mês
-  const now = new Date();
-  const chartData = [];
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const monthName = d.toLocaleString('pt-BR', { month: 'short' });
-    
-    // Sum for this month
-    const monthTxs = await db.externalTransaction.findMany({
-      where: {
-        workspaceId,
-        occurredAt: {
-          gte: new Date(d.getFullYear(), d.getMonth(), 1),
-          lt: new Date(d.getFullYear(), d.getMonth() + 1, 1),
+    // Chart data: agrupar por mês
+    const now = new Date();
+    const chartData = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const monthName = d.toLocaleString('pt-BR', { month: 'short' });
+      
+      const monthTxs = await db.externalTransaction.findMany({
+        where: {
+          workspaceId,
+          occurredAt: {
+            gte: new Date(d.getFullYear(), d.getMonth(), 1),
+            lt: new Date(d.getFullYear(), d.getMonth() + 1, 1),
+          }
         }
-      }
-    });
+      });
 
-    let entradas = 0;
-    let saidas = 0;
-    monthTxs.forEach((t: any) => {
-      if (t.type !== "TRANSFER") {
-        if (t.direction === "CREDIT") entradas += Number(t.amountCents) / 100;
-        if (t.direction === "DEBIT") saidas += Number(t.amountCents) / 100;
-      }
-    });
+      let entradas = 0;
+      let saidas = 0;
+      monthTxs.forEach((t: any) => {
+        if (t.type !== "TRANSFER") {
+          const val = Number(t.netAmountCents || t.amountCents) / 100;
+          if (t.direction === "CREDIT") entradas += val;
+          if (t.direction === "DEBIT") saidas += val;
+        }
+      });
 
-    chartData.push({
-      month: monthName.charAt(0).toUpperCase() + monthName.slice(1),
-      entradas,
-      saídas: saidas,
-    });
+      chartData.push({
+        month: monthName.charAt(0).toUpperCase() + monthName.slice(1),
+        entradas,
+        saídas: saidas,
+      });
+    }
+
+    return { success: true as const, summary, recentTransactions, chartData, payables, debtorsCount };
+  } catch (error: any) {
+    console.error("Erro ao carregar dashboard:", error);
+    return { success: false as const, error: error.message || String(error) };
   }
-
-  return { summary, recentTransactions, chartData, payables, debtorsCount };
 }
 
 export async function triggerMercadoPagoSync(force: boolean = false) {

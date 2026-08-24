@@ -3,9 +3,10 @@
 import { db } from "@/server/db";
 import { revalidatePath } from "next/cache";
 import { requireAuthenticatedWorkspace } from "@/server/auth-context";
-import { MercadoPagoRawTransaction, MercadoPagoReportsClient } from "@/integrations/mercado-pago/reports-client";
-import { categorizeTransactionDescription, runAutomaticReconciliationEngine } from "@/server/actions/reconciliation";
+import { getActiveMercadoPagoIntegration } from "@/server/actions/integrations";
 import { parseMercadoPagoCredentials } from "@/lib/server/credentials-crypto";
+import { MercadoPagoReportsClient, MercadoPagoRawTransaction } from "@/integrations/mercado-pago/reports-client";
+import { categorizeTransactionDescription, runAutomaticReconciliationEngine } from "@/server/actions/reconciliation";
 
 export async function getExternalTransactions(period: string = "MONTHLY") {
   try {
@@ -83,7 +84,7 @@ export async function getExternalTransactions(period: string = "MONTHLY") {
 }
 
 /**
- * Importar lote de movimentações externas (com deduplicação estrita e suporte a fontes variadas)
+ * Importar lote de movimentações externas (com criação ATÔMICA do LedgerEntry correspondente)
  */
 export async function importExternalTransactions(
   rawTransactions: MercadoPagoRawTransaction[],
@@ -102,62 +103,70 @@ export async function importExternalTransactions(
       const occurredDate = new Date(raw.occurredAt);
 
       try {
-        const existingTx = await db.externalTransaction.findUnique({
-          where: {
-            workspaceId_source_externalId: {
-              workspaceId,
-              source,
-              externalId: raw.externalId,
+        await db.$transaction(async (tx) => {
+          const existingTx = await tx.externalTransaction.findUnique({
+            where: {
+              workspaceId_source_externalId: {
+                workspaceId,
+                source,
+                externalId: raw.externalId,
+              },
             },
-          },
-        });
+          });
 
-        if (existingTx) {
-          await db.externalTransaction.update({
-            where: { id: existingTx.id },
-            data: {
-              description: raw.description,
-              counterpartName: raw.counterpartName || null,
-              counterpartDocument: raw.counterpartDocument || null,
-            },
-          });
-          updatedCount++;
-        } else {
-          await db.externalTransaction.create({
-            data: {
-              workspaceId,
-              integrationAccountId: integrationAccountId || null,
-              provider: provider || null,
-              source,
-              externalId: raw.externalId,
-              direction: raw.direction,
-              type: raw.type,
-              status: "APPROVED",
-              amountCents: BigInt(raw.amountCents),
-              feeCents: BigInt(raw.feeCents || 0),
-              netAmountCents: BigInt(raw.netAmountCents || raw.amountCents),
-              occurredAt: occurredDate,
-              counterpartName: raw.counterpartName || null,
-              counterpartDocument: raw.counterpartDocument || null,
-              txid: raw.txid || null,
-              description: raw.description,
-              rawReference: raw.rawReference || null,
-            },
-          });
-          insertedCount++;
-        }
+          if (existingTx) {
+            await tx.externalTransaction.update({
+              where: { id: existingTx.id },
+              data: {
+                description: raw.description,
+                counterpartName: raw.counterpartName || null,
+                counterpartDocument: raw.counterpartDocument || null,
+              },
+            });
+            updatedCount++;
+          } else {
+            const newTx = await tx.externalTransaction.create({
+              data: {
+                workspaceId,
+                integrationAccountId: integrationAccountId || null,
+                provider: provider || null,
+                source,
+                externalId: raw.externalId,
+                direction: raw.direction,
+                type: raw.type,
+                status: "APPROVED",
+                amountCents: BigInt(raw.amountCents),
+                feeCents: BigInt(raw.feeCents || 0),
+                netAmountCents: BigInt(raw.netAmountCents || raw.amountCents),
+                occurredAt: occurredDate,
+                counterpartName: raw.counterpartName || null,
+                counterpartDocument: raw.counterpartDocument || null,
+                txid: raw.txid || null,
+                description: raw.description,
+                rawReference: raw.rawReference || null,
+              },
+            });
+
+            // Regra 3: Fato financeiro nasce na ingestão -> cria LedgerEntry no mesmo momento (1x1 atômico)
+            await tx.ledgerEntry.create({
+              data: {
+                workspaceId,
+                externalTransactionId: newTx.id,
+                direction: newTx.direction,
+                amountCents: newTx.netAmountCents, // Regra 8: Usa impacto líquido oficial netAmountCents
+                occurredAt: newTx.occurredAt,
+                sourceType: newTx.source,
+                sourceId: newTx.externalId,
+                categoryId: null,
+              },
+            });
+            insertedCount++;
+          }
+        });
       } catch (e) {
         console.error("Erro ao importar transação", raw.externalId, e);
         skippedCount++;
       }
-    }
-
-    // Atualizar data da última sincronização se houver conta de integração vinculada
-    if (integrationAccountId) {
-      await db.integrationAccount.update({
-        where: { id: integrationAccountId },
-        data: { lastSyncAt: new Date() },
-      });
     }
 
     // Disparar motor de conciliação automática após importação
@@ -183,21 +192,30 @@ export async function importExternalTransactions(
 /**
  * Pipeline Oficial do Relatório Dinheiro em Conta (Settlement Report - Assíncrono)
  */
-export async function syncMercadoPagoStatement(force: boolean = false) {
-  const { workspaceId } = await requireAuthenticatedWorkspace();
+export async function syncMercadoPagoStatement(
+  opts?: { force?: boolean; syncRunId?: string; integrationAccountId?: string | null } | boolean
+) {
+  const isForce = typeof opts === "boolean" ? opts : opts?.force ?? false;
+  const syncRunId = typeof opts === "object" ? opts?.syncRunId : undefined;
+  const targetIntegrationId = typeof opts === "object" ? opts?.integrationAccountId : undefined;
 
-  const account = await db.integrationAccount.findFirst({
-    where: { workspaceId, provider: "MERCADO_PAGO", status: "CONNECTED" },
-    orderBy: { lastValidatedAt: "desc" },
-  });
+  let workspaceId: string;
+  let account: any;
 
-  if (!account || !account.encryptedCredentials) {
-    throw new Error("Nenhuma integração do Mercado Pago ativa ou conectada.");
+  if (targetIntegrationId) {
+    const acc = await db.integrationAccount.findUnique({ where: { id: targetIntegrationId } });
+    if (!acc) throw new Error("Conta de integração não encontrada.");
+    workspaceId = acc.workspaceId;
+    account = acc;
+  } else {
+    const auth = await requireAuthenticatedWorkspace();
+    workspaceId = auth.workspaceId;
+    account = await getActiveMercadoPagoIntegration(workspaceId);
   }
 
   // Cache de 5 minutos se não for forçado e já possuir sincronização recente
   const CACHE_MINUTES = 5;
-  if (!force && account.lastSyncAt) {
+  if (!isForce && account.lastSyncAt) {
     const now = new Date();
     const diffInMinutes = (now.getTime() - account.lastSyncAt.getTime()) / (1000 * 60);
     if (diffInMinutes < CACHE_MINUTES) {
@@ -241,12 +259,15 @@ export async function syncMercadoPagoStatement(force: boolean = false) {
   }
 
   try {
-    const credentials = parseMercadoPagoCredentials(account.encryptedCredentials);
+    const credentials = parseMercadoPagoCredentials(account.encryptedCredentials!);
     const client = new MercadoPagoReportsClient(credentials.accessToken);
 
     // 2. Solicitar geração assíncrona do Settlement Report se ainda não tiver ID remoto
     if (!syncRun.remoteReportId && !syncRun.remoteFileName) {
       const requestRes = await client.requestSettlementReport(beginDate, endDate);
+      if (!requestRes.success) {
+        throw new Error(requestRes.error || "Falha ao solicitar relatório de liquidação no Mercado Pago.");
+      }
       if (requestRes.reportId || requestRes.fileFileName) {
         await db.syncRun.update({
           where: { id: syncRun.id },
@@ -266,8 +287,7 @@ export async function syncMercadoPagoStatement(force: boolean = false) {
       (r) =>
         r.status === "READY" &&
         ((syncRun.remoteReportId && r.id === syncRun.remoteReportId) ||
-          (syncRun.remoteFileName && r.fileName === syncRun.remoteFileName) ||
-          (!syncRun.remoteReportId && !syncRun.remoteFileName))
+          (syncRun.remoteFileName && r.fileName === syncRun.remoteFileName))
     );
 
     if (!readyReport || (!readyReport.fileName && !readyReport.downloadUrl)) {
@@ -316,7 +336,9 @@ export async function syncMercadoPagoStatement(force: boolean = false) {
     }
 
     // 6. Atualizar status final do SyncRun (SUCCESS ou PARTIAL)
-    const finalRunStatus = parseResult.rejectedCount > 0 ? "PARTIAL" : "SUCCESS";
+    // Regra 70: Se parseResult.rejectedCount > 0 OU importResult.skippedCount > 0 => PARTIAL
+    const hasFailures = parseResult.rejectedCount > 0 || (importResult.skippedCount || 0) > 0;
+    const finalRunStatus = hasFailures ? "PARTIAL" : "SUCCESS";
 
     await db.syncRun.update({
       where: { id: syncRun.id },
@@ -330,9 +352,15 @@ export async function syncMercadoPagoStatement(force: boolean = false) {
       },
     });
 
+    // Regra 10 & 11: Fechamento bem-sucedido do SyncRun atualiza lastSyncAt e horizonte de cobertura
     await db.integrationAccount.update({
       where: { id: account.id },
-      data: { lastSyncAt: new Date() },
+      data: {
+        lastSyncAt: new Date(),
+        firstImportedAt: account.firstImportedAt || beginDate,
+        coverageStart: !account.coverageStart || beginDate < account.coverageStart ? beginDate : account.coverageStart,
+        coverageEnd: !account.coverageEnd || endDate > account.coverageEnd ? endDate : account.coverageEnd,
+      },
     });
 
     return {
@@ -349,12 +377,10 @@ export async function syncMercadoPagoStatement(force: boolean = false) {
       data: {
         status: "FAILED",
         finishedAt: new Date(),
-        errorCode: "SETTLEMENT_SYNC_ERROR",
-        errorMessage: error.message || "Erro na geração ou download do relatório",
+        errorMessage: error.message || "Erro no pipeline de sync",
       },
     });
-
-    return { success: false, status: "FAILED", error: error.message || "Falha na sincronização assíncrona." };
+    throw error;
   }
 }
 

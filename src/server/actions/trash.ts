@@ -13,31 +13,26 @@ export interface TrashedItemDTO {
 }
 
 export async function getTrashedItems(): Promise<TrashedItemDTO[]> {
-  try {
-    const { workspaceId } = await requireAuthenticatedWorkspace();
+  const { workspaceId } = await requireAuthenticatedWorkspace();
 
-    const trashedFinancialItems = await db.financialItem.findMany({
-      where: {
-        workspaceId,
-        deletedAt: { not: null },
-      },
-      include: {
-        category: true,
-      },
-      orderBy: { deletedAt: "desc" },
-    });
+  const trashedFinancialItems = await db.financialItem.findMany({
+    where: {
+      workspaceId,
+      deletedAt: { not: null },
+    },
+    include: {
+      category: true,
+    },
+    orderBy: { deletedAt: "desc" },
+  });
 
-    return trashedFinancialItems.map((item) => ({
-      id: item.id,
-      title: item.title,
-      category: item.category?.name || "Geral",
-      direction: item.direction,
-      deletedAt: item.deletedAt ? item.deletedAt.toISOString() : new Date().toISOString(),
-    }));
-  } catch (error) {
-    console.error("Erro ao buscar itens da lixeira:", error);
-    return [];
-  }
+  return trashedFinancialItems.map((item) => ({
+    id: item.id,
+    title: item.title,
+    category: item.category?.name || "Geral",
+    direction: item.direction,
+    deletedAt: item.deletedAt!.toISOString(),
+  }));
 }
 
 export async function restoreTrashedItem(financialItemId: string) {
@@ -62,6 +57,60 @@ export async function restoreTrashedItem(financialItemId: string) {
     return { success: true };
   } catch (error: any) {
     console.error("Erro ao restaurar item da lixeira:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Exclusão permanente com verificação rigorosa de integridade financeira
+ */
+export async function permanentlyDeleteTrashedItem(financialItemId: string) {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+
+    // 1. Verificar se o item pertence ao workspace e está na lixeira
+    const item = await db.financialItem.findFirst({
+      where: {
+        id: financialItemId,
+        workspaceId,
+        deletedAt: { not: null },
+      },
+      include: {
+        installments: {
+          include: {
+            ledgerEntries: true,
+          },
+        },
+      },
+    });
+
+    if (!item) {
+      return { success: false, error: "Item não encontrado na lixeira deste workspace." };
+    }
+
+    // 2. Verificar se possui lançamentos no Ledger / Extrato oficial vinculados
+    const hasFinancialFact = item.installments.some((inst) => inst.ledgerEntries.length > 0);
+    if (hasFinancialFact) {
+      return {
+        success: false,
+        error: "Não é possível excluir permanentemente este item pois possui fatos financeiros vinculados ao extrato (LedgerEntry). Desfaça a conciliação primeiro.",
+      };
+    }
+
+    // 3. Exclusão física em transação
+    await db.$transaction(async (tx) => {
+      await tx.installment.deleteMany({
+        where: { financialItemId },
+      });
+      await tx.financialItem.delete({
+        where: { id: financialItemId },
+      });
+    });
+
+    revalidatePath("/lixeira");
+    return { success: true };
+  } catch (error: any) {
+    console.error("Erro ao excluir permanentemente item da lixeira:", error);
     return { success: false, error: error.message };
   }
 }

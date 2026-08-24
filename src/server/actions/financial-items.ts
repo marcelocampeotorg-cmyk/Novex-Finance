@@ -36,20 +36,20 @@ export async function getFinancialItems(direction?: "PAYABLE" | "RECEIVABLE") {
       description: item.description || undefined,
       contact: item.contact
         ? {
-            id: item.contact.id,
-            name: item.contact.name,
-            type: item.contact.type,
-            email: item.contact.email || undefined,
-            phone: item.contact.phone || undefined,
-            isDebtor: item.contact.isDebtor,
-            isPayee: item.contact.isPayee,
-            pixKeys: item.contact.pixKeys.map((k: any) => ({
-              id: k.id,
-              type: k.type,
-              value: k.value,
-              isDefault: k.isDefault,
-            })),
-          }
+          id: item.contact.id,
+          name: item.contact.name,
+          type: item.contact.type,
+          email: item.contact.email || undefined,
+          phone: item.contact.phone || undefined,
+          isDebtor: item.contact.isDebtor,
+          isPayee: item.contact.isPayee,
+          pixKeys: item.contact.pixKeys.map((k: any) => ({
+            id: k.id,
+            type: k.type,
+            value: k.value,
+            isDefault: k.isDefault,
+          })),
+        }
         : undefined,
       pixKey: item.contact?.pixKeys?.[0]?.value || undefined,
       category: item.category?.name || "Geral",
@@ -70,11 +70,11 @@ export async function getFinancialItems(direction?: "PAYABLE" | "RECEIVABLE") {
         uniqueReference: inst.uniqueReference || `NOVEX-REF-${inst.id.slice(0, 8)}`,
         pixKey: inst.selectedPixKey
           ? {
-              id: inst.selectedPixKey.id,
-              type: inst.selectedPixKey.type,
-              value: inst.selectedPixKey.value,
-              isDefault: inst.selectedPixKey.isDefault,
-            }
+            id: inst.selectedPixKey.id,
+            type: inst.selectedPixKey.type,
+            value: inst.selectedPixKey.value,
+            isDefault: inst.selectedPixKey.isDefault,
+          }
           : undefined,
       })),
     }));
@@ -92,7 +92,7 @@ export async function createFinancialItem(input: {
   contactId?: string;
   contactName?: string;
   pixKey?: string;
-  pixKeyType?: "CPF" | "CNPJ" | "EMAIL" | "PHONE";
+  pixKeyType?: "CPF" | "CNPJ" | "EMAIL" | "PHONE" | "EVP";
   categoryName?: string;
   totalAmountCents: number;
   startDate: string;
@@ -129,7 +129,7 @@ export async function createFinancialItem(input: {
         const existingContact = await tx.contact.findFirst({
           where: { workspaceId, name: input.contactName }
         });
-        
+
         if (existingContact) {
           finalContactId = existingContact.id;
         } else {
@@ -155,7 +155,7 @@ export async function createFinancialItem(input: {
           await tx.pixKey.create({
             data: {
               contactId: finalContactId,
-              type: input.pixKeyType,
+              type: input.pixKeyType === "EVP" ? "RANDOM" : input.pixKeyType,
               value: input.pixKey,
               isDefault: true
             }
@@ -186,6 +186,7 @@ export async function createFinancialItem(input: {
           : [{ sequence: 1, amountCents: input.totalAmountCents, dueDate: input.startDate }];
 
       for (const inst of installmentsToCreate) {
+        const uniqueSuffix = crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
         await tx.installment.create({
           data: {
             financialItemId: item.id,
@@ -193,7 +194,7 @@ export async function createFinancialItem(input: {
             amountCents: BigInt(inst.amountCents),
             dueDate: new Date(inst.dueDate),
             status: "SCHEDULED",
-            uniqueReference: `NOVEX-${input.direction.slice(0, 3)}-${Date.now().toString().slice(-6)}-${inst.sequence}`,
+            uniqueReference: `NOVEX-${input.direction.slice(0, 3)}-${uniqueSuffix}-${inst.sequence}`,
           },
         });
       }
@@ -205,55 +206,6 @@ export async function createFinancialItem(input: {
     });
   } catch (error: any) {
     console.error("Erro ao criar item financeiro:", error);
-    return { success: false, error: error.message };
-  }
-}
-
-export async function settleInstallment(installmentId: string, amountCentsPaid?: number) {
-  try {
-    return await db.$transaction(async (tx) => {
-      const inst = await tx.installment.findUnique({
-        where: { id: installmentId },
-        include: { financialItem: true },
-      });
-
-      if (!inst) throw new Error("Parcela não encontrada");
-
-      const payAmount = amountCentsPaid ? BigInt(amountCentsPaid) : inst.amountCents;
-      const newSettled = inst.settledAmountCents + payAmount;
-      const isFullyPaid = newSettled >= inst.amountCents;
-
-      // Atualizar parcela
-      const updated = await tx.installment.update({
-        where: { id: installmentId },
-        data: {
-          settledAmountCents: newSettled,
-          status: isFullyPaid ? "SETTLED" : "PARTIAL",
-          settlementDate: new Date(),
-        },
-      });
-
-      // Criar registro derivado no LedgerEntry
-      await tx.ledgerEntry.create({
-        data: {
-          workspaceId: inst.financialItem.workspaceId,
-          installmentId: inst.id,
-          direction: inst.financialItem.direction === "PAYABLE" ? "DEBIT" : "CREDIT",
-          amountCents: payAmount,
-          occurredAt: new Date(),
-          sourceType: "INSTALLMENT_PAYMENT",
-          sourceId: inst.id,
-          categoryId: inst.financialItem.categoryId,
-        },
-      });
-
-      revalidatePath("/");
-      revalidatePath("/contas-a-pagar");
-      revalidatePath("/contas-a-receber");
-      return { success: true, installment: updated };
-    });
-  } catch (error: any) {
-    console.error("Erro ao dar baixa em parcela:", error);
     return { success: false, error: error.message };
   }
 }
@@ -283,7 +235,7 @@ export async function updateFinancialItem(input: {
   description?: string;
   contactName?: string;
   pixKey?: string;
-  pixKeyType?: "CPF" | "CNPJ" | "EMAIL" | "PHONE";
+  pixKeyType?: "CPF" | "CNPJ" | "EMAIL" | "PHONE" | "EVP";
   categoryName?: string;
   totalAmountCents: number;
   startDate: string;
@@ -339,7 +291,7 @@ export async function updateFinancialItem(input: {
         }
       }
 
-      if (finalContactId && input.pixKey && input.direction === "PAYABLE") {
+      if (finalContactId && input.pixKey && input.pixKeyType && input.direction === "PAYABLE") {
         const existingKey = await tx.pixKey.findFirst({
           where: { contactId: finalContactId, value: input.pixKey },
         });
@@ -347,7 +299,7 @@ export async function updateFinancialItem(input: {
           await tx.pixKey.create({
             data: {
               contactId: finalContactId,
-              type: (input.pixKeyType as any) || "EMAIL",
+              type: input.pixKeyType as any,
               value: input.pixKey,
               isDefault: true,
             },
@@ -398,6 +350,7 @@ export async function updateFinancialItem(input: {
         if (!hasSettled) {
           await tx.installment.deleteMany({ where: { financialItemId: input.id } });
           for (const inst of installmentsToSet) {
+            const uniqueSuffix = crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
             await tx.installment.create({
               data: {
                 financialItemId: input.id,
@@ -405,7 +358,7 @@ export async function updateFinancialItem(input: {
                 amountCents: BigInt(inst.amountCents),
                 dueDate: new Date(inst.dueDate),
                 status: "SCHEDULED",
-                uniqueReference: `NOVEX-${input.direction.slice(0, 3)}-${Date.now().toString().slice(-6)}-${inst.sequence}`,
+                uniqueReference: `NOVEX-${input.direction.slice(0, 3)}-${uniqueSuffix}-${inst.sequence}`,
               },
             });
           }
@@ -420,6 +373,110 @@ export async function updateFinancialItem(input: {
   } catch (error: any) {
     console.error("Erro ao atualizar item financeiro:", error);
     return { success: false, error: error.message };
+  }
+}
+
+export async function getOrCreatePaymentIntention(installmentId: string) {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+
+    const inst = await db.installment.findFirst({
+      where: {
+        id: installmentId,
+        financialItem: { workspaceId, deletedAt: null },
+      },
+      include: {
+        financialItem: {
+          include: { contact: { include: { pixKeys: true } } },
+        },
+        selectedPixKey: true,
+      },
+    });
+
+    if (!inst) {
+      return { success: false, error: "Parcela não encontrada ou sem permissão." };
+    }
+
+    const contact = inst.financialItem.contact;
+    const pixKeyObj = inst.selectedPixKey || contact?.pixKeys?.[0];
+    const pixKeyValue = pixKeyObj?.value;
+    const pixKeyType = pixKeyObj?.type || "EMAIL";
+
+    if (!pixKeyValue) {
+      return { success: false, error: "Favorecido não possui chave Pix cadastrada." };
+    }
+
+    const favoredName = contact?.name || "Favorecido";
+
+    // Procurar intenção de pagamento ativa existente
+    const existingIntention = await db.paymentIntention.findFirst({
+      where: {
+        workspaceId,
+        installmentId: inst.id,
+        status: "WAITING",
+      },
+    });
+
+    if (existingIntention && existingIntention.brCodePayload) {
+      return {
+        success: true,
+        intention: {
+          id: existingIntention.id,
+          favoredName: existingIntention.favoredName,
+          favoredPixKey: existingIntention.favoredPixKey,
+          favoredPixKeyType: existingIntention.favoredPixKeyType,
+          expectedAmountCents: Number(existingIntention.expectedAmountCents),
+          brCodePayload: existingIntention.brCodePayload,
+          txid: existingIntention.txid,
+        },
+      };
+    }
+
+    const { generatePixPayload } = await import("@/lib/pix");
+
+    const txid = inst.uniqueReference
+      ? inst.uniqueReference.replace(/[^a-zA-Z0-9]/g, "").slice(0, 25)
+      : `INT${inst.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 20)}`;
+
+    const brCodePayload = generatePixPayload({
+      pixKey: pixKeyValue,
+      amount: Number(inst.amountCents) / 100,
+      merchantName: favoredName,
+      merchantCity: "BRASIL",
+      txId: txid,
+    });
+
+    const newIntention = await db.paymentIntention.create({
+      data: {
+        workspaceId,
+        financialItemId: inst.financialItemId,
+        installmentId: inst.id,
+        favoredName,
+        favoredPixKey: pixKeyValue,
+        favoredPixKeyType: pixKeyType,
+        expectedAmountCents: inst.amountCents,
+        status: "WAITING",
+        txid,
+        brCodePayload,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      },
+    });
+
+    return {
+      success: true,
+      intention: {
+        id: newIntention.id,
+        favoredName: newIntention.favoredName,
+        favoredPixKey: newIntention.favoredPixKey,
+        favoredPixKeyType: newIntention.favoredPixKeyType,
+        expectedAmountCents: Number(newIntention.expectedAmountCents),
+        brCodePayload: newIntention.brCodePayload,
+        txid: newIntention.txid,
+      },
+    };
+  } catch (error: any) {
+    console.error("Erro ao gerar intenção de pagamento:", error);
+    return { success: false, error: error.message || String(error) };
   }
 }
 

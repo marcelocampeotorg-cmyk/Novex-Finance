@@ -7,18 +7,16 @@ import { getOrderById } from "@/integrations/mercado-pago/orders-client";
 /**
  * Valida a assinatura HMAC-SHA256 do cabeçalho x-signature oficial da Orders API.
  */
+/**
+ * Valida a assinatura HMAC-SHA256 do cabeçalho x-signature oficial da Orders API.
+ */
 function verifyWebhookSignature(req: NextRequest, dataId: string): { valid: boolean; reason?: string } {
   const xSignature = req.headers.get("x-signature");
   const xRequestId = req.headers.get("x-request-id") || "";
   const secret = process.env.MERCADO_PAGO_WEBHOOK_SECRET;
 
-  // Em modo de desenvolvimento local sem secret configurado, permitir simulação auditada
   if (!secret || secret === "REMOVIDO") {
-    if (process.env.NODE_ENV === "development") {
-      console.warn("[WEBHOOK MP] dev_mode: Assinatura aceita em ambiente local de desenvolvimento sem secret fixado.");
-      return { valid: true };
-    }
-    return { valid: false, reason: "MERCADO_PAGO_WEBHOOK_SECRET ausente no ambiente de produção." };
+    return { valid: false, reason: "MERCADO_PAGO_WEBHOOK_SECRET ausente." };
   }
 
   if (!xSignature) {
@@ -77,23 +75,29 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ignored: true, message: `Tópico ${type} ignorado neste marco (apenas Orders).` }, { status: 200 });
     }
 
-    // 1. Validar Assinatura
+    // 1. Validar Assinatura (Exigida obrigatoriamente — sem dev bypass)
     const sigVerification = verifyWebhookSignature(req, dataId);
 
+    // Regra 30: Determinar ambiente antes de criar registro idempotente
+    const isLive = body.live_mode === true || body.action === "order.paid";
+    const environment = isLive ? "PRODUCTION" : "SANDBOX";
+
+    // Regra 29: Identificador único baseado na NOTIFICAÇÃO (x-request-id ou ID único de webhook), não na action
+    const xRequestId = req.headers.get("x-request-id");
+    const eventId = xRequestId ? `ev_${xRequestId}` : `ev_ord_${dataId}_${Date.now()}`;
+
     // 2. Inbox Idempotente de Webhook
-    const eventId = `ev_ord_${dataId}_${body.action || "updated"}`;
     const existingEvent = await db.webhookEvent.findUnique({
       where: {
         provider_environment_eventId: {
           provider: "MERCADO_PAGO",
-          environment: "SANDBOX",
+          environment,
           eventId,
         },
       },
     });
 
     if (existingEvent && existingEvent.status === "PROCESSED") {
-      // Notificação duplicada já processada — retornar 200 OK sem duplicar baixa
       return NextResponse.json({ received: true, idempotent: true }, { status: 200 });
     }
 
@@ -102,7 +106,7 @@ export async function POST(req: NextRequest) {
       where: {
         provider_environment_eventId: {
           provider: "MERCADO_PAGO",
-          environment: "SANDBOX",
+          environment,
           eventId,
         },
       },
@@ -112,8 +116,7 @@ export async function POST(req: NextRequest) {
       },
       create: {
         provider: "MERCADO_PAGO",
-        environment: "SANDBOX", // Provisório, será atualizado após achar o PixCharge
-
+        environment,
         eventId,
         resourceType: type || "order",
         resourceId: dataId,
@@ -151,12 +154,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ received: true, note: "Order não pertence a cobrança ativa do NOVEX." }, { status: 200 });
     }
 
-    // Atualizar o ambiente correto no evento do webhook
-    await db.webhookEvent.update({
-      where: { id: webhookEvent.id },
-      data: { environment: pixCharge.environment },
-    });
-
     if (pixCharge.status === "PAID") {
       await db.webhookEvent.update({
         where: { id: webhookEvent.id },
@@ -178,12 +175,10 @@ export async function POST(req: NextRequest) {
 
       // BAIXA ATÔMICA DA PARCELA
       await db.$transaction(async (tx) => {
-        // Garantia contra Race Condition: Consultar estado atualizado dentro da tx
         const currentCharge = await tx.pixCharge.findUnique({ where: { id: pixCharge.id } });
         const currentInstallment = await tx.installment.findUnique({ where: { id: pixCharge.installmentId } });
 
         if (!currentCharge || currentCharge.status === "PAID" || !currentInstallment || currentInstallment.status === "SETTLED") {
-          // Já foi liquidado (provavelmente por polling concorrente)
           return;
         }
 
@@ -211,17 +206,24 @@ export async function POST(req: NextRequest) {
           },
         });
 
-        await tx.ledgerEntry.create({
-          data: {
-            workspaceId: pixCharge.workspaceId,
-            installmentId: pixCharge.installmentId,
-            direction: "CREDIT",
-            amountCents: BigInt(chargeAmount),
-            occurredAt: paidAt,
-            sourceType: "MERCADO_PAGO_PIX_WEBHOOK",
-            sourceId: dataId,
-          },
+        // Regra 31: Notificação Webhook dá baixa na parcela e vincula o LedgerEntry existente ou cria provisório com sourceId único
+        const existingLedger = await tx.ledgerEntry.findFirst({
+          where: { workspaceId: pixCharge.workspaceId, sourceType: "MERCADO_PAGO_PIX", sourceId: dataId },
         });
+
+        if (!existingLedger) {
+          await tx.ledgerEntry.create({
+            data: {
+              workspaceId: pixCharge.workspaceId,
+              installmentId: pixCharge.installmentId,
+              direction: "CREDIT",
+              amountCents: BigInt(chargeAmount),
+              occurredAt: paidAt,
+              sourceType: "MERCADO_PAGO_PIX",
+              sourceId: dataId,
+            },
+          });
+        }
 
         await tx.webhookEvent.update({
           where: { id: webhookEvent.id },

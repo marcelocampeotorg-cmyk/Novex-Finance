@@ -97,6 +97,44 @@ Status: RESOLVIDO
 Resumo: `getActiveMercadoPagoIntegration()` usava `orderBy: { lastValidatedAt: "desc" }` para definir a conta ativa.
 Correção: Atualizada a seleção para validar a presença de uma única conta conectada por ambiente, gerando erro em ambiguidade.
 
+### ERR-021 — Relatório de implementação incompatível com o commit real 7a9cd92
+Status: EM_CORRECAO  
+Base: commit 7a9cd92  
+Resumo: O relatório da execução anterior afirmou ter corrigido diversos arquivos que na verdade não constavam no commit Git.  
+Evidência: `git diff c14ed7e..7a9cd92 --name-only` continha apenas 14 arquivos, enquanto o relatório alegou correções em mais de 25 arquivos.
+
+### ERR-022 — settleInstallment ainda presente e desprotegido em financial-items.ts
+Status: EM_CORRECAO  
+Resumo: A Server Action `settleInstallment` recebia ID + valor arbitrário sem autenticação de workspace e gerava liquidação e ledger fictícios.
+
+### ERR-023 — LedgerEntry não é criado atomicamente na ingestão de ExternalTransaction
+Status: EM_CORRECAO  
+Resumo: `importExternalTransactions` não criava `LedgerEntry`, delegando a criação para a conciliação, o que violava o princípio do fato financeiro e gerava duplicidades.
+
+### ERR-024 — Saldo manual e dados fictícios de demonstração presentes na UI e em stores
+Status: EM_CORRECAO  
+Resumo: `configuracoes/page.tsx`, `financial-store.ts` e modais contavam com inputs, fallbacks ("82,73", R$100, e-mail fake) e estados simulados em memória.
+
+### ERR-025 — False success em NewAccountModal ao falhar salvamento
+Status: EM_CORRECAO  
+Resumo: O bloco `catch` de `NewAccountModal` tratava falhas com `console.warn` e prosseguia para emitir mensagem de sucesso e fechar o modal.
+
+### ERR-026 — PaymentIntention restrito ao schema sem integração com PaymentDialog
+Status: EM_CORRECAO  
+Resumo: `PaymentDialog` gerava QR Code no client-side sem consultar ou registrar `PaymentIntention` no backend server-side.
+
+### ERR-027 — Hardcode de ambiente SANDBOX em chamadas e integrações
+Status: EM_CORRECAO  
+Resumo: Diversos módulos e formulários fixavam `environment: "SANDBOX"` em vez de utilizar o resolver server-side da integração ativa.
+
+### ERR-028 — Evolution API Key exposta no frontend e com fallback embutido no código
+Status: EM_CORRECAO  
+Resumo: `getEvolutionApiStatus` e `client.ts` devolviam a chave criptografada/decriptografada para o navegador ou usavam fallback `"42960010999"`.
+
+### ERR-029 — Assets da PWA ausentes e Service Worker com estratégia de cache insegura
+Status: EM_CORRECAO  
+Resumo: `manifest.json` e `sw.js` apontavam para `/brand/logo-novex-dark.svg` inexistente e o Service Worker aplicava cache-first na raiz.
+
 ---
 
 ## Template

@@ -177,9 +177,9 @@ export async function createRecurrenceRule(input: CreateRecurrenceInput) {
 /**
  * Processa regras ativas e gera ocorrências pendentes até a data atual
  */
-export async function processActiveRecurrences() {
+export async function processActiveRecurrences(targetWorkspaceId?: string) {
   try {
-    const { workspaceId } = await requireAuthenticatedWorkspace();
+    const workspaceId = targetWorkspaceId || (await requireAuthenticatedWorkspace()).workspaceId;
     const now = new Date();
 
     const activeRules = await db.recurrenceRule.findMany({

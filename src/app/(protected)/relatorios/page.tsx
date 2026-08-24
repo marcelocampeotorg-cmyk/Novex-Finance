@@ -38,17 +38,18 @@ export default function RelatoriosPage() {
 
     import("@/server/actions/workspace").then(({ getDashboardData }) => {
       getDashboardData().then((res) => {
-        setChartData(res.chartData);
-        // Calcular média dos 6 meses do gráfico
-        let totalIn = 0;
-        let totalOut = 0;
-        let count = res.chartData.length || 1;
-        res.chartData.forEach((d: any) => {
-          totalIn += d.entradas || 0;
-          totalOut += d.saídas || 0;
-        });
-        setAvgReceita(totalIn / count);
-        setAvgDespesa(totalOut / count);
+        if (res.success && res.chartData) {
+          setChartData(res.chartData);
+          let totalIn = 0;
+          let totalOut = 0;
+          let count = res.chartData.length || 1;
+          res.chartData.forEach((d: any) => {
+            totalIn += d.entradas || 0;
+            totalOut += d.saídas || 0;
+          });
+          setAvgReceita(totalIn / count);
+          setAvgDespesa(totalOut / count);
+        }
       }).catch(console.error);
     });
   }, []);

@@ -31,6 +31,27 @@ export interface IntegrationStatusResult {
 }
 
 /**
+ * Resolver único server-only para obter a integração ativa do Mercado Pago
+ */
+export async function getActiveMercadoPagoIntegration(workspaceId: string) {
+  const account = await db.integrationAccount.findFirst({
+    where: {
+      workspaceId,
+      provider: "MERCADO_PAGO",
+      status: "CONNECTED",
+      isActive: true,
+    },
+    orderBy: { lastValidatedAt: "desc" },
+  });
+
+  if (!account || !account.encryptedCredentials) {
+    throw new Error("Nenhuma integração do Mercado Pago ativa ou conectada.");
+  }
+
+  return account;
+}
+
+/**
  * Retorna o status sanitizado da integração do Mercado Pago para o workspace autenticado.
  */
 export async function getMercadoPagoIntegrationStatus(): Promise<IntegrationStatusResult> {
@@ -41,8 +62,9 @@ export async function getMercadoPagoIntegrationStatus(): Promise<IntegrationStat
     where: {
       workspaceId: context.workspaceId,
       provider: "MERCADO_PAGO",
-      environment: "SANDBOX",
+      status: { in: ["CONNECTED", "CONNECTING", "ERROR"] },
     },
+    orderBy: { updatedAt: "desc" },
   });
 
   if (!integration || !integration.encryptedCredentials || integration.status === "DISCONNECTED") {
@@ -102,7 +124,7 @@ export async function saveMercadoPagoCredentials(input: {
       return { success: false, error: "Formato de token ou parâmetros inválidos." };
     }
 
-    const { accessToken, publicKey, environment } = parsed.data;
+    const { accessToken, publicKey } = parsed.data;
 
     // 1. Inferir ambiente pelo prefixo (APP_USR = Produção, TEST = Sandbox)
     const detectedEnvironment = accessToken.startsWith("APP_USR-") ? "PRODUCTION" : "SANDBOX";
@@ -125,7 +147,7 @@ export async function saveMercadoPagoCredentials(input: {
             actorId: context.userId,
             action: "MP_CONNECTION_FAILED",
             entityType: "IntegrationAccount",
-            entityId: "MERCADO_PAGO_SANDBOX",
+            entityId: `MERCADO_PAGO_${detectedEnvironment}`,
             metadata: {
               errorCode: validation.errorCode,
               environment: detectedEnvironment,
@@ -148,15 +170,11 @@ export async function saveMercadoPagoCredentials(input: {
 
     // 4. Salvar de forma atômica no banco de dados
     const result = await db.$transaction(async (tx) => {
-      const existing = await tx.integrationAccount.findFirst({
-        where: {
-          workspaceId: context.workspaceId,
-          provider: "MERCADO_PAGO",
-          environment: detectedEnvironment,
-        },
+      // Desativar integrações prévias do mesmo provedor
+      await tx.integrationAccount.updateMany({
+        where: { workspaceId: context.workspaceId, provider: "MERCADO_PAGO" },
+        data: { isActive: false },
       });
-
-      const isReplacement = !!existing && existing.status === "CONNECTED";
 
       const account = await tx.integrationAccount.upsert({
         where: {
@@ -171,6 +189,7 @@ export async function saveMercadoPagoCredentials(input: {
           externalAccountId: validation.externalAccountId || null,
           externalApplicationId: validation.externalApplicationId || null,
           status: "CONNECTED",
+          isActive: true,
           lastValidatedAt: new Date(),
           lastValidationErrorCode: null,
         },
@@ -183,6 +202,7 @@ export async function saveMercadoPagoCredentials(input: {
           externalAccountId: validation.externalAccountId || null,
           externalApplicationId: validation.externalApplicationId || null,
           status: "CONNECTED",
+          isActive: true,
           lastValidatedAt: new Date(),
         },
       });
@@ -192,7 +212,7 @@ export async function saveMercadoPagoCredentials(input: {
           workspaceId: context.workspaceId,
           actorType: "USER",
           actorId: context.userId,
-          action: isReplacement ? "MP_CREDENTIAL_REPLACED" : "MP_CREDENTIAL_SAVED",
+          action: "MP_CREDENTIAL_SAVED",
           entityType: "IntegrationAccount",
           entityId: account.id,
           metadata: {
@@ -213,6 +233,7 @@ export async function saveMercadoPagoCredentials(input: {
       success: true,
       maskedToken: masked,
       status: "CONNECTED",
+      environment: detectedEnvironment,
       lastValidatedAt: result.lastValidatedAt?.toISOString(),
     };
   } catch (error: any) {
@@ -234,8 +255,9 @@ export async function validateMercadoPagoConnection() {
     where: {
       workspaceId: context.workspaceId,
       provider: "MERCADO_PAGO",
-      environment: "SANDBOX",
+      status: { in: ["CONNECTED", "ERROR"] },
     },
+    orderBy: { updatedAt: "desc" },
   });
 
   if (!integration || !integration.encryptedCredentials) {
@@ -300,8 +322,9 @@ export async function disconnectMercadoPagoIntegration() {
     where: {
       workspaceId: context.workspaceId,
       provider: "MERCADO_PAGO",
-      environment: "SANDBOX",
+      status: { in: ["CONNECTED", "ERROR", "CONNECTING"] },
     },
+    orderBy: { updatedAt: "desc" },
   });
 
   if (!existing) {
@@ -314,6 +337,7 @@ export async function disconnectMercadoPagoIntegration() {
       data: {
         encryptedCredentials: null,
         status: "DISCONNECTED",
+        isActive: false,
         lastValidationErrorCode: null,
       },
     });
@@ -327,7 +351,7 @@ export async function disconnectMercadoPagoIntegration() {
         entityType: "IntegrationAccount",
         entityId: existing.id,
         metadata: {
-          environment: "SANDBOX",
+          environment: existing.environment,
         },
       },
     });
@@ -339,7 +363,7 @@ export async function disconnectMercadoPagoIntegration() {
 }
 
 /**
- * Retorna o status da integração Evolution API
+ * Retorna o status da integração Evolution API (DTO Sanitizado - NUNCA expõe apiKey ao React)
  */
 export async function getEvolutionApiStatus() {
   const context = await requireAuthenticatedWorkspace();
@@ -353,27 +377,37 @@ export async function getEvolutionApiStatus() {
 
   if (!integration || !integration.encryptedCredentials) {
     return {
+      isConnected: false,
       baseUrl: "",
-      apiKey: "",
       instanceName: "",
+      maskedApiKey: "",
     };
   }
 
   let baseUrl = "";
-  let apiKey = "";
+  let maskedApiKey = "";
   let instanceName = "";
 
   try {
     const rawData = decryptCredentials(integration.encryptedCredentials);
     const parsed = JSON.parse(rawData);
     baseUrl = parsed.baseUrl || "";
-    apiKey = parsed.apiKey || "";
     instanceName = parsed.instanceName || "";
+    if (parsed.apiKey) {
+      maskedApiKey = parsed.apiKey.length > 6
+        ? `${parsed.apiKey.slice(0, 3)}•••••${parsed.apiKey.slice(-3)}`
+        : "••••••••";
+    }
   } catch (e) {
     // ignorar erro de parse
   }
 
-  return { baseUrl, apiKey, instanceName };
+  return {
+    isConnected: integration.status === "CONNECTED",
+    baseUrl,
+    instanceName,
+    maskedApiKey,
+  };
 }
 
 /**
@@ -401,12 +435,13 @@ export async function saveEvolutionApiCredentials(input: {
           workspaceId_provider_environment: {
             workspaceId: context.workspaceId,
             provider: "EVOLUTION_API",
-            environment: "PRODUCTION", // Podemos fixar PRODUCTION ou padrão
+            environment: "PRODUCTION",
           },
         },
         update: {
           encryptedCredentials,
           status: "CONNECTED",
+          isActive: true,
           lastValidatedAt: new Date(),
         },
         create: {
@@ -416,6 +451,7 @@ export async function saveEvolutionApiCredentials(input: {
           displayName: "Evolution API WhatsApp",
           encryptedCredentials,
           status: "CONNECTED",
+          isActive: true,
           lastValidatedAt: new Date(),
         },
       });
@@ -440,3 +476,5 @@ export async function saveEvolutionApiCredentials(input: {
     return { success: false, error: error.message || "Erro interno ao salvar." };
   }
 }
+
+

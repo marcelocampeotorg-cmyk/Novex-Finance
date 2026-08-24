@@ -67,10 +67,7 @@ export default function ConfiguracoesPage() {
   const [qrCodeBase64, setQrCodeBase64] = useState<string | null>(null);
   const [waLoading, setWaLoading] = useState(false);
   const [waFeedback, setWaFeedback] = useState<{ type: "success" | "error"; msg: string } | null>(null);
-  const [testPhone, setTestPhone] = useState("5511999999999");
-  const [manualBalanceInput, setManualBalanceInput] = useState("82,73");
-  const [balanceLoading, setBalanceLoading] = useState(false);
-  const [balanceStatus, setBalanceStatus] = useState<{ type: "success" | "error"; msg: string } | null>(null);
+  const [testPhone, setTestPhone] = useState("");
 
   useEffect(() => {
     loadIntegrationStatus();
@@ -89,7 +86,7 @@ export default function ConfiguracoesPage() {
 
       const evo = await getEvolutionApiStatus();
       if (evo.baseUrl) setEvoUrl(evo.baseUrl);
-      if (evo.apiKey) setEvoApiKey(evo.apiKey);
+      if (evo.maskedApiKey) setEvoApiKey(evo.maskedApiKey);
       if (evo.instanceName) setEvoInstance(evo.instanceName);
     } catch (e) {
       console.error("Erro ao carregar status:", e);
@@ -116,6 +113,11 @@ export default function ConfiguracoesPage() {
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setPwdStatus(null);
+
+    if (!currentPassword) {
+      setPwdStatus({ type: "error", msg: "Informe a sua senha atual." });
+      return;
+    }
 
     if (newPassword !== confirmPassword) {
       setPwdStatus({ type: "error", msg: "A confirmação de senha não confere." });
@@ -224,11 +226,7 @@ export default function ConfiguracoesPage() {
     setWaLoading(true);
     setWaFeedback(null);
     try {
-      const res = await checkEvolutionConnectionState({
-        baseUrl: evoUrl || undefined,
-        apiKey: evoApiKey || undefined,
-        instanceName: evoInstance || undefined,
-      });
+      const res = await checkEvolutionConnectionState();
 
       if (res.success && res.state === "open") {
         setWaConnected(true);
@@ -251,11 +249,7 @@ export default function ConfiguracoesPage() {
     setWaFeedback(null);
 
     try {
-      const res = await fetchEvolutionQRCode({
-        baseUrl: evoUrl || undefined,
-        apiKey: evoApiKey || undefined,
-        instanceName: evoInstance || undefined,
-      });
+      const res = await fetchEvolutionQRCode();
 
       if (res.success && "base64" in res && res.base64) {
         setQrCodeBase64(res.base64);
@@ -307,9 +301,6 @@ export default function ConfiguracoesPage() {
         amountCents: 15000,
         dueDate: "10/08/2026",
         pixCopiaECola: "00020126580014br.gov.bcb.pix.teste.novex.finance",
-        baseUrl: evoUrl,
-        apiKey: evoApiKey,
-        instanceName: evoInstance,
       });
 
       if (res.success) {
@@ -324,31 +315,11 @@ export default function ConfiguracoesPage() {
     }
   };
 
-  const handleSaveManualBalance = async () => {
-    setBalanceLoading(true);
-    setBalanceStatus(null);
-    try {
-      const rawDigits = manualBalanceInput.replace(/\D/g, "");
-      const targetCents = Number(rawDigits);
-      const { setManualInitialBalance } = await import("@/server/actions/workspace");
-      const res = await setManualInitialBalance(targetCents);
-      if (res.success) {
-        setBalanceStatus({ type: "success", msg: "Saldo Atual atualizado no sistema com sucesso!" });
-      } else {
-        setBalanceStatus({ type: "error", msg: res.error || "Erro ao atualizar saldo." });
-      }
-    } catch (e: any) {
-      setBalanceStatus({ type: "error", msg: "Erro ao comunicar com o servidor." });
-    } finally {
-      setBalanceLoading(false);
-    }
-  };
-
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <PageHeader
         title="Configurações do Sistema"
-        description="Parâmetros do Workspace, ajuste manual de saldo, alteração de senha, credenciais Mercado Pago e WhatsApp."
+        description="Parâmetros do Workspace, alteração de senha, credenciais Mercado Pago e WhatsApp."
       />
 
       <div className="max-w-3xl space-y-6">
@@ -390,56 +361,6 @@ export default function ConfiguracoesPage() {
           </button>
         </div>
 
-        {/* Ajuste Manual de Saldo em Conta */}
-        <div className="rounded-xl border border-novex-border bg-novex-surface1 p-6 space-y-4">
-          <div className="flex items-center gap-3 border-b border-novex-border pb-3">
-            <Wallet className="h-5 w-5 text-emerald-400" />
-            <div>
-              <h3 className="text-base font-bold text-novex-text-primary">Ajuste Manual do Saldo Atual em Conta</h3>
-              <p className="text-xs text-novex-text-muted">Altere diretamente o seu saldo base caso queira ajustar divergências históricas sem complicação.</p>
-            </div>
-          </div>
-
-          {balanceStatus && (
-            <div
-              className={`p-3 rounded-lg border text-xs flex items-center gap-2 ${
-                balanceStatus.type === "success"
-                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
-                  : "bg-red-500/10 border-red-500/30 text-red-400"
-              }`}
-            >
-              {balanceStatus.type === "success" ? <Check className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
-              <span>{balanceStatus.msg}</span>
-            </div>
-          )}
-
-          <div className="max-w-xs text-xs">
-            <label className="font-semibold text-novex-text-secondary block mb-1">Novo Saldo Atual Desejado (R$)</label>
-            <input
-              type="text"
-              value={manualBalanceInput}
-              onChange={(e) => {
-                const rawDigits = e.target.value.replace(/\D/g, "");
-                const num = Number(rawDigits) / 100;
-                setManualBalanceInput(
-                  num.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                );
-              }}
-              placeholder="0,00"
-              className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 font-mono text-lg font-bold text-emerald-400 focus:border-emerald-400 focus:outline-none"
-            />
-          </div>
-
-          <button
-            onClick={handleSaveManualBalance}
-            disabled={balanceLoading}
-            className="flex items-center justify-center gap-2 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white px-5 py-2 font-semibold text-xs transition-colors shadow-sm cursor-pointer disabled:opacity-50"
-          >
-            {balanceLoading ? <span className="animate-spin block w-4 h-4 border-2 border-white border-t-transparent rounded-full" /> : <Check className="h-4 w-4" />}
-            <span>{balanceLoading ? "Atualizando..." : "Atualizar Saldo Atual"}</span>
-          </button>
-        </div>
-
         {/* Alterar Senha */}
         <div className="rounded-xl border border-novex-border bg-novex-surface1 p-6 space-y-4">
           <div className="flex items-center gap-3 border-b border-novex-border pb-3">
@@ -466,18 +387,20 @@ export default function ConfiguracoesPage() {
 
           <form onSubmit={handleChangePassword} className="space-y-4 text-xs">
             <div>
-              <label className="font-semibold text-novex-text-secondary block mb-1">E-mail Cadastrado</label>
+              <label className="font-semibold text-novex-text-secondary block mb-1">Senha Atual *</label>
               <input
-                type="email"
-                disabled
-                defaultValue="franklinjr18@hotmail.com"
-                className="w-full rounded-lg border border-novex-border bg-novex-surface2 p-2.5 text-novex-text-muted cursor-not-allowed"
+                type="password"
+                required
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                placeholder="Digite sua senha atual..."
+                className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-novex-text-primary focus:border-novex-cyan focus:outline-none"
               />
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="font-semibold text-novex-text-secondary block mb-1">Nova Senha</label>
+                <label className="font-semibold text-novex-text-secondary block mb-1">Nova Senha *</label>
                 <input
                   type="password"
                   required
@@ -489,7 +412,7 @@ export default function ConfiguracoesPage() {
               </div>
 
               <div>
-                <label className="font-semibold text-novex-text-secondary block mb-1">Confirmar Nova Senha</label>
+                <label className="font-semibold text-novex-text-secondary block mb-1">Confirmar Nova Senha *</label>
                 <input
                   type="password"
                   required

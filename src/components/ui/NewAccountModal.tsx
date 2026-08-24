@@ -7,6 +7,8 @@ import { z } from "zod";
 import { X, QrCode, Info, CheckCircle2 } from "lucide-react";
 
 
+import { AlertCircle } from "lucide-react";
+
 const newAccountSchema = z.object({
   direction: z.enum(["PAYABLE", "RECEIVABLE"]),
   kind: z.enum(["ONE_TIME", "INSTALLMENT_PLAN", "RECURRING"]),
@@ -19,6 +21,7 @@ const newAccountSchema = z.object({
   installmentsCount: z.coerce.number().min(1).max(60).default(1),
   frequency: z.enum(["DAILY", "WEEKLY", "BIWEEKLY", "MONTHLY", "YEARLY"]).optional(),
   pixKey: z.string().optional(),
+  pixKeyType: z.enum(["CPF", "CNPJ", "EMAIL", "PHONE", "EVP"]).optional(),
 });
 
 type NewAccountFormData = z.infer<typeof newAccountSchema>;
@@ -42,6 +45,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
     { sequence: number; amount: number; dueDate: string }[]
   >([]);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [formErrorMessage, setFormErrorMessage] = useState<string | null>(null);
   const [isCustomCategory, setIsCustomCategory] = useState(false);
 
   const {
@@ -60,11 +64,12 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
       description: "",
       contactName: "",
       category: "Moradia",
-      totalAmount: 100,
+      totalAmount: 0,
       startDate: new Date().toISOString().split("T")[0],
       installmentsCount: 1,
       frequency: "MONTHLY",
       pixKey: "",
+      pixKeyType: "EMAIL",
     },
   });
 
@@ -78,6 +83,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
   React.useEffect(() => {
     if (isOpen) {
       setSuccessMessage(null);
+      setFormErrorMessage(null);
       if (editItem) {
         reset({
           direction: editItem.direction,
@@ -91,6 +97,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
           installmentsCount: editItem.installments?.length || 1,
           frequency: "MONTHLY",
           pixKey: editItem.pixKey || "",
+          pixKeyType: (editItem.contact?.pixKeys?.[0]?.type as any) || "EMAIL",
         });
 
         if (editItem.installments && editItem.installments.length > 0) {
@@ -110,11 +117,12 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
           description: "",
           contactName: "",
           category: "Moradia",
-          totalAmount: 100,
+          totalAmount: 0,
           startDate: new Date().toISOString().split("T")[0],
           installmentsCount: 1,
           frequency: "MONTHLY",
           pixKey: "",
+          pixKeyType: "EMAIL",
         });
         setInstallmentsList([]);
       }
@@ -160,6 +168,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
   if (!isOpen) return null;
 
   const onSubmit = async (data: NewAccountFormData) => {
+    setFormErrorMessage(null);
     try {
       const finalInstallments =
         data.kind === "INSTALLMENT_PLAN" && installmentsList.length > 0
@@ -186,6 +195,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
           description: data.description,
           contactName: data.contactName,
           pixKey: data.pixKey,
+          pixKeyType: data.pixKeyType,
           categoryName: data.category,
           totalAmountCents: Math.round(data.totalAmount * 100),
           startDate: data.startDate,
@@ -193,7 +203,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
         });
 
         if (!res.success) {
-          throw new Error((res as any).error || "Erro desconhecido ao atualizar");
+          throw new Error((res as any).error || "Erro ao atualizar conta no banco de dados.");
         }
       } else {
         const { createFinancialItem } = await import("@/server/actions/financial-items");
@@ -204,6 +214,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
           description: data.description,
           contactName: data.contactName,
           pixKey: data.pixKey,
+          pixKeyType: data.pixKeyType,
           categoryName: data.category,
           totalAmountCents: Math.round(data.totalAmount * 100),
           startDate: data.startDate,
@@ -211,24 +222,25 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
         });
 
         if (!res.success) {
-          throw new Error((res as any).error || "Erro desconhecido ao salvar");
+          throw new Error((res as any).error || "Erro ao cadastrar conta no banco de dados.");
         }
       }
 
       const { notifyStoreChange } = await import("@/services/financial-store");
       notifyStoreChange();
-    } catch (err) {
-      console.warn("Erro ao salvar conta no banco de dados:", err);
-    }
 
-    setSuccessMessage(
-      `Sucesso! ${data.direction === "PAYABLE" ? "Conta a pagar" : "Conta a receber"} "${data.title}" (${data.contactName}) ${editItem ? "atualizada" : "cadastrada"} com sucesso.`
-    );
-    setTimeout(() => {
-      setSuccessMessage(null);
-      reset();
-      onClose();
-    }, 1200);
+      setSuccessMessage(
+        `Sucesso! ${data.direction === "PAYABLE" ? "Conta a pagar" : "Conta a receber"} "${data.title}" (${data.contactName}) ${editItem ? "atualizada" : "cadastrada"} com sucesso.`
+      );
+      setTimeout(() => {
+        setSuccessMessage(null);
+        reset();
+        onClose();
+      }, 1200);
+    } catch (err: any) {
+      console.error("Erro ao salvar conta no banco de dados:", err);
+      setFormErrorMessage(err.message || "Falha ao salvar no banco de dados local. Tente novamente.");
+    }
   };
 
   return (
@@ -256,6 +268,13 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
           <div className="mb-4 flex items-center gap-2 rounded-lg bg-emerald-500/20 p-3 text-xs text-emerald-300 border border-emerald-500/40">
             <CheckCircle2 className="h-4 w-4 shrink-0" />
             <span>{successMessage}</span>
+          </div>
+        )}
+
+        {formErrorMessage && (
+          <div className="mb-4 flex items-center gap-2 rounded-lg bg-rose-500/20 p-3 text-xs text-rose-300 border border-rose-500/40">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>{formErrorMessage}</span>
           </div>
         )}
 
@@ -331,17 +350,29 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
             </div>
           </div>
 
-          {/* Campo Chave Pix para Pagamento / Cobrança */}
+          {/* Campo Chave Pix para Pagamento / Cobrança com Seletor de Tipo */}
           <div className="rounded-lg border border-novex-border bg-novex-surface2/40 p-3 space-y-2">
             <label className="font-semibold text-novex-cyan flex items-center gap-1.5">
               <QrCode className="h-4 w-4" />
               <span>Chave Pix do Favorecido / Recebedor (Opcional)</span>
             </label>
-            <input
-              {...register("pixKey")}
-              placeholder="Cole aqui a Chave Pix (CPF, CNPJ, E-mail, Celular ou Aleatória)..."
-              className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-novex-text-primary font-mono focus:border-novex-cyan focus:outline-none"
-            />
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <select
+                {...register("pixKeyType")}
+                className="rounded-lg border border-novex-border bg-novex-bg p-2.5 text-novex-text-primary focus:border-novex-cyan focus:outline-none"
+              >
+                <option value="CPF">CPF</option>
+                <option value="CNPJ">CNPJ</option>
+                <option value="EMAIL">E-mail</option>
+                <option value="PHONE">Celular/Telefone</option>
+                <option value="EVP">Chave Aleatória (EVP)</option>
+              </select>
+              <input
+                {...register("pixKey")}
+                placeholder="Valor da Chave Pix..."
+                className="md:col-span-2 rounded-lg border border-novex-border bg-novex-bg p-2.5 text-novex-text-primary font-mono focus:border-novex-cyan focus:outline-none"
+              />
+            </div>
             <span className="text-[10px] text-novex-text-muted flex items-center gap-1">
               <Info className="h-3 w-3 shrink-0 text-novex-cyan" />
               <span>A Chave Pix informada será utilizada na emissão instantânea de QR Code e cobranças automatizadas.</span>

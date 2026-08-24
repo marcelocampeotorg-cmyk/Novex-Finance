@@ -30,6 +30,8 @@ export interface PixChargeStatusResult {
   error?: string;
 }
 
+import { getActiveMercadoPagoIntegration } from "@/server/actions/integrations";
+
 /**
  * Gera uma Cobrança Pix via Orders API para uma Parcela de Conta a Receber.
  * NUNCA permite geração para Contas a Pagar (PAYABLE).
@@ -48,35 +50,30 @@ export async function generateReceivablePixCharge(input: {
   const { installmentId } = parsed.data;
 
   // 1. Carregar a Parcela e o Item Financeiro com verificação de workspace
-  let installment = null;
-  try {
-    installment = await db.installment.findFirst({
-      where: {
-        id: installmentId,
-        financialItem: {
-          workspaceId: context.workspaceId,
-          deletedAt: null,
+  const installment = await db.installment.findFirst({
+    where: {
+      id: installmentId,
+      financialItem: {
+        workspaceId: context.workspaceId,
+        deletedAt: null,
+      },
+    },
+    include: {
+      financialItem: {
+        include: {
+          contact: true,
         },
       },
-      include: {
-        financialItem: {
-          include: {
-            contact: true,
-          },
+      pixCharges: {
+        where: {
+          status: "PENDING",
         },
-        pixCharges: {
-          where: {
-            status: "PENDING",
-          },
-          orderBy: {
-            createdAt: "desc",
-          },
+        orderBy: {
+          createdAt: "desc",
         },
       },
-    });
-  } catch (e) {
-    console.warn("[PIX RECEIVABLES] Banco indisponível em dev. Utilizando fallback gracioso para mock.");
-  }
+    },
+  });
 
   if (!installment) {
     return {
@@ -112,25 +109,27 @@ export async function generateReceivablePixCharge(input: {
     return { success: false, status: "FAILED", isPaid: false, error: "O valor da cobrança deve ser maior que zero." };
   }
 
-  // 4. Verificar e-mail do devedor/contato
-  const debtorEmail = installment.financialItem.contact?.email || context.userEmail || "devedor@novexfinance.local";
-
-  // 5. Verificar integração ativa com Mercado Pago Sandbox
-  const integration = await db.integrationAccount.findFirst({
-    where: {
-      workspaceId: context.workspaceId,
-      provider: "MERCADO_PAGO",
-      environment: "SANDBOX",
-      status: "CONNECTED",
-    },
-  });
-
-  if (!integration || !integration.encryptedCredentials) {
+  // 4. Verificar e-mail REAL do devedor/contato (Regra 22: Sem email fake de devedor ou do proprietário)
+  const debtorEmail = installment.financialItem.contact?.email?.trim();
+  if (!debtorEmail) {
     return {
       success: false,
       status: "FAILED",
       isPaid: false,
-      error: "Integração do Mercado Pago Sandbox não configurada ou inativa no Workspace. Acesse Configurações para conectar.",
+      error: "O devedor/contato precisa ter um e-mail válido cadastrado no perfil de contatos para emitir cobrança Pix.",
+    };
+  }
+
+  // 5. Verificar integração ativa com Mercado Pago (Regra 23: Resolver dinâmico da integração ativa)
+  let integration;
+  try {
+    integration = await getActiveMercadoPagoIntegration(context.workspaceId);
+  } catch (e: any) {
+    return {
+      success: false,
+      status: "FAILED",
+      isPaid: false,
+      error: e.message || "Integração do Mercado Pago não configurada ou inativa no Workspace.",
     };
   }
 
@@ -155,16 +154,16 @@ export async function generateReceivablePixCharge(input: {
   // 7. Descriptografar Access Token
   let accessToken: string;
   try {
-    const creds = parseMercadoPagoCredentials(integration.encryptedCredentials);
+    const creds = parseMercadoPagoCredentials(integration.encryptedCredentials!);
     accessToken = creds.accessToken;
   } catch (e) {
     return { success: false, status: "FAILED", isPaid: false, error: "Erro ao descriptografar credencial do workspace." };
   }
 
-  // 8. Chave de Idempotência Única e Persistente (Baseada em quantidade de tentativas para evitar concorrentes no mesmo segundo)
-  const retryCount = installment.pixCharges?.length || 0;
-  const idempotencyKey = `nvx_idemp_${installment.id}_${retryCount}`;
-  const externalReference = `NVX-REC-${installment.id.slice(0, 8)}-${retryCount}`;
+  // 8. Chave de Idempotência Única e Determinística (Regra 24)
+  const uniqueHash = crypto.createHash("sha256").update(`${context.workspaceId}:${installment.id}:${chargeAmountCents}:${Date.now()}`).digest("hex").slice(0, 12);
+  const idempotencyKey = `nvx_idemp_${installment.id}_${uniqueHash}`;
+  const externalReference = `NVX-REC-${installment.id.slice(0, 8)}-${uniqueHash}`;
 
   // 9. Criar Registro Local no Banco (Status CREATING)
   const pixCharge = await db.pixCharge.create({
@@ -174,7 +173,7 @@ export async function generateReceivablePixCharge(input: {
       financialItemId: installment.financialItemId,
       installmentId: installment.id,
       provider: "MERCADO_PAGO",
-      environment: "SANDBOX",
+      environment: integration.environment,
       externalReference,
       idempotencyKey,
       amountCents: BigInt(chargeAmountCents),
@@ -236,7 +235,7 @@ export async function generateReceivablePixCharge(input: {
         installmentId: installment.id,
         externalOrderId: orderResult.orderId,
         amountCents: chargeAmountCents,
-        environment: "SANDBOX",
+        environment: integration.environment,
       },
     },
   });
