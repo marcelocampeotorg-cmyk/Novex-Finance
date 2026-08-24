@@ -34,12 +34,86 @@ export class MercadoPagoReportsClient {
   }
 
   /**
+   * Solicita a geração assíncrona do Relatório Dinheiro em Conta (Settlement Report)
+   * POST https://api.mercadopago.com/v1/account/settlement_report
+   */
+  async requestSettlementReport(beginDate?: Date, endDate?: Date): Promise<{ success: boolean; reportId?: string; fileFileName?: string; status?: string; error?: string }> {
+    try {
+      const begin = (beginDate || new Date(Date.now() - 30 * 24 * 3600 * 1000)).toISOString();
+      const end = (endDate || new Date()).toISOString();
+
+      const response = await fetch("https://api.mercadopago.com/v1/account/settlement_report", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          begin_date: begin,
+          end_date: end,
+        }),
+      });
+
+      if (response.status === 202 || response.ok) {
+        const data = await response.json();
+        return {
+          success: true,
+          reportId: String(data.id || data.file_name || ""),
+          fileFileName: data.file_name,
+          status: data.status || "PROCESSING",
+        };
+      }
+
+      const errData = await response.json().catch(() => ({}));
+      return {
+        success: false,
+        error: errData.message || errData.error || `HTTP ${response.status} ao solicitar settlement_report`,
+      };
+    } catch (err: any) {
+      console.error("Erro ao solicitar settlement_report:", err);
+      return { success: false, error: err.message || String(err) };
+    }
+  }
+
+  /**
+   * Lista relatórios Dinheiro em Conta gerados na conta Mercado Pago
+   * GET https://api.mercadopago.com/v1/account/settlement_report/list
+   */
+  async listSettlementReports(): Promise<MercadoPagoReportFile[]> {
+    try {
+      const response = await fetch("https://api.mercadopago.com/v1/account/settlement_report/list", {
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        return [];
+      }
+
+      const data = await response.json();
+      const files = Array.isArray(data) ? data : data.results || [];
+
+      return files.map((f: any) => ({
+        id: String(f.id || f.file_name),
+        fileName: f.file_name || String(f.id),
+        createdDate: f.created_date || new Date().toISOString(),
+        totalAmountCents: Math.round((f.total_amount || 0) * 100),
+        transactionCount: f.transaction_count || 0,
+        downloadUrl: f.download_url || undefined,
+        status: f.status === "created" || f.status === "READY" ? "READY" : "PROCESSING",
+      }));
+    } catch (err) {
+      console.error("Erro ao listar settlement_report:", err);
+      return [];
+    }
+  }
+
+  /**
    * Buscar extrato de movimentações externas (Relatório Dinheiro em Conta / Pagamentos)
    */
   async fetchAccountStatement(startDate?: Date, endDate?: Date): Promise<MercadoPagoRawTransaction[]> {
-
     try {
-      // Chamada à API real do Mercado Pago (/v1/account/settlement_report/list ou /v1/payments/search)
       const beginDate = (startDate || new Date(Date.now() - 30 * 24 * 3600 * 1000)).toISOString();
       const finalDate = (endDate || new Date()).toISOString();
 

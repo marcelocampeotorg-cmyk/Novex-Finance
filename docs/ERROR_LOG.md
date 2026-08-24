@@ -12,14 +12,15 @@ Este arquivo deve ser atualizado pela skill `SKILL_02_REGISTRO_DE_ERROS.md`.
 ## Erros conhecidos iniciais
 
 ### ERR-001 — Migrations não reproduzíveis
-Status: ABERTO  
+Status: RESOLVIDO  
 Base: commit 5128674  
 Resumo: GitHub continha somente migration_lock, apesar de histórico local aparentar migrations aplicadas.  
-Risco: bloqueador de deploy.
+Correção: Adicionada a regra `!prisma/migrations/**/*.sql` no `.gitignore`, versionando todas as migrations SQL no Git. Validadas 4 migrations ativas com `prisma migrate status`.
 
 ### ERR-002 — Refund fora do escopo
-Status: ABERTO  
-Resumo: fluxo de “Devolver Pix” contradiz a regra de não movimentar saída.
+Status: RESOLVIDO  
+Resumo: fluxo de “Devolver Pix” contradizia a regra inegociável de não movimentar saída de dinheiro.  
+Correção: Removida a ação `refundPixCharge`, neutralizado o cliente de refund para retornar erro explícito `REGRA_DE_SEGURANCA_ABS` e removidos botões/modais de estorno da interface.
 
 ### ERR-007 — Exposição de credenciais em Server Action getActiveMercadoPagoIntegration
 Status: RESOLVIDO  
@@ -32,20 +33,24 @@ Resumo: As novas skills e documentos permaneciam em uma subpasta duplicada (`NOV
 Correção: A estrutura de `docs/` (25 arquivos), `templates/` e `assets/` foi mantida na raiz e a coleção única de skills (18 arquivos em `.agents/skills/`) foi instalada exclusivamente no diretório de customização de agentes do Antigravity (`.agents/skills/`).
 
 ### ERR-003 — Simulação de pagamento em conta a pagar
-Status: ABERTO  
-Resumo: PaymentDialog simula reconhecimento por timeout.
+Status: RESOLVIDO  
+Resumo: PaymentDialog simulava reconhecimento de pagamento por timeout.  
+Correção: Removida a simulação visual e substituída pela mensagem informativa de intenção de pagamento, aguardando conciliação bancária externa real.
 
 ### ERR-004 — Account Money ainda não implementado corretamente
-Status: ABERTO  
-Resumo: payments/search usado como extrato.
+Status: RESOLVIDO  
+Resumo: payments/search usado como extrato.  
+Correção: Implementados os métodos oficiais `requestSettlementReport` (`POST /v1/account/settlement_report`) e `listSettlementReports` (`GET /v1/account/settlement_report/list`) no cliente de relatórios do Mercado Pago (`reports-client.ts`).
 
 ### ERR-005 — Saldo/manual e source separation
-Status: ABERTO  
-Resumo: fluxos de saldo manual, CSV e provider/source apresentam inconsistências.
+Status: RESOLVIDO  
+Resumo: fluxos de saldo manual, CSV e provider/source apresentavam inconsistências.  
+Correção: Corrigida a Server Action `setManualInitialBalance` para utilizar `provider: "MERCADO_PAGO"` e `source: "MANUAL_ADJUSTMENT"`, garantindo a separação limpa de enums no Prisma.
 
 ### ERR-006 — Mocks de runtime
-Status: ABERTO  
-Resumo: attachments/lixeira/export/Pix demonstrativo precisam ser removidos ou desativados de forma honesta.
+Status: RESOLVIDO  
+Resumo: attachments/lixeira/export/Pix demonstrativo precisavam ser removidos ou desativados de forma honesta.  
+Correção: Implementada exportação CSV real com sanitização contra injeção em `export.ts`, lixeira real integrada com `deletedAt` no Prisma em `trash.ts`, desativação segura de presigned URLs em `attachments.ts` e remoção completa de botões de simulação em `PaymentDialog.tsx`.
 
 ---
 
