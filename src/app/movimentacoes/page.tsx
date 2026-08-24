@@ -318,8 +318,8 @@ export default function MovimentacoesPage() {
                       </span>
                     </td>
                     <td
-                      className={`py-4 px-4 font-bold text-sm font-mono ${
-                        tx.direction === "CREDIT" ? "text-emerald-400" : "text-novex-text-primary"
+                      className={`py-4 px-4 font-bold ${
+                        tx.direction === "CREDIT" ? "text-emerald-400" : "text-red-400"
                       }`}
                     >
                       {tx.direction === "CREDIT" ? "+" : "-"}{formatCurrency(tx.amountCents)}

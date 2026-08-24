@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { RefreshCw, Plus, Search, CheckCircle2, User, LogOut } from "lucide-react";
+import { RefreshCw, Plus, Search, CheckCircle2, AlertTriangle, User, LogOut } from "lucide-react";
 
 import { NewAccountModal } from "@/components/ui/NewAccountModal";
 import { authClient } from "@/lib/auth-client";
@@ -37,7 +37,7 @@ export const AppTopbar: React.FC = () => {
     setIsSyncing(true);
     try {
       const { triggerMercadoPagoSync, getWorkspaceSummary } = await import("@/server/actions/workspace");
-      await triggerMercadoPagoSync();
+      await triggerMercadoPagoSync(true);
       const res = await getWorkspaceSummary();
       setSummary({
         syncSource: res.syncSource,
@@ -69,29 +69,6 @@ export const AppTopbar: React.FC = () => {
 
         {/* Direita: Status de Sync, Ação Rápida e Perfil */}
         <div className="flex items-center gap-4">
-          {/* Status de Sincronização Mercado Pago */}
-          <div className="hidden sm:flex items-center gap-2.5 rounded-lg border border-novex-border bg-novex-surface2/80 px-3 py-1.5 text-xs">
-            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-            {summary && (
-              <div className="flex flex-col">
-                <span className="font-medium text-novex-text-primary text-[11px]">
-                  {summary.syncSource}
-                </span>
-                <span className="text-[10px] text-novex-text-muted">
-                  {summary.accountDisplayName}
-                </span>
-              </div>
-            )}
-            <button
-              onClick={handleSync}
-              disabled={isSyncing}
-              className="ml-1 rounded p-1 text-novex-text-secondary hover:bg-novex-border hover:text-novex-cyan transition-colors"
-              title="Sincronizar movimentações do Mercado Pago agora"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? "animate-spin text-novex-cyan" : ""}`} />
-            </button>
-          </div>
-
           {/* Botão Rápido + Nova Conta */}
           <button
             onClick={() => setIsNewAccountOpen(true)}

@@ -20,7 +20,7 @@ export async function getWorkspaceSummary(): Promise<BalanceSummaryMock> {
     let totalReceivableMonthCents = 0;
     let totalOverdueCents = 0;
 
-    installments.forEach((inst) => {
+    installments.forEach((inst: any) => {
       const remainingCents = Number(inst.amountCents - inst.settledAmountCents);
       if (inst.financialItem.direction === "PAYABLE") {
         if (inst.status !== "SETTLED" && inst.status !== "CANCELED") {
@@ -43,25 +43,49 @@ export async function getWorkspaceSummary(): Promise<BalanceSummaryMock> {
     });
 
     let currentBalanceCents = 0;
-    let syncSource: "SINCRONIZADO" | "CALCULADO" = "CALCULADO";
+    let syncSource: "SINCRONIZADO" | "PENDENTE" | "DESCONECTADO" | "CALCULADO" = "CALCULADO";
     let accountDisplayName = "Conta Local";
     let lastSyncAt = new Date().toISOString();
+    let isOutdated = false;
 
     if (mpIntegration) {
-      syncSource = "SINCRONIZADO";
       accountDisplayName = mpIntegration.displayName || "Mercado Pago";
-      if (mpIntegration.lastSyncAt) lastSyncAt = mpIntegration.lastSyncAt.toISOString();
-
-      // Para refletir o saldo das transações do Mercado Pago de forma provisória antes da conciliação
-      const txs = await db.externalTransaction.findMany({
-        where: { workspaceId, integrationAccountId: mpIntegration.id },
-      });
-      let balance = 0;
-      for (const tx of txs) {
-        if (tx.direction === "CREDIT") balance += Number(tx.amountCents);
-        if (tx.direction === "DEBIT") balance -= Number(tx.amountCents);
+      
+      if (mpIntegration.status !== "CONNECTED") {
+        syncSource = "DESCONECTADO";
+        isOutdated = true;
+      } else if (mpIntegration.lastValidationErrorCode) {
+        syncSource = "DESCONECTADO";
+        isOutdated = true;
+      } else if (!mpIntegration.lastSyncAt) {
+        syncSource = "PENDENTE";
+        isOutdated = true;
+      } else {
+        lastSyncAt = mpIntegration.lastSyncAt.toISOString();
+        const diffInMinutes = (new Date().getTime() - mpIntegration.lastSyncAt.getTime()) / (1000 * 60);
+        if (diffInMinutes > 15) {
+          syncSource = "PENDENTE";
+          isOutdated = true;
+        } else {
+          syncSource = "SINCRONIZADO";
+          isOutdated = false;
+        }
       }
-      currentBalanceCents = balance;
+
+      const caps = (mpIntegration.capabilities as any) || {};
+      if (typeof caps.realBalanceCents === "number") {
+        currentBalanceCents = caps.realBalanceCents;
+      } else {
+        const txs = await db.externalTransaction.findMany({
+          where: { workspaceId, integrationAccountId: mpIntegration.id },
+        });
+        let balance = 0;
+        for (const tx of txs) {
+          if (tx.direction === "CREDIT") balance += Number(tx.amountCents);
+          if (tx.direction === "DEBIT") balance -= Number(tx.amountCents);
+        }
+        currentBalanceCents = balance;
+      }
     }
 
     const projectedBalanceCents = currentBalanceCents + totalReceivableMonthCents - totalPayableMonthCents;
@@ -78,6 +102,7 @@ export async function getWorkspaceSummary(): Promise<BalanceSummaryMock> {
       accountDisplayName,
       unresolvedTransactionsCount: unmatchesCount,
       uncategorizedCount: 0,
+      isOutdated,
     };
   } catch (error) {
     console.error("Erro ao calcular resumo:", error);
@@ -188,7 +213,7 @@ export async function getDashboardData() {
     include: { reconciliations: { orderBy: { createdAt: "desc" }, take: 1 } },
   });
 
-  const recentTransactions = txs.map(tx => ({
+  const recentTransactions = txs.map((tx: any) => ({
     id: tx.id,
     direction: tx.direction,
     amountCents: Number(tx.amountCents),
@@ -218,7 +243,7 @@ export async function getDashboardData() {
 
     let entradas = 0;
     let saidas = 0;
-    monthTxs.forEach(t => {
+    monthTxs.forEach((t: any) => {
       if (t.type !== "TRANSFER") {
         if (t.direction === "CREDIT") entradas += Number(t.amountCents) / 100;
         if (t.direction === "DEBIT") saidas += Number(t.amountCents) / 100;
@@ -235,11 +260,11 @@ export async function getDashboardData() {
   return { summary, recentTransactions, chartData };
 }
 
-export async function triggerMercadoPagoSync() {
+export async function triggerMercadoPagoSync(force: boolean = false) {
   try {
     const { workspaceId } = await requireAuthenticatedWorkspace();
     const { syncMercadoPago } = await import('./mercadopago-sync');
-    return await syncMercadoPago(workspaceId);
+    return await syncMercadoPago(workspaceId, force);
   } catch (error) {
     return { success: false, error: String(error) };
   }

@@ -112,8 +112,9 @@ export interface BalanceSummaryMock {
   totalOverdueCents: number;
   totalDebtorsOwedCents: number;
   lastSyncAt: string;
-  syncSource: "SINCRONIZADO" | "CALCULADO";
+  syncSource: "SINCRONIZADO" | "PENDENTE" | "DESCONECTADO" | "CALCULADO";
   accountDisplayName: string;
   unresolvedTransactionsCount: number;
   uncategorizedCount: number;
+  isOutdated?: boolean;
 }

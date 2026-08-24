@@ -143,7 +143,7 @@ export default function ContasAReceberPage() {
                   className="flex items-center justify-between rounded-lg bg-novex-surface2/60 p-2.5 text-xs border border-novex-border/40"
                 >
                   <div>
-                    <span className="font-semibold text-novex-text-primary">
+                    <span className="font-semibold text-emerald-400">
                       Parcela {inst.sequence}/{inst.totalSequences} — {formatCurrency(inst.amountCents)}
                     </span>
                     <span className="text-[10px] text-novex-text-muted block">

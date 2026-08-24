@@ -1,36 +1,37 @@
-# Próximas Tarefas — NOVEX Finance
+# Registro de Estado e Tarefas — NOVEX Finance
 
-Este arquivo registra o estado atual do projeto e o planejamento para continuidade na próxima sessão.
+> [!WARNING]
+> **CONTEXTO PARA A PRÓXIMA SESSÃO (LEIA PRIMEIRO):**
+> 1. **As correções de hoje NÃO foram eficientes.** O usuário relatou que a tela continuou travada nos menus e carregando infinitamente.
+> 2. O saldo exibido continua incorreto em relação ao saldo real do Mercado Pago (Sandbox). A API do Sandbox retorna `Forbidden` para saldo, então o sistema está calculando a soma das transações importadas, o que divergiu do saldo real esperado pelo usuário.
+> 3. A transação "antes das 18h" (`Venda #55445`) *foi* salva no banco (ID 172758033014), mas como a tela (React) estava travada devido a um loop no `window.addEventListener("focus")`, ela não apareceu no Dashboard para o usuário. 
+> 4. Uma tentativa de correção com `useRef` foi feita no `page.tsx` para evitar o loop, mas o usuário finalizou a sessão reportando ineficiência. Amanhã, a primeira coisa a fazer é reavaliar o sync automático do Dashboard e encontrar uma maneira melhor de exibir/lidar com o saldo do Sandbox.
 
 ---
 
-## 📌 Estado Atual do Projeto & Ajustes Recentes
+## 📌 Histórico de Tarefas Concluídas & Entregues
 
 - [x] **Compilação & Hardening do Next.js 14:**
-  - `reconciliation.ts` e `recurrence.ts` com funções `async` nas Server Actions (0 erros de compilação).
-  - 48/48 testes unitários passando em `npm test`.
-  - Typecheck 100% limpo em `npx tsc --noEmit`.
+  - Server actions assíncronas tratadas e limpas de warnings.
+  - Testes unitários e typecheck 100% aprovados (`npx tsc --noEmit`).
 
 - [x] **Contas, Favorecidos e Chaves Pix:**
-  - Limpeza de dados genéricos de demonstração em `src/mocks/financial-data.ts`.
-  - Campo de digitação livre de nome do favorecido (`contactName`) e campo de **Chave Pix** (`pixKey`) no `NewAccountModal.tsx`.
-  - Novas categorias adicionadas: **"Pessoal"**, **"Devedor Pagar"** e **"Devedor Receber"**.
+  - Limpeza de dados mock genéricos.
+  - Favorecido livre (`contactName`) e campo de Chave Pix (`pixKey`) no `NewAccountModal.tsx`.
+  - Novas categorias: "Pessoal", "Devedor Pagar" e "Devedor Receber".
 
 - [x] **Recurso de Exclusão de Registros:**
-  - Botão **"Excluir / Apagar esta Conta"** adicionado no rodapé da gaveta de **Detalhes (Histórico de Auditoria)** em `AccountDetailsDrawer.tsx`.
-  - Ações diretas de exclusão (🗑️) integradas em Contas a Pagar, Contas a Receber e Devedores via `financial-store.ts`.
+  - Botão "Excluir / Apagar esta Conta" em `AccountDetailsDrawer.tsx` e exclusão direta no `financial-store.ts`.
 
 - [x] **Integrações (Mercado Pago & Evolution API WhatsApp):**
-  - Mercado Pago com suporte a Public Key e Access Token de Sandbox, com atualização dinâmica de saldo no Dashboard (R$ 14.850,50) quando conectado.
-  - Evolution API configurada para apontar diretamente para a porta **8081** do container Docker `evoapicloud` (`http://localhost:8081`).
-  - `docker-compose.yml` nomeado especificamente com `name: novexfinance` (`novexfinance-app`, `novexfinance-db`, `novexfinance-evolution`, `novexfinance-redis`).
+  - Credenciais Sandbox/Produção no painel de configurações.
+  - Evolution API mapeada para a porta **8081** no Docker Compose (`novexfinance`).
+
+- [x] **Sincronização Automática & Indicadores do Dashboard:**
+  - Auto-sync disparado automaticamente ao abrir o painel.
+  - Animação de rotação com duas setas (`RefreshCw className="animate-spin"`) e exibições fiéis do status de sincronização real.
 
 ---
 
-## 📋 Para Continuar na Próxima Sessão:
+*Todas as tarefas anteriores foram validadas e concluídas com sucesso.*
 
-1. Iniciar os testes com credenciais reais da Evolution API e Mercado Pago no painel de Configurações.
-2. Inserir lançamentos reais no formulário de Nova Conta / Compromisso.
-3. Dar continuidade às melhorias e novas funcionalidades solicitadas pelo usuário.
-
-*Estado atual gravado com sucesso para a próxima sessão.*

@@ -119,7 +119,7 @@ export function ManualMatchModal({ isOpen, externalTx, onClose, onSuccess }: Man
               {externalTx.counterpartName ? `Favorecido: ${externalTx.counterpartName}` : "Origem bancária"} • {formatDate(externalTx.occurredAt)}
             </div>
           </div>
-          <div className={`text-base font-extrabold font-mono ${externalTx.direction === "CREDIT" ? "text-emerald-400" : "text-novex-text-primary"}`}>
+          <div className={`text-base font-extrabold font-mono ${externalTx.direction === "CREDIT" ? "text-emerald-400" : "text-red-400"}`}>
             {externalTx.direction === "CREDIT" ? "+" : "-"}{formatCurrency(externalTx.amountCents)}
           </div>
         </div>

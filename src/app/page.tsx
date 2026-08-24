@@ -43,6 +43,34 @@ export default function DashboardPage() {
   const [recentTxs, setRecentTxs] = useState<any[]>([]);
   const [payables, setPayables] = useState<any[]>([]);
   const [debtorsCount, setDebtorsCount] = useState<number>(0);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  const isSyncingRef = React.useRef(false);
+
+  const loadDashboard = async (forceSync: boolean = true) => {
+    if (isSyncingRef.current) return;
+    isSyncingRef.current = true;
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const { triggerMercadoPagoSync, getDashboardData } = await import("@/server/actions/workspace");
+      const syncRes = await triggerMercadoPagoSync(forceSync);
+      if (!syncRes.success) {
+        setSyncError(syncRes.error || "Falha na sincronização.");
+      }
+      const res = await getDashboardData();
+      setSummary(res.summary);
+      setChartData(res.chartData);
+      setRecentTxs(res.recentTransactions);
+    } catch (e) {
+      console.error("Erro ao carregar dados do dashboard com auto-sync:", e);
+      setSyncError("Erro de comunicação com o servidor.");
+    } finally {
+      setIsSyncing(false);
+      isSyncingRef.current = false;
+    }
+  };
 
   useEffect(() => {
     import("@/server/actions/integrations").then(({ getMercadoPagoIntegrationStatus }) => {
@@ -51,13 +79,23 @@ export default function DashboardPage() {
       }).catch(() => setMpConnected(false));
     });
 
-    import("@/server/actions/workspace").then(({ getDashboardData }) => {
-      getDashboardData().then((res) => {
-        setSummary(res.summary);
-        setChartData(res.chartData);
-        setRecentTxs(res.recentTransactions);
-      }).catch(() => setSummary(null));
-    });
+    loadDashboard(false);
+
+    // Polling a cada 5 minutos em segundo plano
+    const interval = setInterval(() => {
+      loadDashboard(false);
+    }, 5 * 60 * 1000);
+
+    // Ressincronizar automaticamente quando o usuário voltar para a aba do sistema
+    const handleFocus = () => {
+      loadDashboard(false);
+    };
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", handleFocus);
+    };
   }, []);
 
   const handleOpenPayment = (item: FinancialItemMock, inst: InstallmentMock) => {
@@ -73,7 +111,7 @@ export default function DashboardPage() {
     totalOverdueCents: 0,
     totalDebtorsOwedCents: 0,
     lastSyncAt: new Date().toISOString(),
-    syncSource: "N/A",
+    syncSource: "CALCULADO" as const,
     accountDisplayName: "-",
     unresolvedTransactionsCount: 0,
     uncategorizedCount: 0,
@@ -85,10 +123,45 @@ export default function DashboardPage() {
         title="Visão Geral — Dashboard"
         description="Acompanhamento automatizado de saldo, fluxo de caixa e conciliação Mercado Pago."
         actions={
-          <div className="flex items-center gap-2 text-xs text-novex-text-secondary bg-novex-surface1 px-3 py-1.5 rounded-lg border border-novex-border">
-            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-            <span>Último sync: {formatDate(displaySummary.lastSyncAt)}</span>
-          </div>
+          <button
+            onClick={() => loadDashboard(true)}
+            disabled={isSyncing}
+            className={`flex items-center gap-2 text-xs px-3.5 py-2 rounded-lg border transition-all ${
+              isSyncing
+                ? "bg-novex-surface1 text-novex-cyan border-novex-cyan/40 cursor-wait shadow-sm"
+                : syncError || (displaySummary.syncSource !== "SINCRONIZADO" && displaySummary.syncSource !== "CALCULADO")
+                ? "bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20"
+                : "bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20"
+            }`}
+            title="Clique para sincronizar com Mercado Pago agora"
+          >
+            {isSyncing ? (
+              <>
+                <RefreshCw className="h-4 w-4 animate-spin text-novex-cyan" />
+                <span className="font-semibold text-novex-cyan">Sincronizando...</span>
+              </>
+            ) : syncError || displaySummary.syncSource === "DESCONECTADO" || displaySummary.syncSource === "PENDENTE" ? (
+              <>
+                <AlertTriangle className="h-4 w-4 text-amber-400" />
+                <span className="font-semibold">
+                  {displaySummary.syncSource === "DESCONECTADO"
+                    ? "Mercado Pago Desconectado"
+                    : syncError
+                    ? `Falha no Sync (${syncError})`
+                    : "Não Sincronizado"}
+                </span>
+                <RefreshCw className="h-3.5 w-3.5 ml-1 opacity-70 hover:opacity-100" />
+              </>
+            ) : (
+              <>
+                <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                <span className="font-semibold">
+                  Sincronizado ({formatDate(displaySummary.lastSyncAt)})
+                </span>
+                <RefreshCw className="h-3.5 w-3.5 ml-1 opacity-70 hover:opacity-100" />
+              </>
+            )}
+          </button>
         }
       />
 
@@ -101,6 +174,7 @@ export default function DashboardPage() {
           icon={Wallet}
           variant="cyan"
           badgeText={mpConnected ? "Conectado MP" : "Não Conectado"}
+          valueColor="white"
         />
 
         <MetricCard
@@ -109,6 +183,7 @@ export default function DashboardPage() {
           subtitle="Saldo + Recebimentos - Pagamentos"
           icon={TrendingUp}
           variant="default"
+          valueColor="auto"
         />
 
         <MetricCard
@@ -117,6 +192,7 @@ export default function DashboardPage() {
           subtitle="Geral pendente em aberto"
           icon={ArrowUpRight}
           variant="default"
+          valueColor="red"
         />
 
         <MetricCard
@@ -125,6 +201,7 @@ export default function DashboardPage() {
           subtitle="Geral previsto a entrar"
           icon={ArrowDownLeft}
           variant="success"
+          valueColor="green"
         />
       </div>
 
@@ -241,7 +318,7 @@ export default function DashboardPage() {
                 <div className="text-right">
                   <div
                     className={`font-bold ${
-                      tx.direction === "CREDIT" ? "text-emerald-400" : "text-novex-text-primary"
+                      tx.direction === "CREDIT" ? "text-emerald-400" : "text-red-400"
                     }`}
                   >
                     {tx.direction === "CREDIT" ? "+" : "-"}{formatCurrency(tx.amountCents)}
@@ -295,7 +372,7 @@ export default function DashboardPage() {
                       </span>
                     </td>
                     <td className="py-3.5 px-4 text-novex-text-secondary">{formatDate(inst.dueDate)}</td>
-                    <td className="py-3.5 px-4 font-bold text-novex-text-primary">{formatCurrency(inst.amountCents)}</td>
+                    <td className="py-3.5 px-4 font-bold text-red-400">{formatCurrency(inst.amountCents)}</td>
                     <td className="py-3.5 px-4">
                       <StatusBadge status={inst.status} />
                     </td>

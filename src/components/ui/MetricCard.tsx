@@ -10,6 +10,7 @@ interface MetricCardProps {
   variant?: "default" | "cyan" | "danger" | "success" | "warning";
   badgeText?: string;
   className?: string;
+  valueColor?: "red" | "green" | "white" | "auto";
 }
 
 export const MetricCard: React.FC<MetricCardProps> = ({
@@ -20,6 +21,7 @@ export const MetricCard: React.FC<MetricCardProps> = ({
   variant = "default",
   badgeText,
   className,
+  valueColor,
 }) => {
   const getVariantStyles = () => {
     switch (variant) {
@@ -34,6 +36,18 @@ export const MetricCard: React.FC<MetricCardProps> = ({
       default:
         return "border-novex-border bg-novex-surface1 text-novex-text-primary";
     }
+  };
+
+  const getValueColorClass = () => {
+    if (valueColor === "red") return "text-red-400";
+    if (valueColor === "green") return "text-emerald-400";
+    if (valueColor === "white") return "text-novex-text-primary";
+    if (valueColor === "auto") {
+      if (amountCents < 0) return "text-red-400";
+      if (amountCents > 0) return "text-emerald-400";
+      return "text-novex-text-primary";
+    }
+    return "text-novex-text-primary";
   };
 
   return (
@@ -60,7 +74,7 @@ export const MetricCard: React.FC<MetricCardProps> = ({
       </div>
 
       <div className="mt-4">
-        <div className="text-2xl font-bold tracking-tight text-novex-text-primary">
+        <div className={cn("text-2xl font-bold tracking-tight", getValueColorClass())}>
           {formatCurrency(amountCents)}
         </div>
         {subtitle && (
