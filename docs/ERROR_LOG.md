@@ -29,7 +29,7 @@ Correção: Adicionada validação de contexto com `requireAuthenticatedWorkspac
 ### ERR-008 — Duplicidade da Fonte da Verdade e localização de Skills
 Status: RESOLVIDO  
 Resumo: As novas skills e documentos permaneciam em uma subpasta duplicada (`NOVEX_FINANCE_FONTE_DA_VERDADE_2026-08-24`), violando a regra de Fonte da Verdade única na raiz.  
-Correção: A estrutura completa de `skills/` (18 arquivos), `docs/` (25 arquivos), `templates/` e `assets/` foi centralizada exclusivamente na raiz do repositório e a subpasta duplicada foi permanentemente removida.
+Correção: A estrutura de `docs/` (25 arquivos), `templates/` e `assets/` foi mantida na raiz e a coleção única de skills (18 arquivos em `.agents/skills/`) foi instalada exclusivamente no diretório de customização de agentes do Antigravity (`.agents/skills/`).
 
 ### ERR-003 — Simulação de pagamento em conta a pagar
 Status: ABERTO  

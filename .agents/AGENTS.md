@@ -5,7 +5,7 @@ Este repositório possui uma **Fonte da Verdade**. Antes de alterar código, esq
 1. leia `docs/21_DECISOES_CONFIRMADAS.md`;
 2. leia `docs/02_REGRAS_INEGOCIAVEIS.md`;
 3. leia o documento funcional correspondente ao trabalho solicitado;
-4. leia a skill correspondente em `skills/`;
+4. leia a skill correspondente em `.agents/skills/`;
 5. leia `docs/20_AUDITORIA_ESTADO_ATUAL.md` quando tocar em área já implementada;
 6. registre qualquer erro novo em `docs/ERROR_LOG.md`;
 7. confirme no código real o estado atual antes de assumir que uma feature existe.

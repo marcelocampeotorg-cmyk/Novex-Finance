@@ -160,92 +160,92 @@
       "bytes": 1539
     },
     {
-      "path": "skills/README.md",
+      "path": ".agents/skills/README.md",
       "sha256": "69231371d8ce8025ef5a264af9867051b1dde0a59be74708ee239616117741e1",
       "bytes": 540
     },
     {
-      "path": "skills/SKILL_00_LEITURA_DA_DOCUMENTACAO.md",
+      "path": ".agents/skills/SKILL_00_LEITURA_DA_DOCUMENTACAO.md",
       "sha256": "83549e9bf3eee37b3f8b0b39cfbabb23e108f5fe1499d0c9a329f3a3f9a2a83d",
       "bytes": 775
     },
     {
-      "path": "skills/SKILL_01_CONTROLE_DE_ESCOPO.md",
+      "path": ".agents/skills/SKILL_01_CONTROLE_DE_ESCOPO.md",
       "sha256": "702f9f3a1d29ee5cd83afab5ced2f983f17457d2511277458330f9a4c8bdd035",
       "bytes": 544
     },
     {
-      "path": "skills/SKILL_02_REGISTRO_DE_ERROS.md",
+      "path": ".agents/skills/SKILL_02_REGISTRO_DE_ERROS.md",
       "sha256": "970e58d7eb06837b925a23965c976b545c9901d5749d314203614d51f0a97d06",
       "bytes": 558
     },
     {
-      "path": "skills/SKILL_03_VERDADE_FINANCEIRA.md",
+      "path": ".agents/skills/SKILL_03_VERDADE_FINANCEIRA.md",
       "sha256": "a2eef24c8f01ed577ef3478643735ecf47eea7d5b4b8d184712b9bd9e27c57a7",
       "bytes": 526
     },
     {
-      "path": "skills/SKILL_04_MERCADO_PAGO.md",
+      "path": ".agents/skills/SKILL_04_MERCADO_PAGO.md",
       "sha256": "7eea8c60adcb925f597cc5b2bfc6dc736bfd121ea2a8296a675d4a3642402537",
       "bytes": 480
     },
     {
-      "path": "skills/SKILL_05_CONCILIACAO_INTELIGENTE.md",
+      "path": ".agents/skills/SKILL_05_CONCILIACAO_INTELIGENTE.md",
       "sha256": "6a556c65b7b15e2d0dc58322887cbd55a3a1899fc6cc6f19338abd457719f86c",
       "bytes": 454
     },
     {
-      "path": "skills/SKILL_06_COBRANCA_PIX_RECEBIVEIS.md",
+      "path": ".agents/skills/SKILL_06_COBRANCA_PIX_RECEBIVEIS.md",
       "sha256": "94eed3793e19224ecbe730bf1917b59eb317527cfed96bd7bef2ad1d74f4d966",
       "bytes": 394
     },
     {
-      "path": "skills/SKILL_07_QR_CONTAS_A_PAGAR.md",
+      "path": ".agents/skills/SKILL_07_QR_CONTAS_A_PAGAR.md",
       "sha256": "b3e35da9af29dd170310fd9530135d5a6c8b0212960e7fecab0e7102597fc832",
       "bytes": 283
     },
     {
-      "path": "skills/SKILL_08_WHATSAPP_EVOLUTION.md",
+      "path": ".agents/skills/SKILL_08_WHATSAPP_EVOLUTION.md",
       "sha256": "282e3c13e81709aa9655de4577fd8ece68136852a9ebd067fa5258ebce6d6a92",
       "bytes": 334
     },
     {
-      "path": "skills/SKILL_09_ESTETICA_UX_PREMIUM.md",
+      "path": ".agents/skills/SKILL_09_ESTETICA_UX_PREMIUM.md",
       "sha256": "d99ead0b7f57671842f066ebbe7078cc1a483c9c2a647f0fd9dc11a5ddbdf114",
       "bytes": 583
     },
     {
-      "path": "skills/SKILL_10_REALTIME_PWA_PUSH.md",
+      "path": ".agents/skills/SKILL_10_REALTIME_PWA_PUSH.md",
       "sha256": "bb45649e7cbfb10c81f291b3ce29d798a53cb58078f4fe01cb7cdd60e71adced",
       "bytes": 453
     },
     {
-      "path": "skills/SKILL_11_SEGURANCA_E_SEGREDOS.md",
+      "path": ".agents/skills/SKILL_11_SEGURANCA_E_SEGREDOS.md",
       "sha256": "049ac8370892fa7b2239fc09428235e15b4c28e566d4cb59360be91a858992bc",
       "bytes": 360
     },
     {
-      "path": "skills/SKILL_12_BANCO_E_MIGRACOES.md",
+      "path": ".agents/skills/SKILL_12_BANCO_E_MIGRACOES.md",
       "sha256": "6a4e6af6d4876b951f0144c75fae047e07c1b5dab21c807db7ca23350e044c35",
       "bytes": 421
     },
     {
-      "path": "skills/SKILL_13_TESTES_SEM_FAKE.md",
+      "path": ".agents/skills/SKILL_13_TESTES_SEM_FAKE.md",
       "sha256": "f0ccae2a27cfbe8e7923b79acec6417adc22a32c3a23d2aa5426f06e0a5891d4",
       "bytes": 340
     },
     {
-      "path": "skills/SKILL_14_CLOUDFLARE_DEPLOY.md",
+      "path": ".agents/skills/SKILL_14_CLOUDFLARE_DEPLOY.md",
       "sha256": "4ba79e2a35af920887b339fc2d10fc2a77892f03ca0efb18cdecea717337add2",
       "bytes": 360
     },
     {
-      "path": "skills/SKILL_15_LLM_OPCIONAL.md",
+      "path": ".agents/skills/SKILL_15_LLM_OPCIONAL.md",
       "sha256": "6825112c23a065a6fd20915a5156f911ba6653c3b8042cca278ad3d77db69b4c",
       "bytes": 275
     },
     {
-      "path": "skills/SKILL_16_EVIDENCIA_DE_CONCLUSAO.md",
+      "path": ".agents/skills/SKILL_16_EVIDENCIA_DE_CONCLUSAO.md",
       "sha256": "457aeace4e3ae3735a36b1c69673a5a978d5eb26269c9cffeadfafbabb6b55d1",
       "bytes": 412
     },

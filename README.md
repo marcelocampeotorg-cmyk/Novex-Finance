@@ -14,7 +14,7 @@ Quando houver conflito, use esta ordem:
 2. `docs/02_REGRAS_INEGOCIAVEIS.md`
 3. documentos funcionais específicos em `docs/`
 4. `docs/20_AUDITORIA_ESTADO_ATUAL.md`
-5. `skills/`
+5. `.agents/skills/`
 6. código existente
 7. documentação antiga fora deste pacote
 
@@ -24,7 +24,7 @@ O código atual pode estar errado. Portanto, **o código não prevalece sobre as
 
 1. Faça um backup/commit do estado atual antes de substituir documentação.
 2. Copie esta pasta para dentro do repositório local.
-3. Substitua a pasta `skills/` ativa pelas skills deste pacote. Não mantenha duas coleções de skills ativas.
+3. As skills operacionais do agente ficam exclusivamente em `.agents/skills/`. Não mantenha duas coleções de skills ativas.
 4. Use os documentos deste pacote como `docs/` oficial. Documentos antigos conflitantes devem ser arquivados como históricos, não usados como fonte de verdade.
 5. Preserve os assets oficiais já existentes no repositório; os dois arquivos em `assets/brand/` deste pacote são cópias fornecidas pelo usuário para conferência visual.
 6. Faça o agente iniciar sempre por `AGENTS.md`.
