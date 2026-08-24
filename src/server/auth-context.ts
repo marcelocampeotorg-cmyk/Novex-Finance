@@ -15,34 +15,12 @@ export interface AuthenticatedWorkspaceContext {
  * Obter a sessão atual a partir das requisições HTTP (headers e cookies)
  */
 export async function requireSession() {
-  try {
-    const session = await auth.api.getSession({
-      headers: await headers(),
-    });
+  const session = await auth.api.getSession({
+    headers: await headers(),
+  });
 
-    if (session && session.session && new Date(session.session.expiresAt) >= new Date()) {
-      return session;
-    }
-  } catch (e) {
-    // Fallback para desenvolvimento local se DB estiver inacessível
-  }
-
-  const cookieStore = await cookies();
-  const devToken = cookieStore.get("better-auth.session_token")?.value;
-
-  if (devToken) {
-    return {
-      session: {
-        id: "dev_session_id",
-        userId: "dev_user_id",
-        expiresAt: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString(),
-      },
-      user: {
-        id: "dev_user_id",
-        email: process.env.DEV_SEED_EMAIL || "franklinjr18@hotmail.com",
-        name: "Frank",
-      },
-    };
+  if (session && session.session && new Date(session.session.expiresAt) >= new Date()) {
+    return session;
   }
 
   throw new Error("UNAUTHORIZED: Sessão não encontrada ou expirada.");
@@ -55,29 +33,20 @@ export async function requireUser() {
   const session = await requireSession();
   const userId = session.user.id;
 
-  try {
-    const user = await db.user.findFirst({
-      where: { 
-        OR: [
-          { id: userId },
-          { email: session.user.email }
-        ]
-      },
-    });
+  const user = await db.user.findFirst({
+    where: { 
+      OR: [
+        { id: userId },
+        { email: session.user.email }
+      ]
+    },
+  });
 
-    if (user && user.status === "ACTIVE") {
-      return user;
-    }
-  } catch (e) {
-    // Fallback para dev local
+  if (user && user.status === "ACTIVE") {
+    return user;
   }
 
-  return {
-    id: userId,
-    email: session.user.email,
-    name: session.user.name || "Frank",
-    status: "ACTIVE",
-  };
+  throw new Error("UNAUTHORIZED: Usuário não encontrado ou inativo no banco de dados.");
 }
 
 /**
@@ -87,44 +56,33 @@ export async function requireUser() {
 export async function requireAuthenticatedWorkspace(): Promise<AuthenticatedWorkspaceContext> {
   const user = await requireUser();
 
-  try {
-    const membership = await db.membership.findFirst({
-      where: {
-        userId: user.id,
-        workspace: {
-          type: { in: ["PERSONAL", "ORGANIZATION"] },
-        },
+  const membership = await db.membership.findFirst({
+    where: {
+      userId: user.id,
+      workspace: {
+        type: { in: ["PERSONAL", "ORGANIZATION"] },
       },
-      include: {
-        workspace: true,
-      },
-      orderBy: {
-        createdAt: "asc",
-      },
-    });
+    },
+    include: {
+      workspace: true,
+    },
+    orderBy: {
+      createdAt: "asc",
+    },
+  });
 
-    if (membership && membership.workspace) {
-      return {
-        userId: user.id,
-        workspaceId: membership.workspaceId,
-        membershipId: membership.id,
-        role: membership.role,
-        userEmail: user.email,
-        userName: user.name,
-      };
-    }
-  } catch (e) {
-    // Fallback para dev local
+  if (membership && membership.workspace) {
+    return {
+      userId: user.id,
+      workspaceId: membership.workspaceId,
+      membershipId: membership.id,
+      role: membership.role,
+      userEmail: user.email,
+      userName: user.name || user.email,
+    };
   }
 
-  return {
-    userId: user.id,
-    workspaceId: "ws-personal-frank",
-    membershipId: "mem-personal-frank",
-    role: "OWNER",
-    userEmail: user.email,
-    userName: user.name,
-  };
+  throw new Error("FORBIDDEN: Usuário não possui vínculo (Membership) com um workspace válido.");
 }
 
 /**

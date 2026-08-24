@@ -17,6 +17,7 @@ export interface CreatePixOrderResult {
   orderId?: string;
   status?: string;
   qrCode?: string;
+  qrCodeBase64?: string;
   ticketUrl?: string;
   expiresAt?: string;
   errorCode?: string;
@@ -87,7 +88,7 @@ export async function createPixOrder(input: CreatePixOrderInput): Promise<Create
             id: "pix",
             type: "bank_transfer",
           },
-          expiration_time: expirationIso,
+          expiration_time: `PT${expirationMinutes}M`,
         },
       ],
     },
@@ -119,6 +120,12 @@ export async function createPixOrder(input: CreatePixOrderInput): Promise<Create
     if (response.status === 201 || response.status === 200) {
       const paymentData = data.transactions?.payments?.[0];
       const qrCode = paymentData?.point_of_interaction?.transaction_data?.qr_code || data.qr_code || undefined;
+      let qrCodeBase64 = paymentData?.point_of_interaction?.transaction_data?.qr_code_base64 || undefined;
+      
+      if (qrCodeBase64 && !qrCodeBase64.startsWith("data:image")) {
+        qrCodeBase64 = `data:image/png;base64,${qrCodeBase64}`;
+      }
+
       const ticketUrl = paymentData?.ticket_url || data.ticket_url || undefined;
 
       return {
@@ -126,6 +133,7 @@ export async function createPixOrder(input: CreatePixOrderInput): Promise<Create
         orderId: String(data.id || data.order_id),
         status: data.status || "PENDING",
         qrCode,
+        qrCodeBase64,
         ticketUrl,
         expiresAt: expirationIso,
       };
@@ -175,11 +183,14 @@ export async function getOrderById(input: { accessToken: string; orderId: string
     const data = await response.json();
 
     if (response.status === 200) {
-      const status = String(data.status || "").toUpperCase();
-      const isPaid = status === "PAID" || status === "PROCESSED" || status === "CLOSED" || data.payments?.[0]?.status === "approved";
+      const paymentsArray = data.transactions?.payments || data.payments || [];
+      const paymentObj = paymentsArray[0];
 
-      const paymentObj = data.payments?.[0];
-      const paidAt = paymentObj?.date_approved || data.date_created || new Date().toISOString();
+      const status = String(data.status || "").toUpperCase();
+      const paymentStatus = paymentObj?.status;
+      const isPaid = status === "PAID" || status === "PROCESSED" || status === "CLOSED" || paymentStatus === "approved";
+
+      const paidAt = paymentObj?.date_approved || paymentObj?.date_created || data.date_created || new Date().toISOString();
 
       return {
         success: true,

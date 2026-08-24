@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/server/db";
-import { decryptCredentials } from "@/lib/server/credentials-crypto";
+import { decryptCredentials, parseMercadoPagoCredentials } from "@/lib/server/credentials-crypto";
 import { getOrderById } from "@/integrations/mercado-pago/orders-client";
 
 /**
@@ -112,7 +112,8 @@ export async function POST(req: NextRequest) {
       },
       create: {
         provider: "MERCADO_PAGO",
-        environment: "SANDBOX",
+        environment: "SANDBOX", // Provisório, será atualizado após achar o PixCharge
+
         eventId,
         resourceType: type || "order",
         resourceId: dataId,
@@ -135,7 +136,6 @@ export async function POST(req: NextRequest) {
       where: {
         externalOrderId: dataId,
         provider: "MERCADO_PAGO",
-        environment: "SANDBOX",
       },
       include: {
         integrationAccount: true,
@@ -151,6 +151,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ received: true, note: "Order não pertence a cobrança ativa do NOVEX." }, { status: 200 });
     }
 
+    // Atualizar o ambiente correto no evento do webhook
+    await db.webhookEvent.update({
+      where: { id: webhookEvent.id },
+      data: { environment: pixCharge.environment },
+    });
+
     if (pixCharge.status === "PAID") {
       await db.webhookEvent.update({
         where: { id: webhookEvent.id },
@@ -164,14 +170,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Credencial da integração não encontrada." }, { status: 500 });
     }
 
-    const accessToken = decryptCredentials(pixCharge.integrationAccount.encryptedCredentials);
-    const remoteOrder = await getOrderById({ accessToken, orderId: dataId });
+    const creds = parseMercadoPagoCredentials(pixCharge.integrationAccount.encryptedCredentials);
+    const remoteOrder = await getOrderById({ accessToken: creds.accessToken, orderId: dataId });
 
     if (remoteOrder.success && remoteOrder.isPaid) {
       const paidAt = remoteOrder.paidAt ? new Date(remoteOrder.paidAt) : new Date();
 
       // BAIXA ATÔMICA DA PARCELA
       await db.$transaction(async (tx) => {
+        // Garantia contra Race Condition: Consultar estado atualizado dentro da tx
+        const currentCharge = await tx.pixCharge.findUnique({ where: { id: pixCharge.id } });
+        const currentInstallment = await tx.installment.findUnique({ where: { id: pixCharge.installmentId } });
+
+        if (!currentCharge || currentCharge.status === "PAID" || !currentInstallment || currentInstallment.status === "SETTLED") {
+          // Já foi liquidado (provavelmente por polling concorrente)
+          return;
+        }
+
         await tx.pixCharge.update({
           where: { id: pixCharge.id },
           data: {
@@ -181,9 +196,9 @@ export async function POST(req: NextRequest) {
           },
         });
 
-        const currentSettled = Number(pixCharge.installment.settledAmountCents);
-        const chargeAmount = Number(pixCharge.amountCents);
-        const totalAmount = Number(pixCharge.installment.amountCents);
+        const currentSettled = Number(currentInstallment.settledAmountCents);
+        const chargeAmount = Number(currentCharge.amountCents);
+        const totalAmount = Number(currentInstallment.amountCents);
         const newSettled = currentSettled + chargeAmount;
         const newStatus = newSettled >= totalAmount ? "SETTLED" : "PARTIAL";
 

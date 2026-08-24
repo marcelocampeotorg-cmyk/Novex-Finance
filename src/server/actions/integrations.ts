@@ -104,9 +104,8 @@ export async function saveMercadoPagoCredentials(input: {
 
     const { accessToken, publicKey, environment } = parsed.data;
 
-    if (environment !== "SANDBOX") {
-      return { success: false, error: "Apenas o ambiente SANDBOX é permitido neste marco." };
-    }
+    // 1. Inferir ambiente pelo prefixo (APP_USR = Produção, TEST = Sandbox)
+    const detectedEnvironment = accessToken.startsWith("APP_USR-") ? "PRODUCTION" : "SANDBOX";
 
     // 1. Validação local do formato
     const localCheck = validateTokenLocalFormat(accessToken);
@@ -129,7 +128,7 @@ export async function saveMercadoPagoCredentials(input: {
             entityId: "MERCADO_PAGO_SANDBOX",
             metadata: {
               errorCode: validation.errorCode,
-              environment,
+              environment: detectedEnvironment,
             },
           },
         });
@@ -153,7 +152,7 @@ export async function saveMercadoPagoCredentials(input: {
         where: {
           workspaceId: context.workspaceId,
           provider: "MERCADO_PAGO",
-          environment: "SANDBOX",
+          environment: detectedEnvironment,
         },
       });
 
@@ -164,7 +163,7 @@ export async function saveMercadoPagoCredentials(input: {
           workspaceId_provider_environment: {
             workspaceId: context.workspaceId,
             provider: "MERCADO_PAGO",
-            environment: "SANDBOX",
+            environment: detectedEnvironment,
           },
         },
         update: {
@@ -178,8 +177,8 @@ export async function saveMercadoPagoCredentials(input: {
         create: {
           workspaceId: context.workspaceId,
           provider: "MERCADO_PAGO",
-          environment: "SANDBOX",
-          displayName: "Mercado Pago Sandbox",
+          environment: detectedEnvironment,
+          displayName: `Mercado Pago ${detectedEnvironment === "PRODUCTION" ? "Produção" : "Sandbox"}`,
           encryptedCredentials,
           externalAccountId: validation.externalAccountId || null,
           externalApplicationId: validation.externalApplicationId || null,
@@ -197,7 +196,7 @@ export async function saveMercadoPagoCredentials(input: {
           entityType: "IntegrationAccount",
           entityId: account.id,
           metadata: {
-            environment: "SANDBOX",
+            environment: detectedEnvironment,
             externalAccountId: validation.externalAccountId,
             maskedToken: masked,
             hasPublicKey: !!publicKey,
@@ -217,13 +216,10 @@ export async function saveMercadoPagoCredentials(input: {
       lastValidatedAt: result.lastValidatedAt?.toISOString(),
     };
   } catch (error: any) {
-    console.warn("Aviso: Falha ao salvar no banco local PostgreSQL ou conexão:", error.message);
+    console.error("Erro ao salvar no banco local PostgreSQL:", error.message);
     return {
-      success: true,
-      maskedToken: maskAccessToken(input.accessToken),
-      status: "CONNECTED",
-      lastValidatedAt: new Date().toISOString(),
-      note: "Credenciais validadas no Mercado Pago.",
+      success: false,
+      error: "Credenciais validadas no Mercado Pago, mas ocorreu um erro ao salvar no banco de dados local.",
     };
   }
 }

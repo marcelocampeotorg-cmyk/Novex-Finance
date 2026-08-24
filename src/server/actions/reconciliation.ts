@@ -180,32 +180,62 @@ export async function runAutomaticReconciliationEngine() {
       }
 
       if (bestCandidate && bestCandidate.recommendation === "MATCHED" && bestCandidate.candidateInstallmentId) {
-        // Auto-match imediato
-        await db.reconciliation.create({
-          data: {
-            workspaceId,
-            externalTransactionId: tx.id,
-            installmentId: bestCandidate.candidateInstallmentId,
-            status: "MATCHED",
-            score: bestCandidate.score,
-            reasons: bestCandidate.reasons,
-            matchedBy: "SYSTEM",
-            matchedAt: new Date(),
-          },
-        });
+        // Executar auto-match dentro de uma transação para garantir atomicidade e prevenir Race Conditions
+        await db.$transaction(async (txPrisma) => {
+          // Idempotência: garantir que a transação ainda não foi reconciliada
+          const currentTx = await txPrisma.externalTransaction.findUnique({
+            where: { id: tx.id },
+            include: { reconciliations: { where: { status: "MATCHED" } } },
+          });
 
-        await settleInstallment(bestCandidate.candidateInstallmentId, Number(tx.amountCents));
+          if (!currentTx || currentTx.reconciliations.length > 0) return;
 
-        await db.ledgerEntry.create({
-          data: {
-            workspaceId,
-            externalTransactionId: tx.id,
-            installmentId: bestCandidate.candidateInstallmentId,
-            direction: tx.direction,
-            amountCents: tx.amountCents,
-            occurredAt: tx.occurredAt,
-            sourceType: "AUTO_RECONCILIATION",
-          },
+          // Idempotência: garantir que a parcela não está paga
+          const currentInst = await txPrisma.installment.findUnique({
+            where: { id: bestCandidate!.candidateInstallmentId },
+            include: { financialItem: true },
+          });
+
+          if (!currentInst || currentInst.status === "SETTLED") return;
+
+          await txPrisma.reconciliation.create({
+            data: {
+              workspaceId,
+              externalTransactionId: tx.id,
+              installmentId: bestCandidate!.candidateInstallmentId,
+              status: "MATCHED",
+              score: bestCandidate!.score,
+              reasons: bestCandidate!.reasons,
+              matchedBy: "SYSTEM",
+              matchedAt: new Date(),
+            },
+          });
+
+          const payAmount = BigInt(tx.amountCents);
+          const newSettled = currentInst.settledAmountCents + payAmount;
+          const isFullyPaid = newSettled >= currentInst.amountCents;
+
+          await txPrisma.installment.update({
+            where: { id: currentInst.id },
+            data: {
+              settledAmountCents: newSettled,
+              status: isFullyPaid ? "SETTLED" : "PARTIAL",
+              settlementDate: new Date(),
+            },
+          });
+
+          await txPrisma.ledgerEntry.create({
+            data: {
+              workspaceId,
+              externalTransactionId: tx.id,
+              installmentId: currentInst.id,
+              direction: tx.direction,
+              amountCents: tx.amountCents,
+              occurredAt: tx.occurredAt,
+              sourceType: "AUTO_RECONCILIATION",
+              categoryId: currentInst.financialItem.categoryId,
+            },
+          });
         });
 
         autoMatchedCount++;
@@ -263,28 +293,52 @@ export async function confirmSuggestedMatch(reconciliationId: string) {
       return { success: false, error: "Sugestão de conciliação não encontrada." };
     }
 
-    await db.reconciliation.update({
-      where: { id: reconciliationId },
-      data: {
-        status: "MATCHED",
-        matchedBy: "USER",
-        matchedAt: new Date(),
-      },
-    });
+    await db.$transaction(async (txPrisma) => {
+      // Garantir que a sugestão ainda não foi confirmada
+      const currentRec = await txPrisma.reconciliation.findUnique({
+        where: { id: reconciliationId },
+        include: { installment: { include: { financialItem: true } } },
+      });
 
-    await settleInstallment(rec.installmentId, Number(rec.externalTransaction.amountCents));
+      if (!currentRec || currentRec.status === "MATCHED") return;
 
-    await db.ledgerEntry.create({
-      data: {
-        workspaceId,
-        externalTransactionId: rec.externalTransactionId,
-        installmentId: rec.installmentId,
-        direction: rec.externalTransaction.direction,
-        amountCents: rec.externalTransaction.amountCents,
-        occurredAt: rec.externalTransaction.occurredAt,
-        sourceType: "CONFIRMED_SUGGESTION",
-        sourceId: rec.id,
-      },
+      await txPrisma.reconciliation.update({
+        where: { id: reconciliationId },
+        data: {
+          status: "MATCHED",
+          matchedBy: "USER",
+          matchedAt: new Date(),
+        },
+      });
+
+      if (currentRec.installment) {
+        const payAmount = BigInt(rec.externalTransaction!.amountCents);
+        const newSettled = currentRec.installment.settledAmountCents + payAmount;
+        const isFullyPaid = newSettled >= currentRec.installment.amountCents;
+
+        await txPrisma.installment.update({
+          where: { id: currentRec.installment.id },
+          data: {
+            settledAmountCents: newSettled,
+            status: isFullyPaid ? "SETTLED" : "PARTIAL",
+            settlementDate: new Date(),
+          },
+        });
+
+        await txPrisma.ledgerEntry.create({
+          data: {
+            workspaceId,
+            externalTransactionId: rec.externalTransactionId,
+            installmentId: currentRec.installmentId,
+            direction: rec.externalTransaction!.direction,
+            amountCents: rec.externalTransaction!.amountCents,
+            occurredAt: rec.externalTransaction!.occurredAt,
+            sourceType: "CONFIRMED_SUGGESTION",
+            sourceId: rec.id,
+            categoryId: currentRec.installment.financialItem.categoryId,
+          },
+        });
+      }
     });
 
     revalidatePath("/movimentacoes");

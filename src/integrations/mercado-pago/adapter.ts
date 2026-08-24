@@ -31,27 +31,18 @@ export interface ExternalTransactionPayload {
 export class MercadoPagoAdapter {
   private accessToken: string;
 
-  constructor(accessToken?: string) {
-    this.accessToken = accessToken || process.env.MERCADO_PAGO_ACCESS_TOKEN || "DEMO_TOKEN";
+  constructor(accessToken: string) {
+    if (!accessToken || accessToken === "DEMO_TOKEN" || accessToken === "REMOVIDO") {
+      throw new Error("MercadoPagoAdapter requer um accessToken válido.");
+    }
+    this.accessToken = accessToken;
   }
 
   /**
    * Criar Cobrança Pix para Contas a Receber
    */
   async createPixCharge(input: CreatePixChargeInput): Promise<PixChargeResponse> {
-    const isDemo = this.accessToken === "DEMO_TOKEN" || this.accessToken === "REMOVIDO";
 
-    if (isDemo) {
-      // Retorno simulado em ambiente de desenvolvimento sem credenciais reais
-      const mockId = `MP-PIX-${Date.now()}`;
-      return {
-        id: mockId,
-        externalReference: input.externalReference,
-        status: "PENDING",
-        qrCodeText: `00020126580014br.gov.bcb.pix0136${input.externalReference}520400005303986540${(input.amountCents / 100).toFixed(2)}5802BR5920NOVEX FINANCE PIX6009SAO PAULO6304ABCD`,
-        expiresAt: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
-      };
-    }
 
     // Chamada real à API REST do Mercado Pago (/v1/payments)
     const response = await fetch("https://api.mercadopago.com/v1/payments", {
@@ -95,14 +86,7 @@ export class MercadoPagoAdapter {
    * Buscar detalhes de uma transação por ID
    */
   async getPayment(paymentId: string) {
-    if (this.accessToken === "DEMO_TOKEN" || this.accessToken === "REMOVIDO") {
-      return {
-        id: paymentId,
-        status: "approved",
-        externalReference: `NOVEX-REC-${Date.now()}`,
-        amountCents: 85000,
-      };
-    }
+
 
     const response = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
       headers: {
@@ -118,24 +102,17 @@ export class MercadoPagoAdapter {
    * Validação da assinatura do Webhook HMAC
    */
   verifyWebhookSignature(headers: Record<string, string>, body: string): boolean {
-    const isProduction = process.env.NODE_ENV === "production";
     const webhookSecret = process.env.MERCADO_PAGO_WEBHOOK_SECRET;
 
-    if (isProduction) {
-      if (!webhookSecret || webhookSecret === "REMOVIDO") {
-        console.error("WEBHOOK ERROR: Segredo HMAC ausente em ambiente de produção.");
-        return false;
-      }
-      const signature = headers["x-signature"];
-      const requestId = headers["x-request-id"];
-      if (!signature || !requestId) {
-        return false;
-      }
-      return true;
+    if (!webhookSecret || webhookSecret === "REMOVIDO") {
+      console.error("WEBHOOK ERROR: Segredo HMAC ausente.");
+      return false;
     }
-
-    // Modo demonstrativo apenas em desenvolvimento ou teste
-    console.warn("WEBHOOK WARNING: Assinatura de Webhook aceita em modo demonstrativo (dev/test).");
+    const signature = headers["x-signature"];
+    const requestId = headers["x-request-id"];
+    if (!signature || !requestId) {
+      return false;
+    }
     return true;
   }
 }

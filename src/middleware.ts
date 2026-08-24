@@ -4,15 +4,14 @@ import type { NextRequest } from "next/server";
 export function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname;
 
-  // Permitir arquivos estáticos, rotas de auth e webhooks
+  // Permitir arquivos estáticos, rotas de auth, webhooks e APIs que não dependem de cookie
   const isPublic =
     path === "/login" ||
     path.startsWith("/api/auth") ||
     path.startsWith("/api/webhooks") ||
+    path.startsWith("/api/worker") ||
     path.startsWith("/api/health") ||
-    path.startsWith("/brand") ||
-    path.startsWith("/_next") ||
-    path.includes(".");
+    path.startsWith("/brand");
 
   if (isPublic) {
     return NextResponse.next();

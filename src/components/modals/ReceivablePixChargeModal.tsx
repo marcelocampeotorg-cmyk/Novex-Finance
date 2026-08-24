@@ -191,35 +191,25 @@ export function ReceivablePixChargeModal({
               </div>
             </div>
 
-            {/* QR Code Simulado / Renderizado */}
+            {/* QR Code Real Renderizado */}
             <div className="flex flex-col items-center justify-center p-4 bg-white/95 rounded-xl border border-novex-border shadow-inner">
-              {chargeData?.qrCode ? (
+              {chargeData?.qrCodeBase64 ? (
                 <div className="p-2 bg-white rounded-lg flex flex-col items-center gap-2">
-                  {/* Utilização de gerador visual simples em SVG baseado na string do QR Code */}
-                  <svg className="w-48 h-48" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <img src={chargeData.qrCodeBase64} alt="QR Code Pix" className="w-48 h-48 object-contain" />
+                  <span className="text-[10px] text-slate-600 font-mono font-bold">Escaneie no App do Banco</span>
+                </div>
+              ) : chargeData?.qrCode ? (
+                <div className="p-2 bg-white rounded-lg flex flex-col items-center gap-2">
+                  {/* Fallback de SVG simples apenas se a API falhar em retornar base64 mas retornar o texto */}
+                  <svg className="w-48 h-48 opacity-20" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <rect width="100" height="100" fill="white" />
-                    {/* Cantos de alinhamento QR */}
                     <rect x="5" y="5" width="30" height="30" fill="black" />
                     <rect x="10" y="10" width="20" height="20" fill="white" />
                     <rect x="15" y="15" width="10" height="10" fill="black" />
-
                     <rect x="65" y="5" width="30" height="30" fill="black" />
-                    <rect x="70" y="10" width="20" height="20" fill="white" />
-                    <rect x="75" y="15" width="10" height="10" fill="black" />
-
                     <rect x="5" y="65" width="30" height="30" fill="black" />
-                    <rect x="10" y="70" width="20" height="20" fill="white" />
-                    <rect x="15" y="75" width="10" height="10" fill="black" />
-
-                    {/* Padrão interno dinâmico */}
-                    <rect x="40" y="10" width="15" height="10" fill="black" />
-                    <rect x="45" y="45" width="20" height="20" fill="black" />
-                    <rect x="70" y="50" width="15" height="15" fill="black" />
-                    <rect x="10" y="45" width="15" height="10" fill="black" />
-                    <rect x="50" y="75" width="20" height="15" fill="black" />
-                    <rect x="75" y="75" width="15" height="15" fill="black" />
                   </svg>
-                  <span className="text-[10px] text-slate-600 font-mono font-bold">Escaneie no App do Banco</span>
+                  <span className="text-[10px] text-amber-600 font-mono font-bold">QR Code Visual Indisponível. Use o Pix Copia e Cola.</span>
                 </div>
               ) : (
                 <div className="p-8 text-center text-xs text-slate-500">QR Code indisponível</div>

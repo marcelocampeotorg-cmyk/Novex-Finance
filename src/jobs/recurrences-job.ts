@@ -16,31 +16,47 @@ export async function processRecurrenceRulesJob(targetWorkspaceId?: string) {
           lte: now,
         },
       },
+      include: {
+        financialItems: {
+          take: 1,
+          orderBy: { createdAt: "asc" },
+        },
+      },
     });
 
     let generatedCount = 0;
 
     for (const rule of dueRules) {
-      // Gerar a nova parcela / item financeiro
+      const template = rule.financialItems?.[0];
+      if (!template) continue;
+
       const nextRun = new Date(rule.nextRunAt || now);
+      
+      const existingItemsCount = await db.financialItem.count({
+        where: { recurrenceRuleId: rule.id },
+      });
+      const sequenceNumber = existingItemsCount + 1;
 
       await db.financialItem.create({
         data: {
           workspaceId: rule.workspaceId,
-          direction: "PAYABLE",
+          direction: template.direction,
           kind: "RECURRING",
-          title: `Ocorrência Recorrente (${nextRun.toLocaleDateString("pt-BR", { month: "long" })})`,
-          totalAmountCents: BigInt(10000), // Exemplo
+          title: template.title,
+          description: template.description,
+          contactId: template.contactId,
+          categoryId: template.categoryId,
+          totalAmountCents: template.totalAmountCents,
           startDate: nextRun,
           status: "ACTIVE",
           recurrenceRuleId: rule.id,
           installments: {
             create: {
-              sequence: 1,
-              amountCents: BigInt(10000),
+              sequence: sequenceNumber,
+              amountCents: template.totalAmountCents,
               dueDate: nextRun,
               status: "SCHEDULED",
-              uniqueReference: `NOVEX-REC-AUTO-${rule.id.slice(0, 5)}-${nextRun.getTime()}`,
+              uniqueReference: `NOVEX-REC-AUTO-${rule.id.slice(0, 5)}-${sequenceNumber}`,
             },
           },
         },

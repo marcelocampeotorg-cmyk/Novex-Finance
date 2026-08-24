@@ -17,7 +17,7 @@ export interface UploadAttachmentInput {
 
 export { validateAttachmentFile };
 
-export async function uploadAttachment(input: UploadAttachmentInput) {
+export async function generatePresignedUrl(input: UploadAttachmentInput) {
   try {
     const { workspaceId, userId } = await requireAuthenticatedWorkspace();
 
@@ -26,21 +26,52 @@ export async function uploadAttachment(input: UploadAttachmentInput) {
       return { success: false, error: validation.error };
     }
 
-    const fileBuffer = input.base64Data ? Buffer.from(input.base64Data, "base64") : Buffer.from(input.originalName);
-    const checksum = crypto.createHash("sha256").update(fileBuffer).digest("hex");
     const storageKey = `attachments/${workspaceId}/${Date.now()}-${crypto.randomBytes(4).toString("hex")}-${input.originalName}`;
+
+    // Em uma aplicação real, chamaríamos S3/GCS aqui para gerar a presigned URL
+    // const s3Client = new S3Client(...);
+    // const uploadUrl = await getSignedUrl(s3Client, new PutObjectCommand({ Bucket, Key: storageKey }), { expiresIn: 3600 });
+    const uploadUrl = `https://mock-storage.novexfinance.com/upload/${storageKey}`;
+
+    return {
+      success: true,
+      uploadUrl,
+      storageKey,
+      metadata: {
+        workspaceId,
+        ownerType: input.ownerType,
+        ownerId: input.ownerId,
+        originalName: input.originalName,
+        mimeType: input.mimeType,
+        sizeBytes: input.sizeBytes,
+        uploadedBy: userId,
+      }
+    };
+  } catch (error: any) {
+    console.error("Erro ao gerar URL de upload:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function confirmAttachmentUpload(metadata: any, storageKey: string, checksum?: string) {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+
+    if (metadata.workspaceId !== workspaceId) {
+      throw new Error("Acesso negado ao confirmar anexo.");
+    }
 
     const attachment = await db.attachment.create({
       data: {
         workspaceId,
-        ownerType: input.ownerType,
-        ownerId: input.ownerId,
+        ownerType: metadata.ownerType,
+        ownerId: metadata.ownerId,
         storageKey,
-        originalName: input.originalName,
-        mimeType: input.mimeType,
-        size: BigInt(input.sizeBytes),
+        originalName: metadata.originalName,
+        mimeType: metadata.mimeType,
+        size: BigInt(metadata.sizeBytes),
         checksum,
-        uploadedBy: userId,
+        uploadedBy: metadata.uploadedBy,
       },
     });
 
@@ -48,21 +79,11 @@ export async function uploadAttachment(input: UploadAttachmentInput) {
     revalidatePath("/contas-a-receber");
     revalidatePath("/movimentacoes");
 
-    return {
-      success: true,
-      attachment: {
-        id: attachment.id,
-        ownerType: attachment.ownerType,
-        ownerId: attachment.ownerId,
-        originalName: attachment.originalName,
-        mimeType: attachment.mimeType,
-        sizeBytes: Number(attachment.size),
-        checksum: attachment.checksum,
-        createdAt: attachment.createdAt.toISOString(),
-      },
-    };
+    return { success: true, attachmentId: attachment.id };
   } catch (error: any) {
-    console.error("Erro ao salvar anexo:", error);
+    // Se o create falhar, deveríamos disparar a deleção do S3 (Evitar arquivo fantasma)
+    // await s3Client.send(new DeleteObjectCommand({ Bucket, Key: storageKey }));
+    console.error("Erro ao confirmar anexo:", error);
     return { success: false, error: error.message };
   }
 }

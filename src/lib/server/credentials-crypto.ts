@@ -154,3 +154,34 @@ export function maskAccessToken(token: string): string {
 
   return `••••••••••••${last4}`;
 }
+
+export interface MercadoPagoCredentials {
+  accessToken: string;
+  publicKey?: string;
+  [key: string]: any;
+}
+
+/**
+ * Extrai de forma segura o objeto de credenciais do payload criptografado,
+ * garantindo que o accessToken seja retornado independentemente se o formato foi JSON ou string pura.
+ */
+export function parseMercadoPagoCredentials(encryptedJson: string): MercadoPagoCredentials {
+  const decryptedString = decryptCredentials(encryptedJson);
+  let parsed: any;
+  
+  try {
+    parsed = JSON.parse(decryptedString);
+  } catch (e) {
+    // Se falhar o parse, significa que foi salvo diretamente como string
+    return { accessToken: decryptedString };
+  }
+  
+  if (!parsed || !parsed.accessToken) {
+    if (typeof parsed === "string") {
+      return { accessToken: parsed };
+    }
+    throw new Error("CRYPTO_ERROR: Access token ausente nas credenciais descriptografadas.");
+  }
+  
+  return parsed as MercadoPagoCredentials;
+}

@@ -5,7 +5,7 @@ import { z } from "zod";
 import { db } from "@/server/db";
 import { revalidatePath } from "next/cache";
 import { requireAuthenticatedWorkspace } from "@/server/auth-context";
-import { decryptCredentials } from "@/lib/server/credentials-crypto";
+import { decryptCredentials, parseMercadoPagoCredentials } from "@/lib/server/credentials-crypto";
 import { createPixOrder, getOrderById } from "@/integrations/mercado-pago/orders-client";
 
 const generateChargeSchema = z.object({
@@ -21,6 +21,7 @@ export interface PixChargeStatusResult {
   isPaid: boolean;
   amountCents?: number;
   qrCode?: string;
+  qrCodeBase64?: string;
   ticketUrl?: string;
   expiresAt?: string;
   paidAt?: string;
@@ -77,21 +78,12 @@ export async function generateReceivablePixCharge(input: {
     console.warn("[PIX RECEIVABLES] Banco indisponível em dev. Utilizando fallback gracioso para mock.");
   }
 
-  // Fallback Gracioso para ambiente Dev/Mock
   if (!installment) {
-    const mockQrCode = "00020126580014br.gov.bcb.pix0136123e4567-e89b-12d3-a456-426614174000520400005303986540550.005802BR5915NOVEX_FINANCE6009SAO_PAULO62070503***6304E2CA";
     return {
-      success: true,
-      pixChargeId: `pix_mock_${installmentId}`,
-      externalOrderId: `ORD-SANDBOX-MOCK-${Date.now()}`,
-      status: "PENDING",
+      success: false,
+      status: "FAILED",
       isPaid: false,
-      amountCents: input.amountCents || 150000,
-      qrCode: mockQrCode,
-      ticketUrl: "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=demo",
-      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-      debtorName: "Cliente Mock Sandbox",
-      title: "Cobrança Pix de Recebível",
+      error: "Parcela não encontrada ou não pertence a este workspace.",
     };
   }
 
@@ -163,14 +155,16 @@ export async function generateReceivablePixCharge(input: {
   // 7. Descriptografar Access Token
   let accessToken: string;
   try {
-    accessToken = decryptCredentials(integration.encryptedCredentials);
+    const creds = parseMercadoPagoCredentials(integration.encryptedCredentials);
+    accessToken = creds.accessToken;
   } catch (e) {
     return { success: false, status: "FAILED", isPaid: false, error: "Erro ao descriptografar credencial do workspace." };
   }
 
-  // 8. Chave de Idempotência Única e Persistente
-  const idempotencyKey = `nvx_idemp_${installment.id}_${Date.now()}`;
-  const externalReference = `NVX-REC-${installment.id.slice(0, 8)}-${Date.now()}`;
+  // 8. Chave de Idempotência Única e Persistente (Baseada em quantidade de tentativas para evitar concorrentes no mesmo segundo)
+  const retryCount = installment.pixCharges?.length || 0;
+  const idempotencyKey = `nvx_idemp_${installment.id}_${retryCount}`;
+  const externalReference = `NVX-REC-${installment.id.slice(0, 8)}-${retryCount}`;
 
   // 9. Criar Registro Local no Banco (Status CREATING)
   const pixCharge = await db.pixCharge.create({
@@ -271,20 +265,7 @@ export async function getReceivablePixChargeStatus(input: { pixChargeId: string 
   const context = await requireAuthenticatedWorkspace();
 
   if (input.pixChargeId.startsWith("pix_mock_")) {
-    const mockQrCode = "00020126580014br.gov.bcb.pix0136123e4567-e89b-12d3-a456-426614174000520400005303986540550.005802BR5915NOVEX_FINANCE6009SAO_PAULO62070503***6304E2CA";
-    return {
-      success: true,
-      pixChargeId: input.pixChargeId,
-      externalOrderId: `ORD-SANDBOX-MOCK-9999`,
-      status: "PENDING",
-      isPaid: false,
-      amountCents: 150000,
-      qrCode: mockQrCode,
-      ticketUrl: "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=demo",
-      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-      debtorName: "Cliente Mock Sandbox",
-      title: "Cobrança Pix de Recebível",
-    };
+    return { success: false, status: "FAILED", isPaid: false, error: "Cobrança Pix inválida (Mock)." };
   }
 
   const pixCharge = await db.pixCharge.findFirst({
@@ -327,7 +308,8 @@ export async function getReceivablePixChargeStatus(input: { pixChargeId: string 
   if (pixCharge.externalOrderId && pixCharge.integrationAccount?.encryptedCredentials) {
     let accessToken: string;
     try {
-      accessToken = decryptCredentials(pixCharge.integrationAccount.encryptedCredentials);
+      const creds = parseMercadoPagoCredentials(pixCharge.integrationAccount.encryptedCredentials);
+      accessToken = creds.accessToken;
       const remoteOrder = await getOrderById({ accessToken, orderId: pixCharge.externalOrderId });
 
       if (remoteOrder.success && remoteOrder.isPaid) {
@@ -335,6 +317,13 @@ export async function getReceivablePixChargeStatus(input: { pixChargeId: string 
         const paidAt = remoteOrder.paidAt ? new Date(remoteOrder.paidAt) : new Date();
 
         await db.$transaction(async (tx) => {
+          const currentCharge = await tx.pixCharge.findUnique({ where: { id: pixCharge.id } });
+          const currentInstallment = await tx.installment.findUnique({ where: { id: pixCharge.installmentId } });
+
+          if (!currentCharge || currentCharge.status === "PAID" || !currentInstallment || currentInstallment.status === "SETTLED") {
+            return;
+          }
+
           // Bloquear e atualizar PixCharge
           await tx.pixCharge.update({
             where: { id: pixCharge.id },
@@ -346,9 +335,9 @@ export async function getReceivablePixChargeStatus(input: { pixChargeId: string 
           });
 
           // Atualizar valor liquidado da parcela
-          const currentSettled = Number(pixCharge.installment.settledAmountCents);
-          const chargeAmt = Number(pixCharge.amountCents);
-          const totalAmount = Number(pixCharge.installment.amountCents);
+          const currentSettled = Number(currentInstallment.settledAmountCents);
+          const chargeAmt = Number(currentCharge.amountCents);
+          const totalAmount = Number(currentInstallment.amountCents);
           const newSettled = currentSettled + chargeAmt;
 
           const newStatus = newSettled >= totalAmount ? "SETTLED" : "PARTIAL";

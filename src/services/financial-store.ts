@@ -41,6 +41,7 @@ export function addFinancialItem(item: {
   totalAmount: number;
   startDate: string;
   pixKey?: string;
+  pixKeyType?: "CPF" | "CNPJ" | "EMAIL" | "PHONE";
   installments?: { sequence: number; amount: number; dueDate: string }[];
 }) {
   const amountCents = Math.round(item.totalAmount * 100);
@@ -53,8 +54,8 @@ export function addFinancialItem(item: {
     type: "PERSON",
     isDebtor: item.direction === "RECEIVABLE",
     isPayee: item.direction === "PAYABLE",
-    pixKeys: item.pixKey
-      ? [{ id: `pix-${Date.now()}`, type: "RANDOM", value: item.pixKey, isDefault: true }]
+    pixKeys: item.pixKey && item.pixKeyType
+      ? [{ id: `pix-${Date.now()}`, type: item.pixKeyType, value: item.pixKey, isDefault: true }]
       : [],
   };
 
@@ -62,8 +63,8 @@ export function addFinancialItem(item: {
     const existing = contactsStore.find((c) => c.name.toLowerCase() === item.contactName.toLowerCase());
     if (existing) {
       contact = existing;
-      if (item.pixKey && (!existing.pixKeys || existing.pixKeys.length === 0)) {
-        existing.pixKeys = [{ id: `pix-${Date.now()}`, type: "RANDOM", value: item.pixKey, isDefault: true }];
+      if (item.pixKey && item.pixKeyType && (!existing.pixKeys || existing.pixKeys.length === 0)) {
+        existing.pixKeys = [{ id: `pix-${Date.now()}`, type: item.pixKeyType, value: item.pixKey, isDefault: true }];
       }
     } else {
       contactsStore.unshift(contact);
@@ -99,7 +100,7 @@ export function addFinancialItem(item: {
       dueDate: inst.dueDate,
       status: "SCHEDULED",
       uniqueReference: `NOVEX-${item.direction.slice(0, 3)}-${Date.now().toString().slice(-4)}-${idx + 1}`,
-      pixKey: item.pixKey ? { id: `pk-${Date.now()}`, type: "RANDOM", value: item.pixKey, isDefault: true } : undefined,
+      pixKey: item.pixKey && item.pixKeyType ? { id: `pk-${Date.now()}`, type: item.pixKeyType, value: item.pixKey, isDefault: true } : undefined,
     })),
   };
 

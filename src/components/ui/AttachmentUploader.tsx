@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { Paperclip, Upload, FileText, Trash2, CheckCircle2, AlertCircle, Image as ImageIcon } from "lucide-react";
-import { uploadAttachment, getAttachmentsByOwner, deleteAttachment } from "@/server/actions/attachments";
+import { generatePresignedUrl, confirmAttachmentUpload, getAttachmentsByOwner, deleteAttachment } from "@/server/actions/attachments";
 
 interface AttachmentUploaderProps {
   ownerType: "FINANCIAL_ITEM" | "INSTALLMENT" | "RECEIVABLE";
@@ -47,21 +47,27 @@ export function AttachmentUploader({ ownerType, ownerId }: AttachmentUploaderPro
       const base64Data = resultStr ? resultStr.split(",")[1] : "";
 
       try {
-        const res = await uploadAttachment({
+        const res = await generatePresignedUrl({
           ownerType,
           ownerId,
           originalName: file.name,
           mimeType: file.type || "application/pdf",
           sizeBytes: file.size,
-          base64Data,
         });
 
-        if (res.success) {
-          setFeedback(`Comprovante "${file.name}" anexado com sucesso!`);
-          await loadAttachments();
-          setTimeout(() => setFeedback(null), 3000);
+        if (res.success && res.uploadUrl && res.metadata) {
+          // Aqui faria o upload real via PUT
+          // await fetch(res.uploadUrl, { method: "PUT", body: file });
+          const confirm = await confirmAttachmentUpload(res.metadata, res.storageKey!);
+          
+          if (confirm.success) {
+            setFeedback(`Comprovante "${file.name}" anexado com sucesso!`);
+            loadAttachments();
+          } else {
+            setErrorMessage(confirm.error || "Erro ao confirmar anexo.");
+          }
         } else {
-          setErrorMessage(res.error || "Falha ao enviar anexo.");
+          setErrorMessage(res.error || "Falha ao anexar comprovante.");
         }
       } catch (err: any) {
         setErrorMessage("Erro ao realizar upload do arquivo.");

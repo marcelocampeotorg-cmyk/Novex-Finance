@@ -1,17 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { workerDaemon } from "@/services/worker-daemon";
 
+import crypto from "node:crypto";
+
 export async function POST(req: NextRequest) {
   try {
     const authHeader = req.headers.get("authorization");
-    const workerSecret = process.env.WORKER_SECRET || "NOVEX_WORKER_SECRET_KEY";
+    const workerSecret = process.env.WORKER_SECRET;
 
-    // Verificar token Bearer em produção/homologação
-    if (authHeader) {
-      const token = authHeader.replace("Bearer ", "").trim();
-      if (token !== workerSecret) {
-        return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
-      }
+    if (!workerSecret) {
+      return NextResponse.json({ error: "Configuração do worker incompleta." }, { status: 500 });
+    }
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+    }
+
+    const token = authHeader.substring(7).trim();
+    
+    const tokenBuffer = Buffer.from(token);
+    const secretBuffer = Buffer.from(workerSecret);
+
+    if (tokenBuffer.length !== secretBuffer.length || !crypto.timingSafeEqual(tokenBuffer, secretBuffer)) {
+      return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
     }
 
     const result = await workerDaemon.runBackgroundJobs();

@@ -72,20 +72,15 @@ export async function getWorkspaceSummary(): Promise<BalanceSummaryMock> {
         }
       }
 
-      const caps = (mpIntegration.capabilities as any) || {};
-      if (typeof caps.realBalanceCents === "number") {
-        currentBalanceCents = caps.realBalanceCents;
-      } else {
-        const txs = await db.externalTransaction.findMany({
-          where: { workspaceId, integrationAccountId: mpIntegration.id },
-        });
-        let balance = 0;
-        for (const tx of txs) {
-          if (tx.direction === "CREDIT") balance += Number(tx.amountCents);
-          if (tx.direction === "DEBIT") balance -= Number(tx.amountCents);
-        }
-        currentBalanceCents = balance;
+      const txs = await db.externalTransaction.findMany({
+        where: { workspaceId, integrationAccountId: mpIntegration.id },
+      });
+      let balance = 0;
+      for (const tx of txs) {
+        if (tx.direction === "CREDIT") balance += Number(tx.amountCents);
+        if (tx.direction === "DEBIT") balance -= Number(tx.amountCents);
       }
+      currentBalanceCents = balance;
     }
 
     const projectedBalanceCents = currentBalanceCents + totalReceivableMonthCents - totalPayableMonthCents;
@@ -262,9 +257,8 @@ export async function getDashboardData() {
 
 export async function triggerMercadoPagoSync(force: boolean = false) {
   try {
-    const { workspaceId } = await requireAuthenticatedWorkspace();
-    const { syncMercadoPago } = await import('./mercadopago-sync');
-    return await syncMercadoPago(workspaceId, force);
+    const { syncMercadoPagoStatement } = await import('./transactions');
+    return await syncMercadoPagoStatement(force);
   } catch (error) {
     return { success: false, error: String(error) };
   }

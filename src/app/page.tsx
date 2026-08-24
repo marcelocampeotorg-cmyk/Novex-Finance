@@ -86,15 +86,8 @@ export default function DashboardPage() {
       loadDashboard(false);
     }, 5 * 60 * 1000);
 
-    // Ressincronizar automaticamente quando o usuário voltar para a aba do sistema
-    const handleFocus = () => {
-      loadDashboard(false);
-    };
-    window.addEventListener("focus", handleFocus);
-
     return () => {
       clearInterval(interval);
-      window.removeEventListener("focus", handleFocus);
     };
   }, []);
 

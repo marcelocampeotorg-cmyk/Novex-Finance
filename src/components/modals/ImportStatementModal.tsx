@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { X, Upload, RefreshCw, FileText, CheckCircle2, AlertCircle } from "lucide-react";
-import { syncMercadoPagoStatement, importExternalTransactions } from "@/server/actions/transactions";
+import { syncMercadoPagoStatement, importCsvExternalTransactions } from "@/server/actions/transactions";
 import { parseCSVStatement } from "@/services/csv-statement-parser";
 
 interface ImportStatementModalProps {
@@ -75,7 +75,7 @@ export function ImportStatementModal({ isOpen, onClose, onSuccess }: ImportState
         return;
       }
 
-      const res = await importExternalTransactions(parsedTxs);
+      const res = await importCsvExternalTransactions(parsedTxs);
       if (res.success) {
         setResultMessage(
           `Importação de CSV realizada com sucesso! ${res.insertedCount} movimentações processadas. (${res.autoMatchedCount} conciliadas automaticamente)`

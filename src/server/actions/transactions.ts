@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { requireAuthenticatedWorkspace } from "@/server/auth-context";
 import { MercadoPagoRawTransaction, MercadoPagoReportsClient } from "@/integrations/mercado-pago/reports-client";
 import { categorizeTransactionDescription, runAutomaticReconciliationEngine } from "@/server/actions/reconciliation";
+import { parseMercadoPagoCredentials } from "@/lib/server/credentials-crypto";
 
 export async function getExternalTransactions(period: string = "MONTHLY") {
   try {
@@ -84,75 +85,70 @@ export async function getExternalTransactions(period: string = "MONTHLY") {
 /**
  * Importar lote de movimentações externas (com deduplicação estrita)
  */
-export async function importExternalTransactions(rawTransactions: MercadoPagoRawTransaction[]) {
+export async function importExternalTransactions(rawTransactions: MercadoPagoRawTransaction[], integrationAccountId: string) {
   try {
     const { workspaceId } = await requireAuthenticatedWorkspace();
 
-    // Obter ou registrar conta de integração padrão do Mercado Pago
-    let integrationAccount = await db.integrationAccount.findFirst({
-      where: { workspaceId, provider: "MERCADO_PAGO" },
-    });
-
-    if (!integrationAccount) {
-      integrationAccount = await db.integrationAccount.create({
-        data: {
-          workspaceId,
-          provider: "MERCADO_PAGO",
-          environment: "SANDBOX",
-          displayName: "Mercado Pago Principal",
-          status: "CONNECTED",
-        },
-      });
-    }
-
     let insertedCount = 0;
+    let updatedCount = 0;
     let skippedCount = 0;
 
     for (const raw of rawTransactions) {
       const occurredDate = new Date(raw.occurredAt);
 
       try {
-        await db.externalTransaction.upsert({
+        const existingTx = await db.externalTransaction.findUnique({
           where: {
             integrationAccountId_provider_externalId: {
-              integrationAccountId: integrationAccount.id,
+              integrationAccountId: integrationAccountId,
               provider: "MERCADO_PAGO",
               externalId: raw.externalId,
-            },
-          },
-          create: {
-            workspaceId,
-            integrationAccountId: integrationAccount.id,
-            provider: "MERCADO_PAGO",
-            externalId: raw.externalId,
-            direction: raw.direction,
-            type: raw.type,
-            status: "APPROVED",
-            amountCents: BigInt(raw.amountCents),
-            feeCents: BigInt(raw.feeCents || 0),
-            netAmountCents: BigInt(raw.netAmountCents || raw.amountCents),
-            occurredAt: occurredDate,
-            counterpartName: raw.counterpartName || null,
-            counterpartDocument: raw.counterpartDocument || null,
-            txid: raw.txid || null,
-            description: raw.description,
-            rawReference: raw.rawReference || null,
-          },
-          update: {
-            description: raw.description,
-            counterpartName: raw.counterpartName || null,
-            counterpartDocument: raw.counterpartDocument || null,
-          },
+            }
+          }
         });
-        insertedCount++;
+
+        if (existingTx) {
+          await db.externalTransaction.update({
+            where: { id: existingTx.id },
+            data: {
+              description: raw.description,
+              counterpartName: raw.counterpartName || null,
+              counterpartDocument: raw.counterpartDocument || null,
+            },
+          });
+          updatedCount++;
+        } else {
+           await db.externalTransaction.create({
+            data: {
+              workspaceId,
+              integrationAccountId: integrationAccountId,
+              provider: "MERCADO_PAGO",
+              externalId: raw.externalId,
+              direction: raw.direction,
+              type: raw.type,
+              status: "APPROVED",
+              amountCents: BigInt(raw.amountCents),
+              feeCents: BigInt(raw.feeCents || 0),
+              netAmountCents: BigInt(raw.netAmountCents || raw.amountCents),
+              occurredAt: occurredDate,
+              counterpartName: raw.counterpartName || null,
+              counterpartDocument: raw.counterpartDocument || null,
+              txid: raw.txid || null,
+              description: raw.description,
+              rawReference: raw.rawReference || null,
+            }
+          });
+          insertedCount++;
+        }
       } catch (e) {
+        console.error("Erro ao importar transação", raw.externalId, e);
         skippedCount++;
       }
     }
 
     // Atualizar data da última sincronização
     await db.integrationAccount.update({
-      where: { id: integrationAccount.id },
+      where: { id: integrationAccountId },
       data: { lastSyncAt: new Date() },
     });
 
@@ -166,6 +162,7 @@ export async function importExternalTransactions(rawTransactions: MercadoPagoRaw
     return {
       success: true,
       insertedCount,
+      updatedCount,
       skippedCount,
       autoMatchedCount: reconResult.autoMatchedCount || 0,
     };
@@ -178,7 +175,7 @@ export async function importExternalTransactions(rawTransactions: MercadoPagoRaw
 /**
  * Buscar extrato via API do Mercado Pago e executar importação
  */
-export async function syncMercadoPagoStatement() {
+export async function syncMercadoPagoStatement(force: boolean = false) {
   try {
     const { workspaceId } = await requireAuthenticatedWorkspace();
 
@@ -186,13 +183,63 @@ export async function syncMercadoPagoStatement() {
       where: { workspaceId, provider: "MERCADO_PAGO" },
     });
 
-    // Instanciar cliente com o token configurado (ou demo fallback)
-    const client = new MercadoPagoReportsClient();
+    if (!account || account.status !== "CONNECTED" || !account.encryptedCredentials) {
+      throw new Error("Integração não conectada ou sem credenciais válidas.");
+    }
+
+    const CACHE_MINUTES = 5;
+    if (!force && account.lastSyncAt) {
+      const now = new Date();
+      const diffInMinutes = (now.getTime() - account.lastSyncAt.getTime()) / (1000 * 60);
+      if (diffInMinutes < CACHE_MINUTES) {
+        return { 
+          success: true, 
+          cached: true, 
+          message: "Sincronização recente (menos de 5 min). Retornando dados locais.",
+          insertedCount: 0,
+          updatedCount: 0,
+          skippedCount: 0,
+          autoMatchedCount: 0,
+          error: undefined,
+        };
+      }
+    }
+
+    const credentials = parseMercadoPagoCredentials(account.encryptedCredentials);
+    const client = new MercadoPagoReportsClient(credentials.accessToken);
     const rawTxs = await client.fetchAccountStatement();
 
-    return await importExternalTransactions(rawTxs);
+    return await importExternalTransactions(rawTxs, account.id);
   } catch (error: any) {
     console.error("Erro na sincronização de extrato do Mercado Pago:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function importCsvExternalTransactions(rawTransactions: MercadoPagoRawTransaction[]) {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+    
+    // Obter ou registrar conta de integração para upload manual
+    let manualIntegration = await db.integrationAccount.findFirst({
+      where: { workspaceId, provider: "MERCADO_PAGO", environment: "CSV_IMPORT" },
+    });
+
+    if (!manualIntegration) {
+      manualIntegration = await db.integrationAccount.create({
+        data: {
+          workspaceId,
+          provider: "MERCADO_PAGO",
+          environment: "CSV_IMPORT",
+          displayName: "Importação Manual (CSV)",
+          status: "CONNECTED",
+        },
+      });
+    }
+
+    return await importExternalTransactions(rawTransactions, manualIntegration.id);
+  } catch (error: any) {
+    console.error("Erro na importação manual:", error);
     return { success: false, error: error.message };
   }
 }

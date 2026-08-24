@@ -92,6 +92,7 @@ export async function createFinancialItem(input: {
   contactId?: string;
   contactName?: string;
   pixKey?: string;
+  pixKeyType?: "CPF" | "CNPJ" | "EMAIL" | "PHONE";
   categoryName?: string;
   totalAmountCents: number;
   startDate: string;
@@ -145,8 +146,8 @@ export async function createFinancialItem(input: {
         }
       }
 
-      // Salvar Chave Pix se fornecida
-      if (finalContactId && input.pixKey && input.direction === "PAYABLE") {
+      // Salvar Chave Pix se fornecida corretamente
+      if (finalContactId && input.pixKey && input.pixKeyType && input.direction === "PAYABLE") {
         const existingKey = await tx.pixKey.findFirst({
           where: { contactId: finalContactId, value: input.pixKey }
         });
@@ -154,7 +155,7 @@ export async function createFinancialItem(input: {
           await tx.pixKey.create({
             data: {
               contactId: finalContactId,
-              type: "RANDOM", // Poderia ser extraída a inteligência do tipo, mas RANDOM é fallback
+              type: input.pixKeyType,
               value: input.pixKey,
               isDefault: true
             }
@@ -282,6 +283,7 @@ export async function updateFinancialItem(input: {
   description?: string;
   contactName?: string;
   pixKey?: string;
+  pixKeyType?: "CPF" | "CNPJ" | "EMAIL" | "PHONE";
   categoryName?: string;
   totalAmountCents: number;
   startDate: string;
@@ -345,7 +347,7 @@ export async function updateFinancialItem(input: {
           await tx.pixKey.create({
             data: {
               contactId: finalContactId,
-              type: "RANDOM",
+              type: (input.pixKeyType as any) || "EMAIL",
               value: input.pixKey,
               isDefault: true,
             },

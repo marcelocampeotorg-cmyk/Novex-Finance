@@ -2,6 +2,10 @@ import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { db } from "@/server/db";
 
+if (!process.env.AUTH_SECRET) {
+  throw new Error("FATAL: Variável de ambiente AUTH_SECRET obrigatória ausente.");
+}
+
 export const auth = betterAuth({
   database: prismaAdapter(db, {
     provider: "postgresql",
@@ -14,6 +18,6 @@ export const auth = betterAuth({
     expiresIn: 30 * 24 * 60 * 60, // 30 dias
     updateAge: 24 * 60 * 60, // 1 dia
   },
-  secret: process.env.AUTH_SECRET || "novex_dev_secret_key_change_in_production_32chars",
+  secret: process.env.AUTH_SECRET,
   baseURL: process.env.APP_URL || "http://localhost:3000",
 });

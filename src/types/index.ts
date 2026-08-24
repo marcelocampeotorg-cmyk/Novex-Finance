@@ -5,7 +5,7 @@ export type InstallmentStatus = "SCHEDULED" | "PARTIAL" | "SETTLED" | "OVERDUE" 
 export type ReconciliationStatus = "UNMATCHED" | "SUGGESTED" | "MATCHED" | "IGNORED" | "REVERSED";
 export type TransactionDirection = "CREDIT" | "DEBIT";
 export type ContactType = "PERSON" | "COMPANY";
-export type PixKeyType = "CPF" | "CNPJ" | "EMAIL" | "PHONE" | "RANDOM";
+export type PixKeyType = "CPF" | "CNPJ" | "EMAIL" | "PHONE";
 
 export interface PixKeyMock {
   id: string;
