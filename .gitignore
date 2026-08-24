@@ -16,6 +16,7 @@
 *.log
 *.dump
 *.sql
+!docker/postgres-init/*.sql
 !prisma/migrations/**/*.sql
 *.sqlite
 npm-debug.log*
