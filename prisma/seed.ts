@@ -8,24 +8,23 @@ async function main() {
     process.exit(1);
   }
 
-  if (!process.env.DEV_SEED_PASSWORD) {
-    console.error("SEED REJEITADO: Variável DEV_SEED_PASSWORD é obrigatória.");
+  if (!process.env.DEV_SEED_EMAIL || !process.env.DEV_SEED_PASSWORD) {
+    console.error("SEED REJEITADO: Variáveis de ambiente DEV_SEED_EMAIL e DEV_SEED_PASSWORD são obrigatórias.");
     process.exit(1);
   }
 
-  const email = process.env.DEV_SEED_EMAIL || "franklinjr18@hotmail.com";
+  const email = process.env.DEV_SEED_EMAIL;
   const password = process.env.DEV_SEED_PASSWORD;
 
-  console.log(`Iniciando seed de desenvolvimento para o usuário: ${email}...`);
+  console.log(`Iniciando seed de desenvolvimento controlado para o usuário: ${email}...`);
 
   let user = await prisma.user.findUnique({
     where: { email },
   });
 
-  const hashedPassword = await hashPassword(password);
-
   if (!user) {
-    console.log("Usuário não existe. Criando usuário e conta com hash...");
+    console.log("Usuário não existe. Criando usuário e conta inicial...");
+    const hashedPassword = await hashPassword(password);
     user = await prisma.user.create({
       data: {
         email,
@@ -41,29 +40,11 @@ async function main() {
       },
     });
   } else {
-    console.log("Usuário existe. Sincronizando senha hash do dev seed...");
-    const account = await prisma.account.findFirst({
-      where: { userId: user.id, providerId: "credential" },
-    });
-    if (account) {
-      await prisma.account.update({
-        where: { id: account.id },
-        data: { password: hashedPassword },
-      });
-    } else {
-      await prisma.account.create({
-        data: {
-          userId: user.id,
-          accountId: user.id,
-          providerId: "credential",
-          password: hashedPassword,
-        },
-      });
-    }
+    console.log("Usuário já existe no banco. Preservando credenciais existentes sem sobrescrever.");
   }
 
   await prisma.$transaction(async (tx) => {
-    // 3. Criar ou localizar o Workspace Pessoal ("Finanças pessoais")
+    // Workspace Pessoal ("Finanças pessoais")
     let workspace = await tx.workspace.findFirst({
       where: {
         ownerUserId: user!.id,
@@ -80,7 +61,7 @@ async function main() {
       });
     }
 
-    // 4. Criar ou atualizar a Membership OWNER
+    // Membership OWNER
     const existingMembership = await tx.membership.findUnique({
       where: {
         workspaceId_userId: {
@@ -100,7 +81,7 @@ async function main() {
       });
     }
 
-    // 5. Categorias Padrão
+    // Categorias Padrão Base (sem criar movimentações, saldo ou itens fictícios)
     const categories = [
       { name: "Moradia", direction: "EXPENSE", colorToken: "#3B82F6" },
       { name: "Contas Básicas", direction: "EXPENSE", colorToken: "#F59E0B" },
@@ -126,7 +107,7 @@ async function main() {
       }
     }
 
-    console.log("Seed executado com sucesso! Workspace ID gerado:", workspace.id);
+    console.log("Seed de desenvolvimento concluído com sucesso! Workspace ID:", workspace.id);
   });
 }
 

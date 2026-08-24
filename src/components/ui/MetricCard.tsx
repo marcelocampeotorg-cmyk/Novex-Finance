@@ -5,6 +5,7 @@ import { LucideIcon } from "lucide-react";
 interface MetricCardProps {
   title: string;
   amountCents: number;
+  overrideText?: string;
   subtitle?: string;
   icon: LucideIcon;
   variant?: "default" | "cyan" | "danger" | "success" | "warning";
@@ -16,6 +17,7 @@ interface MetricCardProps {
 export const MetricCard: React.FC<MetricCardProps> = ({
   title,
   amountCents,
+  overrideText,
   subtitle,
   icon: Icon,
   variant = "default",
@@ -75,7 +77,7 @@ export const MetricCard: React.FC<MetricCardProps> = ({
 
       <div className="mt-4">
         <div className={cn("text-2xl font-bold tracking-tight", getValueColorClass())}>
-          {formatCurrency(amountCents)}
+          {overrideText || formatCurrency(amountCents)}
         </div>
         {subtitle && (
           <p className="mt-1 text-xs text-novex-text-secondary flex items-center gap-1">

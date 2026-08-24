@@ -171,10 +171,19 @@ export default function DashboardPage() {
         <MetricCard
           title="Saldo Atual"
           amountCents={displaySummary.currentBalanceCents}
-          subtitle={mpConnected ? "Sincronizado via Mercado Pago API" : "Conta Local"}
+          overrideText={
+            displaySummary.syncSource === "DESCONECTADO" || !displaySummary.lastSyncAt
+              ? "Aguardando sincronização"
+              : undefined
+          }
+          subtitle={
+            displaySummary.syncSource === "SINCRONIZADO"
+              ? "Sincronizado via Dinheiro em Conta"
+              : "Conexão pendente"
+          }
           icon={Wallet}
           variant="cyan"
-          badgeText={mpConnected ? "Conectado MP" : "Não Conectado"}
+          badgeText={displaySummary.syncSource === "SINCRONIZADO" ? "Sincronizado" : "Pendente"}
           valueColor="white"
         />
 

@@ -8,16 +8,20 @@ Estas referências devem ser revalidadas antes de uma implementação sensível,
 - Campos do Dinheiro em Conta:
   https://www.mercadopago.com.br/developers/pt/docs/mp-point/additional-content/reports/account-money/report-fields
 - Criar settlement report:
-  https://www.mercadopago.com.br/developers/pt/reference/settlements-report/create-report/post
-- Baixar settlement report:
-  https://www.mercadopago.com.br/developers/pt/reference/settlements-report/download-report/get
+  POST https://api.mercadopago.com/v1/account/settlement_report
+- Buscar settlement reports:
+  GET https://api.mercadopago.com/v1/account/settlement_report/search
+- Baixar settlement report pelo file_name:
+  GET https://api.mercadopago.com/v1/account/settlement_report/{file_name}
 - Criar order QR:
   https://www.mercadopago.com.br/developers/pt/reference/in-person-payments/qr-code/orders/create-order/post
 - Status de order/transação QR:
   https://www.mercadopago.com.br/developers/pt/docs/qr-code/resources/status-order-transaction
 
 Pontos confirmados na documentação consultada em 24/08/2026:
-- criação do settlement report é assíncrona e retorna 202;
+- criação do settlement report é assíncrona e retorna HTTP 202 com id e file_name;
+- busca de relatórios gerados é realizada via /settlement_report/search;
+- download oficial do arquivo de liquidação é efetuado via GET /settlement_report/{file_name} com Authorization Bearer;
 - `SETTLEMENT_NET_AMOUNT` representa o impacto líquido no dinheiro em conta;
 - `TRANSACTION_TYPE` diferencia settlement, refund, chargeback, dispute, withdrawal, payout etc.;
 - criação de order exige idempotency key;

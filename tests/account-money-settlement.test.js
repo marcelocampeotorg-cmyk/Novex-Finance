@@ -1,57 +1,67 @@
 const test = require("node:test");
 const assert = require("node:assert");
-const { MercadoPagoReportsClient } = require("../src/integrations/mercado-pago/reports-client.ts");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const { MercadoPagoReportsClient, parseCsvRows } = require("../src/integrations/mercado-pago/reports-client.ts");
 
 test("Account Money: MercadoPagoReportsClient recusa token invalido ou vazio na construcao", () => {
   assert.throws(() => new MercadoPagoReportsClient(""), /MercadoPagoReportsClient requer um accessToken/);
   assert.throws(() => new MercadoPagoReportsClient("DEMO_TOKEN"), /MercadoPagoReportsClient requer um accessToken/);
 });
 
-test("Account Money: Parser oficial do Relatorio Dinheiro em Conta (Settlement CSV)", () => {
+test("Account Money: Parser RFC 4180 lida com aspas, delimitadores entre aspas, BOM e CRLF", () => {
+  const sampleCsvWithQuotes = `\uFEFFSOURCE_ID;TRANSACTION_TYPE;SETTLEMENT_NET_AMOUNT;FEE_AMOUNT;SETTLEMENT_DATE;DESCRIPTION;EXTERNAL_REFERENCE\r\nTX_SETTLE_201;SETTLEMENT;"150,50";"5,00";2026-08-24T10:00:00Z;"Venda via Pix, com vírgula e ; ponto-e-vírgula";REF_201\r\nTX_SETTLE_202;WITHDRAWAL;"-50,00";"0,00";2026-08-24T11:00:00Z;"Saque ""especial"" com aspas";REF_202`;
+
   const client = new MercadoPagoReportsClient("APP_USR-VALID-TEST-TOKEN");
-  const sampleCsv = `SOURCE_ID;TRANSACTION_TYPE;SETTLEMENT_NET_AMOUNT;FEE_AMOUNT;SETTLEMENT_DATE;DESCRIPTION;EXTERNAL_REFERENCE
-TX_SETTLE_101;SETTLEMENT;150.50;5.00;2026-08-24T10:00:00Z;Venda via Pix;REF_101
-TX_SETTLE_102;WITHDRAWAL;-50.00;0.00;2026-08-24T11:00:00Z;Saque de Tarifa;REF_102`;
+  const result = client.parseSettlementReportCsv(sampleCsvWithQuotes);
 
-  const txs = client.parseSettlementReportCsv(sampleCsv);
+  assert.strictEqual(result.validCount, 2);
+  assert.strictEqual(result.rejectedCount, 0);
+  assert.strictEqual(result.transactions[0].externalId, "TX_SETTLE_201");
+  assert.strictEqual(result.transactions[0].description, "Venda via Pix, com vírgula e ; ponto-e-vírgula");
+  assert.strictEqual(result.transactions[0].amountCents, 15050);
+  assert.strictEqual(result.transactions[0].feeCents, 500);
 
-  assert.strictEqual(txs.length, 2);
-  assert.strictEqual(txs[0].externalId, "TX_SETTLE_101");
-  assert.strictEqual(txs[0].direction, "CREDIT");
-  assert.strictEqual(txs[0].amountCents, 15050);
-  assert.strictEqual(txs[0].feeCents, 500);
-
-  assert.strictEqual(txs[1].externalId, "TX_SETTLE_102");
-  assert.strictEqual(txs[1].direction, "DEBIT");
-  assert.strictEqual(txs[1].amountCents, 5000);
+  assert.strictEqual(result.transactions[1].externalId, "TX_SETTLE_202");
+  assert.strictEqual(result.transactions[1].description, 'Saque "especial" com aspas');
+  assert.strictEqual(result.transactions[1].direction, "DEBIT");
+  assert.strictEqual(result.transactions[1].netAmountCents, 5000);
 });
 
-test("Source Separation: CSV Import nao deve vincular IntegrationAccount Mercado Pago ou provider API", () => {
-  function prepareCsvTransaction(raw) {
-    return {
-      workspaceId: "ws_123",
-      integrationAccountId: null,
-      provider: null,
-      source: "CSV_IMPORT",
-      externalId: raw.externalId,
-      amountCents: raw.amountCents,
-    };
-  }
+test("Account Money: Linhas com valores monetarios invalidos ou datas ausentes geram diagnostico de rejeicao", () => {
+  const invalidCsv = `SOURCE_ID;TRANSACTION_TYPE;SETTLEMENT_NET_AMOUNT;FEE_AMOUNT;SETTLEMENT_DATE;DESCRIPTION\r\nTX_OK;SETTLEMENT;100.00;2.00;2026-08-24T10:00:00Z;Valida\r\nTX_BAD_VAL;SETTLEMENT;INVALIDO_123;2.00;2026-08-24T10:00:00Z;Invalida Valor\r\n;SETTLEMENT;50.00;0.00;2026-08-24T10:00:00Z;Sem ID\r\nTX_BAD_DATE;SETTLEMENT;50.00;0.00;DATA_INVALIDA;Sem Data`;
 
-  const tx = prepareCsvTransaction({ externalId: "CSV_999", amountCents: 1000 });
-  assert.strictEqual(tx.integrationAccountId, null, "CSV Import nao pode vincular IntegrationAccount.");
-  assert.strictEqual(tx.provider, null, "CSV Import deve ter provider null.");
-  assert.strictEqual(tx.source, "CSV_IMPORT", "Source deve ser estritamente CSV_IMPORT.");
+  const client = new MercadoPagoReportsClient("APP_USR-VALID-TEST-TOKEN");
+  const result = client.parseSettlementReportCsv(invalidCsv);
+
+  assert.strictEqual(result.validCount, 1);
+  assert.strictEqual(result.rejectedCount, 3);
+  assert.strictEqual(result.errors.length, 3);
+  assert.match(result.errors[0], /rejeitada por formato numérico/i);
+  assert.match(result.errors[1], /rejeitada por ausência de SOURCE_ID/i);
+  assert.match(result.errors[2], /rejeitada por data de liquidação inválida/i);
 });
 
-test("Saldo Manual: Garantia de Deprecacao", () => {
-  function setManualInitialBalanceMock() {
-    return {
-      success: false,
-      error: "Mecanismo de Saldo Inicial Manual desativado na V1.",
-    };
-  }
-  const res = setManualInitialBalanceMock();
-  assert.strictEqual(res.success, false);
-  assert.match(res.error, /Mecanismo de Saldo Inicial Manual desativado/);
+test("Account Money: Preservacao distinta de amountCents (nominal) vs netAmountCents (liquido)", () => {
+  const csvWithFeeAndAmount = `SOURCE_ID;TRANSACTION_TYPE;TRANSACTION_AMOUNT;SETTLEMENT_NET_AMOUNT;FEE_AMOUNT;SETTLEMENT_DATE;DESCRIPTION\r\nTX_DIFF;SETTLEMENT;200.00;190.00;10.00;2026-08-24T12:00:00Z;Venda com taxa`;
+
+  const client = new MercadoPagoReportsClient("APP_USR-VALID-TEST-TOKEN");
+  const result = client.parseSettlementReportCsv(csvWithFeeAndAmount);
+
+  assert.strictEqual(result.validCount, 1);
+  assert.strictEqual(result.transactions[0].amountCents, 20000, "amountCents deve conter o valor nominal (200.00)");
+  assert.strictEqual(result.transactions[0].netAmountCents, 19000, "netAmountCents deve conter o valor liquido (190.00)");
+  assert.strictEqual(result.transactions[0].feeCents, 1000, "feeCents deve conter a tarifa (10.00)");
+});
+
+test("Governança: Ausencia de /v1/payments/search e scripts destrutivos no repositório", () => {
+  const reportsClientPath = path.join(__dirname, "../src/integrations/mercado-pago/reports-client.ts");
+  const content = fs.readFileSync(reportsClientPath, "utf-8");
+
+  assert.strictEqual(content.includes("payments/search"), false, "reports-client.ts nao deve conter payments/search");
+  assert.strictEqual(content.includes("fetchAccountStatement"), false, "reports-client.ts nao deve conter fetchAccountStatement");
+
+  const scratchDir = path.join(__dirname, "../scratch");
+  assert.strictEqual(fs.existsSync(scratchDir), false, "Diretorio scratch destrutivo nao deve existir no repositorio.");
 });

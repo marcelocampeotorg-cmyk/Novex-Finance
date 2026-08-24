@@ -67,6 +67,36 @@ Status: RESOLVIDO
 Resumo: O parser de liquidação fabricava IDs e datas artificiais em caso de omissão no CSV.
 Correção: Removidos fallbacks artificiais do parser; linhas sem identificador ou data oficiais válidos são rejeitadas deterministicamente.
 
+### ERR-015 — Presença de scripts destrutivos de limpeza versionados no repositório
+Status: RESOLVIDO
+Resumo: Scripts temporários contendo `deleteMany({})` foram versionados em `scratch/`.
+Correção: Removida a pasta `scratch/` e todos os utilitários temporários destrutivos do repositório.
+
+### ERR-016 — Endpoint /list incompatível com a especificação oficial /settlement_report/search
+Status: RESOLVIDO
+Resumo: A busca de relatórios utilizava `/settlement_report/list` em vez do endpoint oficial `/settlement_report/search`.
+Correção: Atualizado `MercadoPagoReportsClient.searchSettlementReports()` para consumir a rota oficial `/v1/account/settlement_report/search`.
+
+### ERR-017 — Download dependente de downloadUrl arbitrária em vez do contrato oficial
+Status: RESOLVIDO
+Resumo: O download dependia exclusivamente da propriedade `downloadUrl`.
+Correção: Implementado `downloadSettlementReport(fileName)` efetuando chamada `GET /v1/account/settlement_report/{file_name}` com token Bearer.
+
+### ERR-018 — Parser CSV frágil a aspas e sem tratamento de diagnósticos
+Status: RESOLVIDO
+Resumo: O parser CSV utilizava `split` simples e convertia erros monetários silenciosamente para zero.
+Correção: Implementado parser RFC 4180 robusto com tratamento de aspas, delimitadores, BOM e relatório de linhas rejeitadas com status `PARTIAL`.
+
+### ERR-019 — Exceções de consulta convertidas silenciosamente em listas vazias
+Status: RESOLVIDO
+Resumo: `searchSettlementReports()` retornava `[]` em falhas HTTP ou exceções de rede.
+Correção: Atualizado o método para propagar exceções HTTP/rede, distinguindo relatórios inexistentes de erros de comunicação.
+
+### ERR-020 — Seleção de conta ativa dependente de ordenação por lastValidatedAt
+Status: RESOLVIDO
+Resumo: `getActiveMercadoPagoIntegration()` usava `orderBy: { lastValidatedAt: "desc" }` para definir a conta ativa.
+Correção: Atualizada a seleção para validar a presença de uma única conta conectada por ambiente, gerando erro em ambiguidade.
+
 ---
 
 ## Template

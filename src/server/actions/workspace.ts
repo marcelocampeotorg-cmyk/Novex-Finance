@@ -34,10 +34,6 @@ export async function getActiveMercadoPagoIntegration(workspaceIdParam?: string)
       provider: "MERCADO_PAGO",
       status: "CONNECTED",
     },
-    orderBy: {
-      lastValidatedAt: 'desc'
-    },
-    take: 1,
     select: {
       id: true,
       provider: true,
@@ -47,10 +43,21 @@ export async function getActiveMercadoPagoIntegration(workspaceIdParam?: string)
       lastSyncAt: true,
       lastValidatedAt: true,
       lastValidationErrorCode: true,
-    }
+    },
   });
 
-  return integrations.length > 0 ? (integrations[0] as IntegrationAccountDTO) : null;
+  if (integrations.length === 0) return null;
+
+  if (integrations.length > 1) {
+    // Tenta desambiguar preferindo ambiente PRODUCTION ativo
+    const prodIntegrations = integrations.filter((i) => i.environment === "PRODUCTION");
+    if (prodIntegrations.length === 1) {
+      return prodIntegrations[0] as IntegrationAccountDTO;
+    }
+    throw new Error("Múltiplas integrações ativas conectadas para o mesmo workspace. Mantenha apenas uma conta conectada.");
+  }
+
+  return integrations[0] as IntegrationAccountDTO;
 }
 export async function getWorkspaceSummary() {
   try {

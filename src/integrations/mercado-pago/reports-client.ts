@@ -1,7 +1,7 @@
 export interface MercadoPagoReportFile {
   id: string;
   fileName: string;
-  createdDate: string;
+  createdDate: string | null;
   totalAmountCents: number;
   transactionCount: number;
   downloadUrl?: string;
@@ -23,6 +23,86 @@ export interface MercadoPagoRawTransaction {
   rawReference?: string;
 }
 
+export interface ParseCsvResult {
+  transactions: MercadoPagoRawTransaction[];
+  validCount: number;
+  rejectedCount: number;
+  errors: string[];
+}
+
+/**
+ * Parser RFC 4180 para arquivos CSV com suporte a aspas, delimitadores escapados, BOM e quebras de linha.
+ */
+export function parseCsvRows(csvText: string): { rows: string[][]; delimiter: string } {
+  if (!csvText) return { rows: [], delimiter: ";" };
+
+  // Remover UTF-8 BOM se presente
+  let cleanText = csvText.replace(/^\uFEFF/, "");
+
+  // Detectar delimitador baseado no cabeçalho
+  const firstLineEnd = cleanText.search(/[\r\n]/);
+  const headerLine = firstLineEnd >= 0 ? cleanText.slice(0, firstLineEnd) : cleanText;
+  const countSemicolons = (headerLine.match(/;/g) || []).length;
+  const countCommas = (headerLine.match(/,/g) || []).length;
+  const delimiter = countSemicolons >= countCommas ? ";" : ",";
+
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentField = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < cleanText.length; i++) {
+    const char = cleanText[i];
+    const nextChar = cleanText[i + 1];
+
+    if (inQuotes) {
+      if (char === '"') {
+        if (nextChar === '"') {
+          currentField += '"';
+          i++; // pular aspas escapada
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        currentField += char;
+      }
+    } else {
+      if (char === '"') {
+        inQuotes = true;
+      } else if (char === delimiter) {
+        currentRow.push(currentField.trim());
+        currentField = "";
+      } else if (char === "\r") {
+        if (nextChar === "\n") i++;
+        currentRow.push(currentField.trim());
+        if (currentRow.some((field) => field.length > 0)) {
+          rows.push(currentRow);
+        }
+        currentRow = [];
+        currentField = "";
+      } else if (char === "\n") {
+        currentRow.push(currentField.trim());
+        if (currentRow.some((field) => field.length > 0)) {
+          rows.push(currentRow);
+        }
+        currentRow = [];
+        currentField = "";
+      } else {
+        currentField += char;
+      }
+    }
+  }
+
+  if (currentField || currentRow.length > 0) {
+    currentRow.push(currentField.trim());
+    if (currentRow.some((field) => field.length > 0)) {
+      rows.push(currentRow);
+    }
+  }
+
+  return { rows, delimiter };
+}
+
 export class MercadoPagoReportsClient {
   private accessToken: string;
 
@@ -37,7 +117,10 @@ export class MercadoPagoReportsClient {
    * Solicita a geração assíncrona do Relatório Dinheiro em Conta (Settlement Report)
    * POST https://api.mercadopago.com/v1/account/settlement_report
    */
-  async requestSettlementReport(beginDate?: Date, endDate?: Date): Promise<{ success: boolean; reportId?: string; fileFileName?: string; status?: string; error?: string }> {
+  async requestSettlementReport(
+    beginDate?: Date,
+    endDate?: Date
+  ): Promise<{ success: boolean; reportId?: string; fileFileName?: string; status?: string; error?: string }> {
     try {
       const begin = (beginDate || new Date(Date.now() - 30 * 24 * 3600 * 1000)).toISOString();
       const end = (endDate || new Date()).toISOString();
@@ -56,10 +139,13 @@ export class MercadoPagoReportsClient {
 
       if (response.status === 202 || response.ok) {
         const data = await response.json();
+        const reportId = data.id !== undefined && data.id !== null ? String(data.id) : undefined;
+        const fileFileName = data.file_name || undefined;
+
         return {
           success: true,
-          reportId: String(data.id || data.file_name || ""),
-          fileFileName: data.file_name,
+          reportId,
+          fileFileName,
           status: data.status || "PROCESSING",
         };
       }
@@ -76,91 +162,167 @@ export class MercadoPagoReportsClient {
   }
 
   /**
-   * Lista relatórios Dinheiro em Conta gerados na conta Mercado Pago
-   * GET https://api.mercadopago.com/v1/account/settlement_report/list
+   * Busca relatórios Dinheiro em Conta gerados via endpoint oficial /search
+   * GET https://api.mercadopago.com/v1/account/settlement_report/search
    */
-  async listSettlementReports(): Promise<MercadoPagoReportFile[]> {
-    try {
-      const response = await fetch("https://api.mercadopago.com/v1/account/settlement_report/list", {
-        headers: {
-          Authorization: `Bearer ${this.accessToken}`,
-        },
-      });
+  async searchSettlementReports(): Promise<MercadoPagoReportFile[]> {
+    const response = await fetch("https://api.mercadopago.com/v1/account/settlement_report/search", {
+      headers: {
+        Authorization: `Bearer ${this.accessToken}`,
+      },
+    });
 
-      if (!response.ok) {
-        return [];
-      }
-
-      const data = await response.json();
-      const files = Array.isArray(data) ? data : data.results || [];
-
-      return files.map((f: any) => ({
-        id: String(f.id || f.file_name),
-        fileName: f.file_name || String(f.id),
-        createdDate: f.created_date || new Date().toISOString(),
-        totalAmountCents: Math.round((f.total_amount || 0) * 100),
-        transactionCount: f.transaction_count || 0,
-        downloadUrl: f.download_url || undefined,
-        status: f.status === "created" || f.status === "READY" ? "READY" : "PROCESSING",
-      }));
-    } catch (err) {
-      console.error("Erro ao listar settlement_report:", err);
-      return [];
+    if (!response.ok) {
+      throw new Error(`Falha HTTP ${response.status} ao consultar relatórios de liquidação em /settlement_report/search`);
     }
+
+    const data = await response.json();
+    const files = Array.isArray(data) ? data : data.results || [];
+
+    return files.map((f: any) => ({
+      id: String(f.id || f.file_name || ""),
+      fileName: f.file_name || String(f.id || ""),
+      createdDate: f.created_date || null,
+      totalAmountCents: f.total_amount !== undefined ? Math.round(Number(f.total_amount) * 100) : 0,
+      transactionCount: f.transaction_count || 0,
+      downloadUrl: f.download_url || undefined,
+      status: f.status === "created" || f.status === "READY" ? "READY" : "PROCESSING",
+    }));
   }
 
   /**
-   * Parser oficial do Relatório Dinheiro em Conta (Settlement Report CSV) do Mercado Pago
+   * Baixa o arquivo do relatório de liquidação pelo file_name oficial
+   * GET https://api.mercadopago.com/v1/account/settlement_report/{file_name}
    */
-  parseSettlementReportCsv(csvText: string): MercadoPagoRawTransaction[] {
-    if (!csvText || !csvText.trim()) return [];
+  async downloadSettlementReport(fileName: string): Promise<string> {
+    if (!fileName || !fileName.trim()) {
+      throw new Error("downloadSettlementReport requer um fileName válido.");
+    }
 
-    const lines = csvText.split(/\r?\n/).filter((l) => l.trim().length > 0);
-    if (lines.length <= 1) return [];
+    const url = `https://api.mercadopago.com/v1/account/settlement_report/${encodeURIComponent(fileName)}`;
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${this.accessToken}`,
+      },
+    });
 
-    const delimiter = lines[0].includes(";") ? ";" : ",";
-    const headers = lines[0].split(delimiter).map((h) => h.trim().toUpperCase().replace(/^"|"$/g, ""));
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} ao baixar arquivo de liquidação (${fileName})`);
+    }
 
-    const getColIndex = (name: string) => headers.findIndex((h) => h.includes(name));
+    return await response.text();
+  }
 
-    const sourceIdIdx = getColIndex("SOURCE_ID") >= 0 ? getColIndex("SOURCE_ID") : getColIndex("EXTERNAL_ID");
-    const typeIdx = getColIndex("TRANSACTION_TYPE") >= 0 ? getColIndex("TRANSACTION_TYPE") : getColIndex("TYPE");
-    const netAmountIdx = getColIndex("SETTLEMENT_NET_AMOUNT") >= 0 ? getColIndex("SETTLEMENT_NET_AMOUNT") : getColIndex("NET_AMOUNT");
-    const amountIdx = getColIndex("TRANSACTION_AMOUNT") >= 0 ? getColIndex("TRANSACTION_AMOUNT") : getColIndex("AMOUNT");
-    const feeIdx = getColIndex("FEE_AMOUNT") >= 0 ? getColIndex("FEE_AMOUNT") : getColIndex("FEE");
-    const dateIdx = getColIndex("SETTLEMENT_DATE") >= 0 ? getColIndex("SETTLEMENT_DATE") : getColIndex("TRANSACTION_DATE");
-    const descIdx = getColIndex("DESCRIPTION");
-    const refIdx = getColIndex("EXTERNAL_REFERENCE");
+  /**
+   * Parser oficial robusto do Relatório Dinheiro em Conta (Settlement Report CSV)
+   * Realiza validação monetária estrita, correspondência normalizada de colunas e diagnóstico de linhas rejeitadas.
+   */
+  parseSettlementReportCsv(csvText: string): ParseCsvResult {
+    if (!csvText || !csvText.trim()) {
+      return { transactions: [], validCount: 0, rejectedCount: 0, errors: ["Arquivo CSV vazio ou nulo."] };
+    }
+
+    const { rows } = parseCsvRows(csvText);
+    if (rows.length === 0) {
+      return { transactions: [], validCount: 0, rejectedCount: 0, errors: ["Arquivo CSV sem linhas processáveis."] };
+    }
+
+    const headers = rows[0].map((h) => h.toUpperCase());
+
+    // Mapeamento normalizado de colunas oficiais
+    const findExactHeaderIndex = (aliases: string[]) => {
+      for (const alias of aliases) {
+        const idx = headers.indexOf(alias);
+        if (idx !== -1) return idx;
+      }
+      return -1;
+    };
+
+    const sourceIdIdx = findExactHeaderIndex(["SOURCE_ID", "EXTERNAL_ID"]);
+    const typeIdx = findExactHeaderIndex(["TRANSACTION_TYPE", "TYPE"]);
+    const netAmountIdx = findExactHeaderIndex(["SETTLEMENT_NET_AMOUNT", "NET_AMOUNT"]);
+    const amountIdx = findExactHeaderIndex(["TRANSACTION_AMOUNT", "AMOUNT"]);
+    const feeIdx = findExactHeaderIndex(["FEE_AMOUNT", "FEE"]);
+    const dateIdx = findExactHeaderIndex(["SETTLEMENT_DATE", "TRANSACTION_DATE"]);
+    const descIdx = findExactHeaderIndex(["DESCRIPTION"]);
+    const refIdx = findExactHeaderIndex(["EXTERNAL_REFERENCE"]);
+
+    if (sourceIdIdx === -1 && netAmountIdx === -1 && amountIdx === -1) {
+      return {
+        transactions: [],
+        validCount: 0,
+        rejectedCount: rows.length - 1,
+        errors: ["Cabeçalho do CSV não possui as colunas obrigatórias da API oficial Mercado Pago."],
+      };
+    }
 
     const transactions: MercadoPagoRawTransaction[] = [];
+    const errors: string[] = [];
+    let rejectedCount = 0;
 
-    for (let i = 1; i < lines.length; i++) {
-      const cols = lines[i].split(delimiter).map((c) => c.trim().replace(/^"|"$/g, ""));
-      if (cols.length < headers.length) continue;
+    const parseMonetaryValue = (valStr: string | undefined): number | null => {
+      if (!valStr || valStr.trim() === "") return 0;
+      const cleanStr = valStr.replace(/\s/g, "").replace(",", ".");
+      if (!/^-?\d+(\.\d+)?$/.test(cleanStr)) return null;
+      const num = parseFloat(cleanStr);
+      return isNaN(num) ? null : num;
+    };
+
+    for (let i = 1; i < rows.length; i++) {
+      const cols = rows[i];
+      const rowLineNum = i + 1;
 
       const rawSourceId = sourceIdIdx >= 0 ? cols[sourceIdIdx] : undefined;
-      if (!rawSourceId || rawSourceId.trim() === "") continue;
+      if (!rawSourceId || rawSourceId.trim() === "") {
+        rejectedCount++;
+        errors.push(`Linha ${rowLineNum}: Rejeitada por ausência de SOURCE_ID/EXTERNAL_ID oficial.`);
+        continue;
+      }
 
-      const rawNetAmountStr = netAmountIdx >= 0 ? cols[netAmountIdx] : (amountIdx >= 0 ? cols[amountIdx] : "0");
-      const parsedNetVal = parseFloat(rawNetAmountStr.replace(",", ".")) || 0;
+      const rawDateStr = dateIdx >= 0 ? cols[dateIdx] : undefined;
+      if (!rawDateStr || rawDateStr.trim() === "") {
+        rejectedCount++;
+        errors.push(`Linha ${rowLineNum}: Rejeitada por ausência de data de liquidação.`);
+        continue;
+      }
+
+      const d = new Date(rawDateStr);
+      if (isNaN(d.getTime())) {
+        rejectedCount++;
+        errors.push(`Linha ${rowLineNum}: Rejeitada por data de liquidação inválida (${rawDateStr}).`);
+        continue;
+      }
+      const occurredAt = d.toISOString();
+
+      const rawNetAmountStr = netAmountIdx >= 0 ? cols[netAmountIdx] : undefined;
+      const rawAmountStr = amountIdx >= 0 ? cols[amountIdx] : undefined;
+
+      const parsedNetVal = parseMonetaryValue(rawNetAmountStr || rawAmountStr);
+      if (parsedNetVal === null) {
+        rejectedCount++;
+        errors.push(`Linha ${rowLineNum}: Rejeitada por formato numérico de valor líquido inválido.`);
+        continue;
+      }
+
+      const parsedAmountVal = parseMonetaryValue(rawAmountStr || rawNetAmountStr);
+      const parsedFeeVal = parseMonetaryValue(feeIdx >= 0 ? cols[feeIdx] : "0");
+
+      if (parsedFeeVal === null) {
+        rejectedCount++;
+        errors.push(`Linha ${rowLineNum}: Rejeitada por formato numérico de tarifa inválido.`);
+        continue;
+      }
 
       const netAmountCents = Math.round(parsedNetVal * 100);
+      const amountCents = Math.round(Math.abs(parsedAmountVal !== null ? parsedAmountVal : parsedNetVal) * 100);
+      const feeCents = Math.round(Math.abs(parsedFeeVal) * 100);
+
       const direction: "CREDIT" | "DEBIT" = netAmountCents >= 0 ? "CREDIT" : "DEBIT";
       const absNetAmountCents = Math.abs(netAmountCents);
 
-      const rawFeeStr = feeIdx >= 0 ? cols[feeIdx] : "0";
-      const feeCents = Math.round(Math.abs(parseFloat(rawFeeStr.replace(",", ".")) || 0) * 100);
-
-      const rawDateStr = dateIdx >= 0 ? cols[dateIdx] : undefined;
-      if (!rawDateStr || rawDateStr.trim() === "") continue;
-
-      const d = new Date(rawDateStr);
-      if (isNaN(d.getTime())) continue;
-      const occurredAt = d.toISOString();
-
-      const typeStr = typeIdx >= 0 ? cols[typeIdx] : "SETTLEMENT";
+      const typeStr = typeIdx >= 0 && cols[typeIdx] ? cols[typeIdx] : "SETTLEMENT";
       const descStr = descIdx >= 0 && cols[descIdx] ? cols[descIdx] : `Relatório Liquidação ${typeStr}`;
-      const refStr = refIdx >= 0 ? cols[refIdx] : undefined;
+      const refStr = refIdx >= 0 && cols[refIdx] ? cols[refIdx] : undefined;
 
       transactions.push({
         externalId: rawSourceId,
@@ -168,63 +330,18 @@ export class MercadoPagoReportsClient {
         type: typeStr,
         description: descStr,
         direction,
-        amountCents: absNetAmountCents,
+        amountCents,
         feeCents,
         netAmountCents: absNetAmountCents,
         rawReference: refStr,
       });
     }
 
-    return transactions;
-  }
-  async fetchAccountStatement(startDate?: Date, endDate?: Date): Promise<MercadoPagoRawTransaction[]> {
-    try {
-      const beginDate = (startDate || new Date(Date.now() - 30 * 24 * 3600 * 1000)).toISOString();
-      const finalDate = (endDate || new Date()).toISOString();
-
-      const response = await fetch(
-        `https://api.mercadopago.com/v1/payments/search?sort=date_created&criteria=desc&begin_date=${encodeURIComponent(
-          beginDate
-        )}&end_date=${encodeURIComponent(finalDate)}&limit=50`,
-        {
-          headers: {
-            Authorization: `Bearer ${this.accessToken}`,
-          },
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(`Mercado Pago Reports API error: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      const results = data.results || [];
-
-      return results.map((item: any): MercadoPagoRawTransaction => {
-        const isCredit = item.collector_id && item.operation_type !== "money_transfer_out";
-        const amountCents = Math.round((item.transaction_amount || 0) * 100);
-        const totalFee = (item.fee_details || []).reduce((acc: number, fee: any) => acc + (fee.amount || 0), 0);
-        const feeCents = Math.round(totalFee * 100);
-        const netAmountCents = amountCents - feeCents;
-
-        return {
-          externalId: String(item.id),
-          occurredAt: item.date_created || item.date_approved || new Date().toISOString(),
-          type: item.payment_method_id || item.operation_type || "GENERIC",
-          description: item.description || `Transação ${item.id}`,
-          direction: isCredit ? "CREDIT" : "DEBIT",
-          amountCents,
-          feeCents,
-          netAmountCents: netAmountCents > 0 ? netAmountCents : amountCents,
-          counterpartName: item.payer?.first_name ? `${item.payer.first_name} ${item.payer.last_name || ""}`.trim() : undefined,
-          counterpartDocument: item.payer?.identification?.number || undefined,
-          txid: item.point_of_interaction?.transaction_data?.transaction_id || undefined,
-          rawReference: item.external_reference || undefined,
-        };
-      });
-    } catch (err: any) {
-      console.error("Erro ao buscar extrato no Mercado Pago:", err);
-      throw err;
-    }
+    return {
+      transactions,
+      validCount: transactions.length,
+      rejectedCount,
+      errors,
+    };
   }
 }

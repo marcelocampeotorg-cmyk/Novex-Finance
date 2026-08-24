@@ -223,8 +223,8 @@ export async function syncMercadoPagoStatement(force: boolean = false) {
     orderBy: { createdAt: "desc" },
   });
 
-  const beginDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-  const endDate = new Date();
+  const beginDate = syncRun ? syncRun.beginDate : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const endDate = syncRun ? syncRun.endDate : new Date();
 
   if (!syncRun) {
     syncRun = await db.syncRun.create({
@@ -260,8 +260,8 @@ export async function syncMercadoPagoStatement(force: boolean = false) {
       }
     }
 
-    // 3. Consultar relatórios de liquidação disponíveis para localizar o relatório específico solicitado
-    const reports = await client.listSettlementReports();
+    // 3. Consultar relatórios de liquidação gerados via endpoint oficial /search
+    const reports = await client.searchSettlementReports();
     const readyReport = reports.find(
       (r) =>
         r.status === "READY" &&
@@ -270,10 +270,10 @@ export async function syncMercadoPagoStatement(force: boolean = false) {
           (!syncRun.remoteReportId && !syncRun.remoteFileName))
     );
 
-    if (!readyReport || !readyReport.downloadUrl) {
-      // Relatório ainda em processamento ou não disponível
+    if (!readyReport || (!readyReport.fileName && !readyReport.downloadUrl)) {
+      // Relatório ainda em processamento (PROCESSING não é tratado como erro)
       return {
-        success: false,
+        success: true,
         status: "PROCESSING",
         message: "Relatório de liquidação em processamento no Mercado Pago. Aguarde a conclusão da geração.",
         insertedCount: 0,
@@ -283,21 +283,29 @@ export async function syncMercadoPagoStatement(force: boolean = false) {
       };
     }
 
-    // 4. Efetuar download do relatório e parsear movimentações reais de liquidação
-    const fileRes = await fetch(readyReport.downloadUrl, {
-      headers: { Authorization: `Bearer ${credentials.accessToken}` },
-    });
-
-    if (!fileRes.ok) {
-      throw new Error(`Falha no download do relatório de liquidação (HTTP ${fileRes.status})`);
+    // 4. Efetuar download do relatório pelo file_name oficial (ou downloadUrl) e parsear movimentações
+    let csvContent = "";
+    if (readyReport.fileName) {
+      csvContent = await client.downloadSettlementReport(readyReport.fileName);
+    } else if (readyReport.downloadUrl) {
+      const fileRes = await fetch(readyReport.downloadUrl, {
+        headers: { Authorization: `Bearer ${credentials.accessToken}` },
+      });
+      if (!fileRes.ok) {
+        throw new Error(`Falha no download do relatório (HTTP ${fileRes.status})`);
+      }
+      csvContent = await fileRes.text();
     }
 
-    const csvContent = await fileRes.text();
-    const rawTxs = client.parseSettlementReportCsv(csvContent);
+    const parseResult = client.parseSettlementReportCsv(csvContent);
 
-    // 5. Executar importação oficial
+    if (parseResult.rejectedCount > 0 && parseResult.validCount === 0) {
+      throw new Error(`Falha no parse do relatório de liquidação. Todas as ${parseResult.rejectedCount} linhas foram rejeitadas por inconsistência.`);
+    }
+
+    // 5. Executar importação oficial dos dados validados
     const importResult = await importExternalTransactions(
-      rawTxs,
+      parseResult.transactions,
       account.id,
       "MERCADO_PAGO_API",
       "MERCADO_PAGO"
@@ -307,15 +315,18 @@ export async function syncMercadoPagoStatement(force: boolean = false) {
       throw new Error(importResult.error || "Erro ao importar transações do relatório");
     }
 
-    // 6. Finalizar SyncRun como SUCCESS e atualizar lastSyncAt SOMENTE após a importação do relatório
+    // 6. Atualizar status final do SyncRun (SUCCESS ou PARTIAL)
+    const finalRunStatus = parseResult.rejectedCount > 0 ? "PARTIAL" : "SUCCESS";
+
     await db.syncRun.update({
       where: { id: syncRun.id },
       data: {
-        status: "SUCCESS",
+        status: finalRunStatus,
         finishedAt: new Date(),
         insertedCount: importResult.insertedCount,
         updatedCount: importResult.updatedCount,
-        skippedCount: importResult.skippedCount,
+        skippedCount: (importResult.skippedCount || 0) + parseResult.rejectedCount,
+        errorMessage: parseResult.errors.length > 0 ? parseResult.errors.slice(0, 5).join(" | ") : null,
       },
     });
 
@@ -324,7 +335,12 @@ export async function syncMercadoPagoStatement(force: boolean = false) {
       data: { lastSyncAt: new Date() },
     });
 
-    return importResult;
+    return {
+      ...importResult,
+      status: finalRunStatus,
+      rejectedCount: parseResult.rejectedCount,
+      diagnostics: parseResult.errors,
+    };
   } catch (error: any) {
     console.error("Erro no pipeline de Dinheiro em Conta do Mercado Pago:", error);
 
@@ -338,7 +354,7 @@ export async function syncMercadoPagoStatement(force: boolean = false) {
       },
     });
 
-    return { success: false, error: error.message || "Falha na sincronização assíncrona." };
+    return { success: false, status: "FAILED", error: error.message || "Falha na sincronização assíncrona." };
   }
 }
 
