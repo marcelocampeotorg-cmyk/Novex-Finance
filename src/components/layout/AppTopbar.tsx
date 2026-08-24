@@ -7,18 +7,22 @@ import { NewAccountModal } from "@/components/ui/NewAccountModal";
 import { authClient } from "@/lib/auth-client";
 
 export const AppTopbar: React.FC = () => {
+  const { data: session } = authClient.useSession();
   const [isSyncing, setIsSyncing] = useState(false);
   const [isNewAccountOpen, setIsNewAccountOpen] = useState(false);
-  const [summary, setSummary] = useState<{ syncSource: string; accountDisplayName: string; lastSyncAt: string } | null>(null);
+  const [summary, setSummary] = useState<{ syncSource: string; accountDisplayName: string; lastSyncAt: string; role: string } | null>(null);
 
   React.useEffect(() => {
     import("@/server/actions/workspace").then(({ getWorkspaceSummary }) => {
       getWorkspaceSummary().then((res) => {
-        setSummary({
-          syncSource: res.syncSource,
-          accountDisplayName: res.accountDisplayName,
-          lastSyncAt: res.lastSyncAt,
-        });
+        if (res.success) {
+          setSummary({
+            syncSource: res.syncSource,
+            accountDisplayName: res.accountDisplayName,
+            lastSyncAt: res.lastSyncAt,
+            role: res.role,
+          });
+        }
       });
     });
   }, []);
@@ -40,9 +44,10 @@ export const AppTopbar: React.FC = () => {
       await triggerMercadoPagoSync(true);
       const res = await getWorkspaceSummary();
       setSummary({
-        syncSource: res.syncSource,
-        accountDisplayName: res.accountDisplayName,
-        lastSyncAt: res.lastSyncAt,
+        syncSource: res.syncSource || "Desconectado",
+        accountDisplayName: res.accountDisplayName || "Não conectado",
+        lastSyncAt: res.lastSyncAt || "",
+        role: res.role || "MEMBER",
       });
       window.location.reload(); // Atualiza toda a tela para refletir o novo saldo
     } catch (e) {
@@ -84,8 +89,12 @@ export const AppTopbar: React.FC = () => {
               <User className="h-4 w-4" />
             </div>
             <div className="hidden md:flex flex-col">
-              <span className="text-xs font-semibold text-novex-text-primary">Frank</span>
-              <span className="text-[10px] text-novex-text-muted">Proprietário</span>
+              <span className="text-xs font-semibold text-novex-text-primary">
+                {session?.user?.name || session?.user?.email || "Usuário"}
+              </span>
+              <span className="text-[10px] text-novex-text-muted">
+                {summary?.role === "OWNER" ? "Proprietário" : summary?.role === "ADMIN" ? "Administrador" : "Membro"}
+              </span>
             </div>
             <button
               onClick={handleLogout}

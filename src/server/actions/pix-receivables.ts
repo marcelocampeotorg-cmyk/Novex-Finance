@@ -7,6 +7,7 @@ import { revalidatePath } from "next/cache";
 import { requireAuthenticatedWorkspace } from "@/server/auth-context";
 import { decryptCredentials, parseMercadoPagoCredentials } from "@/lib/server/credentials-crypto";
 import { createPixOrder, getOrderById } from "@/integrations/mercado-pago/orders-client";
+import { refundPayment } from "@/integrations/mercado-pago/payments-client";
 
 const generateChargeSchema = z.object({
   installmentId: z.string().min(1),
@@ -444,6 +445,150 @@ export async function getActivePixChargeForInstallment(input: { installmentId: s
     qrCode: charge.qrCode,
     ticketUrl: charge.ticketUrl,
     expiresAt: charge.expiresAt?.toISOString(),
-    paidAt: charge.paidAt?.toISOString(),
   };
 }
+
+/**
+ * Solicita o reembolso/estorno de uma cobrança Pix já paga.
+ * O usuário DEVE ser o OWNER do workspace.
+ */
+export async function refundPixCharge(input: { pixChargeId: string }) {
+  const context = await requireAuthenticatedWorkspace();
+
+  // Validar se usuário é o owner
+  const membership = await db.membership.findFirst({
+    where: { workspaceId: context.workspaceId, userId: context.userId }
+  });
+
+  if (membership?.role !== "OWNER") {
+    return { success: false, error: "Apenas o Proprietário (OWNER) pode realizar estornos." };
+  }
+
+  const charge = await db.pixCharge.findFirst({
+    where: {
+      id: input.pixChargeId,
+      workspaceId: context.workspaceId,
+    },
+    include: {
+      integrationAccount: true,
+      installment: {
+        include: { financialItem: true }
+      }
+    },
+  });
+
+  if (!charge) return { success: false, error: "Cobrança Pix não encontrada." };
+  if (charge.status !== "PAID" || !charge.paidAt) {
+    return { success: false, error: "Esta cobrança não está paga, portanto não pode ser estornada." };
+  }
+
+  const paymentIdToRefund = charge.externalPaymentId || charge.externalOrderId;
+  
+  if (!paymentIdToRefund) {
+    return { success: false, error: "Referência externa de pagamento não encontrada." };
+  }
+
+  const idempotencyKey = `nvx_refund_${charge.id}_${Date.now()}`;
+
+  let accessToken: string;
+  try {
+    if (!charge.integrationAccount?.encryptedCredentials) {
+      throw new Error("Credenciais não encontradas");
+    }
+    const creds = parseMercadoPagoCredentials(charge.integrationAccount.encryptedCredentials);
+    accessToken = creds.accessToken;
+  } catch (e) {
+    return { success: false, error: "Erro ao descriptografar credencial do workspace." };
+  }
+
+  // Comportamento condicional para SANDBOX (mock seguro) vs PRODUCTION (real)
+  let isSuccess = false;
+  let statusDetail = "";
+
+  if (charge.environment === "SANDBOX") {
+    // Mock de segurança: não bater na API de estorno do MP em Sandbox
+    isSuccess = true;
+    statusDetail = "Estorno simulado com sucesso em ambiente Sandbox.";
+  } else {
+    // Chamar API real do Mercado Pago
+    const refundResult = await refundPayment({
+      accessToken,
+      paymentId: paymentIdToRefund,
+      idempotencyKey,
+    });
+
+    if (!refundResult.success) {
+      return { success: false, error: refundResult.errorMessage || "Falha ao processar estorno no Mercado Pago." };
+    }
+    isSuccess = true;
+    statusDetail = "Estorno processado com sucesso.";
+  }
+
+  if (isSuccess) {
+    await db.$transaction(async (tx) => {
+      // 1. Atualizar charge para REFUNDED
+      await tx.pixCharge.update({
+        where: { id: charge.id },
+        data: {
+          status: "REFUNDED",
+          statusDetail,
+        },
+      });
+
+      // 2. Abater valor liquidado da parcela
+      const currentInst = await tx.installment.findUnique({ where: { id: charge.installmentId } });
+      if (currentInst) {
+        const newSettled = Number(currentInst.settledAmountCents) - Number(charge.amountCents);
+        const nextStatus = newSettled <= 0 ? (currentInst.dueDate < new Date() ? "OVERDUE" : "SCHEDULED") : "PARTIAL";
+        
+        await tx.installment.update({
+          where: { id: charge.installmentId },
+          data: {
+            settledAmountCents: Math.max(0, newSettled),
+            status: nextStatus,
+            settlementDate: newSettled <= 0 ? null : currentInst.settlementDate,
+          }
+        });
+      }
+
+      // 3. Registrar auditoria
+      await tx.auditLog.create({
+        data: {
+          workspaceId: context.workspaceId,
+          actorType: "USER",
+          actorId: context.userId,
+          action: "MP_PIX_CHARGE_REFUNDED",
+          entityType: "PixCharge",
+          entityId: charge.id,
+          metadata: {
+            amountCents: Number(charge.amountCents),
+            paymentId: paymentIdToRefund,
+            environment: charge.environment,
+          }
+        }
+      });
+      
+      // 4. (Opcional) Criar LedgerEntry reversa para o fluxo de caixa
+      await tx.ledgerEntry.create({
+        data: {
+          workspaceId: context.workspaceId,
+          installmentId: charge.installmentId,
+          direction: "DEBIT", // Estorno de recebimento é saída
+          amountCents: charge.amountCents,
+          occurredAt: new Date(),
+          sourceType: "REFUND_MERCADO_PAGO_PIX",
+          sourceId: paymentIdToRefund,
+          categoryId: charge.installment.financialItem.categoryId,
+        }
+      });
+    });
+
+    revalidatePath("/contas-a-receber");
+    revalidatePath("/movimentacoes");
+    
+    return { success: true, message: statusDetail };
+  }
+  
+  return { success: false, error: "Erro desconhecido ao processar estorno." };
+}
+

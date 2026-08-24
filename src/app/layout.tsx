@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { AppShell } from "@/components/layout/AppShell";
 
 export const metadata: Metadata = {
   title: "NOVEX Finance — Gestão Financeira Pessoal",
@@ -18,7 +17,7 @@ export default function RootLayout({
   return (
     <html lang="pt-BR">
       <body className="bg-novex-bg text-novex-text-primary antialiased">
-        <AppShell>{children}</AppShell>
+        {children}
       </body>
     </html>
   );

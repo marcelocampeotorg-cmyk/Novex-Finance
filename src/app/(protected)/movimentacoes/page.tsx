@@ -129,7 +129,9 @@ export default function MovimentacoesPage() {
                   try {
                     const { triggerMercadoPagoSync } = await import("@/server/actions/workspace");
                     const res = await triggerMercadoPagoSync();
-                    if (res && res.error) {
+                    if (res && !res.success && "error" in res) {
+                      setSyncMessage({ type: "error", text: "Erro ao sincronizar: " + res.error });
+                    } else if (res && "error" in res && res.error) {
                       setSyncMessage({ type: "error", text: "Erro ao sincronizar: " + res.error });
                     } else {
                       setSyncMessage({ type: "success", text: "Sincronização concluída com sucesso!" });

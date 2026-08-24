@@ -36,7 +36,7 @@ export function ImportStatementModal({ isOpen, onClose, onSuccess }: ImportState
           onClose();
         }, 1500);
       } else {
-        setErrorMessage(res.error || "Falha na sincronização via API.");
+        setErrorMessage("error" in res && typeof res.error === "string" ? res.error : "Falha na sincronização via API.");
       }
     } catch (err: any) {
       setErrorMessage(err.message || "Erro de conexão.");

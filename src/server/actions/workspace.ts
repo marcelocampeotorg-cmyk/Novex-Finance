@@ -3,10 +3,33 @@
 import { db } from "@/server/db";
 import { BalanceSummaryMock } from "@/types";
 import { requireAuthenticatedWorkspace } from "@/server/auth-context";
+import { IntegrationAccount } from "@prisma/client";
 
-export async function getWorkspaceSummary(): Promise<BalanceSummaryMock> {
+/**
+ * Obtém a integração ativa do Mercado Pago para o Workspace atual,
+ * de forma determinística e segura.
+ */
+export async function getActiveMercadoPagoIntegration(workspaceId: string): Promise<IntegrationAccount | null> {
+  // A integração ativa é a primeira conectada (Production ou Sandbox).
+  // Se houver mais de uma (legado sujo), podemos preferir a que foi validada por último.
+  const integrations = await db.integrationAccount.findMany({
+    where: {
+      workspaceId,
+      provider: "MERCADO_PAGO",
+      status: "CONNECTED",
+    },
+    orderBy: {
+      lastValidatedAt: 'desc'
+    },
+    take: 1
+  });
+
+  return integrations.length > 0 ? integrations[0] : null;
+}
+export async function getWorkspaceSummary() {
   try {
-    const { workspaceId } = await requireAuthenticatedWorkspace();
+    const context = await requireAuthenticatedWorkspace();
+    const workspaceId = context.workspaceId;
 
     const now = new Date();
     const installments = await db.installment.findMany({
@@ -38,9 +61,7 @@ export async function getWorkspaceSummary(): Promise<BalanceSummaryMock> {
       where: { workspaceId, reconciliations: { none: { status: "MATCHED" } } },
     });
 
-    const mpIntegration = await db.integrationAccount.findFirst({
-      where: { workspaceId, provider: "MERCADO_PAGO" },
-    });
+    const mpIntegration = await getActiveMercadoPagoIntegration(workspaceId);
 
     let currentBalanceCents = 0;
     let syncSource: "SINCRONIZADO" | "PENDENTE" | "DESCONECTADO" | "CALCULADO" = "CALCULADO";
@@ -86,6 +107,7 @@ export async function getWorkspaceSummary(): Promise<BalanceSummaryMock> {
     const projectedBalanceCents = currentBalanceCents + totalReceivableMonthCents - totalPayableMonthCents;
 
     return {
+      success: true as const,
       currentBalanceCents,
       projectedBalanceCents,
       totalPayableMonthCents,
@@ -98,21 +120,17 @@ export async function getWorkspaceSummary(): Promise<BalanceSummaryMock> {
       unresolvedTransactionsCount: unmatchesCount,
       uncategorizedCount: 0,
       isOutdated,
+      role: context.role,
+      workspaceName: context.workspaceName,
+      mpStatus: mpIntegration?.status || "DISCONNECTED",
+      mpEnv: mpIntegration?.environment || "SANDBOX",
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error("Erro ao calcular resumo:", error);
     return {
-      currentBalanceCents: 0,
-      projectedBalanceCents: 0,
-      totalPayableMonthCents: 0,
-      totalReceivableMonthCents: 0,
-      totalOverdueCents: 0,
-      totalDebtorsOwedCents: 0,
-      lastSyncAt: new Date().toISOString(),
-      syncSource: "CALCULADO",
-      accountDisplayName: "Erro",
-      unresolvedTransactionsCount: 0,
-      uncategorizedCount: 0,
+      success: false as const,
+      errorCode: error.message?.includes("UNAUTHORIZED") ? "UNAUTHORIZED" : "DATABASE_ERROR",
+      error: error.message,
     };
   }
 }
@@ -140,9 +158,7 @@ export async function updateWorkspaceName(data: { name: string }) {
 export async function setManualInitialBalance(targetBalanceCents: number) {
   try {
     const { workspaceId } = await requireAuthenticatedWorkspace();
-    const mpIntegration = await db.integrationAccount.findFirst({
-      where: { workspaceId, provider: "MERCADO_PAGO" },
-    });
+    const mpIntegration = await getActiveMercadoPagoIntegration(workspaceId);
 
     if (!mpIntegration) {
       return { success: false, error: "Nenhuma integração conectada." };
@@ -177,7 +193,7 @@ export async function setManualInitialBalance(targetBalanceCents: number) {
         data: {
           workspaceId,
           integrationAccountId: mpIntegration.id,
-          provider: "MERCADO_PAGO",
+          provider: "MANUAL_ADJUSTMENT" as any, // Adicionado como cast pois precisamos garantir que MANUAL_ADJUSTMENT será processado sem erro ou adicionar ao Enum
           externalId: "SALDO_INICIAL_" + Date.now(),
           type: "TRANSFER",
           direction: isCredit ? "CREDIT" : "DEBIT",
@@ -199,6 +215,9 @@ export async function setManualInitialBalance(targetBalanceCents: number) {
 
 export async function getDashboardData() {
   const summary = await getWorkspaceSummary();
+  if (!summary.success) {
+    return { summary: null, recentTransactions: [], chartData: [] };
+  }
   const { workspaceId } = await requireAuthenticatedWorkspace();
 
   const txs = await db.externalTransaction.findMany({

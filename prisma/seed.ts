@@ -1,5 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-
+import { auth } from "../src/lib/auth";
 const prisma = new PrismaClient();
 
 async function main() {
@@ -8,52 +8,43 @@ async function main() {
     process.exit(1);
   }
 
+  if (!process.env.DEV_SEED_PASSWORD) {
+    console.error("SEED REJEITADO: Variável DEV_SEED_PASSWORD é obrigatória.");
+    process.exit(1);
+  }
+
   const email = process.env.DEV_SEED_EMAIL || "frank@novexfinance.local";
-  const password = process.env.DEV_SEED_PASSWORD || "123456";
+  const password = process.env.DEV_SEED_PASSWORD;
 
   console.log(`Iniciando seed de desenvolvimento para o usuário: ${email}...`);
 
-  await prisma.$transaction(async (tx) => {
-    // 1. Criar ou localizar o Usuário
-    let user = await tx.user.findUnique({
-      where: { email },
-    });
+  let user = await prisma.user.findUnique({
+    where: { email },
+  });
 
-    if (!user) {
-      user = await tx.user.create({
-        data: {
-          email,
-          name: "Frank",
-          timezone: "America/Sao_Paulo",
-          locale: "pt-BR",
-          status: "ACTIVE",
-        },
-      });
-    }
-
-    // 2. Criar ou atualizar a Account do Better Auth para e-mail/senha
-    const existingAccount = await tx.account.findFirst({
-      where: {
-        userId: user.id,
-        providerId: "credential",
+  if (!user) {
+    console.log("Usuário não existe. Criando com Better Auth...");
+    // @ts-ignore - simulando req/res se necessário, mas signUpEmail via Server API costuma funcionar
+    await auth.api.signUpEmail({
+      body: {
+        email,
+        password,
+        name: "Dev User",
       },
     });
+    user = await prisma.user.findUnique({ where: { email } });
+  }
 
-    if (!existingAccount) {
-      await tx.account.create({
-        data: {
-          userId: user.id,
-          accountId: email,
-          providerId: "credential",
-          password, // Em produção o Better Auth faz o hash, aqui registramos o par credencial
-        },
-      });
-    }
+  if (!user) {
+    console.error("Falha ao criar o usuário via Better Auth.");
+    process.exit(1);
+  }
 
+  await prisma.$transaction(async (tx) => {
     // 3. Criar ou localizar o Workspace Pessoal ("Finanças pessoais")
     let workspace = await tx.workspace.findFirst({
       where: {
-        ownerUserId: user.id,
+        ownerUserId: user!.id,
       },
     });
 
@@ -62,7 +53,7 @@ async function main() {
         data: {
           name: "Finanças pessoais",
           type: "PERSONAL",
-          ownerUserId: user.id,
+          ownerUserId: user!.id,
         },
       });
     }
@@ -72,7 +63,7 @@ async function main() {
       where: {
         workspaceId_userId: {
           workspaceId: workspace.id,
-          userId: user.id,
+          userId: user!.id,
         },
       },
     });
@@ -81,7 +72,7 @@ async function main() {
       await tx.membership.create({
         data: {
           workspaceId: workspace.id,
-          userId: user.id,
+          userId: user!.id,
           role: "OWNER",
         },
       });

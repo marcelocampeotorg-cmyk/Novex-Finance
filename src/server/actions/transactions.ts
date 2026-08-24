@@ -99,9 +99,9 @@ export async function importExternalTransactions(rawTransactions: MercadoPagoRaw
       try {
         const existingTx = await db.externalTransaction.findUnique({
           where: {
-            integrationAccountId_provider_externalId: {
-              integrationAccountId: integrationAccountId,
-              provider: "MERCADO_PAGO",
+            workspaceId_source_externalId: {
+              workspaceId: workspaceId,
+              source: "MERCADO_PAGO_API",
               externalId: raw.externalId,
             }
           }
@@ -176,42 +176,85 @@ export async function importExternalTransactions(rawTransactions: MercadoPagoRaw
  * Buscar extrato via API do Mercado Pago e executar importação
  */
 export async function syncMercadoPagoStatement(force: boolean = false) {
+  const { workspaceId } = await requireAuthenticatedWorkspace();
+
+  const account = await db.integrationAccount.findFirst({
+    where: { workspaceId, provider: "MERCADO_PAGO" },
+  });
+
+  if (!account || account.status !== "CONNECTED" || !account.encryptedCredentials) {
+    throw new Error("Integração não conectada ou sem credenciais válidas.");
+  }
+
+  // Verificar cache de 5 minutos, a menos que seja force
+  const CACHE_MINUTES = 5;
+  if (!force && account.lastSyncAt) {
+    const now = new Date();
+    const diffInMinutes = (now.getTime() - account.lastSyncAt.getTime()) / (1000 * 60);
+    if (diffInMinutes < CACHE_MINUTES) {
+      return { 
+        success: true, 
+        cached: true, 
+        message: "Sincronização recente (menos de 5 min). Retornando dados locais.",
+        insertedCount: 0,
+        updatedCount: 0,
+        skippedCount: 0,
+        autoMatchedCount: 0,
+      };
+    }
+  }
+
+  // 1. Criar SyncRun como PENDING
+  const syncRun = await db.syncRun.create({
+    data: {
+      workspaceId,
+      integrationAccountId: account.id,
+      source: "MERCADO_PAGO_API",
+      status: "PROCESSING",
+      beginDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // Últimos 30 dias
+      endDate: new Date(),
+      startedAt: new Date(),
+    },
+  });
+
   try {
-    const { workspaceId } = await requireAuthenticatedWorkspace();
-
-    const account = await db.integrationAccount.findFirst({
-      where: { workspaceId, provider: "MERCADO_PAGO" },
-    });
-
-    if (!account || account.status !== "CONNECTED" || !account.encryptedCredentials) {
-      throw new Error("Integração não conectada ou sem credenciais válidas.");
-    }
-
-    const CACHE_MINUTES = 5;
-    if (!force && account.lastSyncAt) {
-      const now = new Date();
-      const diffInMinutes = (now.getTime() - account.lastSyncAt.getTime()) / (1000 * 60);
-      if (diffInMinutes < CACHE_MINUTES) {
-        return { 
-          success: true, 
-          cached: true, 
-          message: "Sincronização recente (menos de 5 min). Retornando dados locais.",
-          insertedCount: 0,
-          updatedCount: 0,
-          skippedCount: 0,
-          autoMatchedCount: 0,
-          error: undefined,
-        };
-      }
-    }
-
     const credentials = parseMercadoPagoCredentials(account.encryptedCredentials);
     const client = new MercadoPagoReportsClient(credentials.accessToken);
     const rawTxs = await client.fetchAccountStatement();
 
-    return await importExternalTransactions(rawTxs, account.id);
+    const importResult = await importExternalTransactions(rawTxs, account.id);
+    
+    if (!importResult.success) {
+      throw new Error(importResult.error || "Erro desconhecido na importação");
+    }
+
+    // 2. Atualizar SyncRun para SUCCESS
+    await db.syncRun.update({
+      where: { id: syncRun.id },
+      data: {
+        status: "SUCCESS",
+        finishedAt: new Date(),
+        insertedCount: importResult.insertedCount,
+        updatedCount: importResult.updatedCount,
+        skippedCount: importResult.skippedCount,
+      },
+    });
+
+    return importResult;
   } catch (error: any) {
     console.error("Erro na sincronização de extrato do Mercado Pago:", error);
+    
+    // 3. Atualizar SyncRun para FAILED
+    await db.syncRun.update({
+      where: { id: syncRun.id },
+      data: {
+        status: "FAILED",
+        finishedAt: new Date(),
+        errorCode: "SYNC_ERROR",
+        errorMessage: error.message || "Erro desconhecido",
+      },
+    });
+
     return { success: false, error: error.message };
   }
 }
@@ -229,15 +272,42 @@ export async function importCsvExternalTransactions(rawTransactions: MercadoPago
       manualIntegration = await db.integrationAccount.create({
         data: {
           workspaceId,
-          provider: "MERCADO_PAGO",
-          environment: "CSV_IMPORT",
+          provider: "MERCADO_PAGO", // Mantém MERCADO_PAGO mas source será CSV_IMPORT
+          environment: "SANDBOX", // Placeholder, environment shouldn't be CSV_IMPORT since it violates Enum if validated strictly
           displayName: "Importação Manual (CSV)",
           status: "CONNECTED",
         },
       });
     }
 
-    return await importExternalTransactions(rawTransactions, manualIntegration.id);
+    // Criar SyncRun para CSV
+    const syncRun = await db.syncRun.create({
+      data: {
+        workspaceId,
+        integrationAccountId: manualIntegration.id,
+        source: "CSV_IMPORT",
+        status: "PROCESSING",
+        beginDate: new Date(),
+        endDate: new Date(),
+        startedAt: new Date(),
+      },
+    });
+
+    const importResult = await importExternalTransactions(rawTransactions, manualIntegration.id);
+
+    await db.syncRun.update({
+      where: { id: syncRun.id },
+      data: {
+        status: importResult.success ? "SUCCESS" : "FAILED",
+        finishedAt: new Date(),
+        insertedCount: importResult.insertedCount || 0,
+        updatedCount: importResult.updatedCount || 0,
+        skippedCount: importResult.skippedCount || 0,
+        errorMessage: importResult.error,
+      },
+    });
+
+    return importResult;
   } catch (error: any) {
     console.error("Erro na importação manual:", error);
     return { success: false, error: error.message };

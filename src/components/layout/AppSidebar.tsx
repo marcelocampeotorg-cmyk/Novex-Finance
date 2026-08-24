@@ -35,6 +35,20 @@ export const navItems = [
 export const AppSidebar: React.FC = () => {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
+  const [workspaceInfo, setWorkspaceInfo] = useState<{ workspaceName: string; mpStatus: string } | null>(null);
+
+  React.useEffect(() => {
+    import("@/server/actions/workspace").then(({ getWorkspaceSummary }) => {
+      getWorkspaceSummary().then((res) => {
+        if (res.success) {
+          setWorkspaceInfo({
+            workspaceName: res.workspaceName || "Workspace",
+            mpStatus: res.mpStatus === "CONNECTED" ? `Mercado Pago (${res.mpEnv === "PRODUCTION" ? "Produção" : "Sandbox"})` : "Mercado Pago Desconectado",
+          });
+        }
+      });
+    });
+  }, []);
 
   return (
     <aside
@@ -118,10 +132,10 @@ export const AppSidebar: React.FC = () => {
           {!collapsed && (
             <div className="flex flex-col overflow-hidden">
               <span className="truncate text-xs font-semibold text-novex-text-primary">
-                Workspace Pessoal
+                {workspaceInfo ? workspaceInfo.workspaceName : "Carregando..."}
               </span>
               <span className="truncate text-[10px] text-novex-text-muted">
-                Mercado Pago Conectado
+                {workspaceInfo ? workspaceInfo.mpStatus : ""}
               </span>
             </div>
           )}

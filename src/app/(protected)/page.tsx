@@ -57,7 +57,7 @@ export default function DashboardPage() {
       const { triggerMercadoPagoSync, getDashboardData } = await import("@/server/actions/workspace");
       const syncRes = await triggerMercadoPagoSync(forceSync);
       if (!syncRes.success) {
-        setSyncError(syncRes.error || "Falha na sincronização.");
+        setSyncError("error" in syncRes && typeof syncRes.error === "string" ? syncRes.error : "Falha na sincronização.");
       }
       const res = await getDashboardData();
       setSummary(res.summary);

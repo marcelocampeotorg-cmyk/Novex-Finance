@@ -5,6 +5,7 @@ import { db } from "@/server/db";
 export interface AuthenticatedWorkspaceContext {
   userId: string;
   workspaceId: string;
+  workspaceName: string;
   membershipId: string;
   role: string;
   userEmail: string;
@@ -75,6 +76,7 @@ export async function requireAuthenticatedWorkspace(): Promise<AuthenticatedWork
     return {
       userId: user.id,
       workspaceId: membership.workspaceId,
+      workspaceName: membership.workspace.name,
       membershipId: membership.id,
       role: membership.role,
       userEmail: user.email,
