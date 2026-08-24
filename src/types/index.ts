@@ -111,7 +111,7 @@ export interface BalanceSummaryMock {
   totalReceivableMonthCents: number;
   totalOverdueCents: number;
   totalDebtorsOwedCents: number;
-  lastSyncAt: string;
+  lastSyncAt: string | null;
   syncSource: "SINCRONIZADO" | "PENDENTE" | "DESCONECTADO" | "CALCULADO";
   accountDisplayName: string;
   unresolvedTransactionsCount: number;

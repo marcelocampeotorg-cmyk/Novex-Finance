@@ -157,7 +157,7 @@ export default function DashboardPage() {
               <>
                 <CheckCircle2 className="h-4 w-4 text-emerald-400" />
                 <span className="font-semibold">
-                  Sincronizado ({formatDate(displaySummary.lastSyncAt)})
+                  Sincronizado ({displaySummary.lastSyncAt ? formatDate(displaySummary.lastSyncAt) : "Pendente"})
                 </span>
                 <RefreshCw className="h-3.5 w-3.5 ml-1 opacity-70 hover:opacity-100" />
               </>

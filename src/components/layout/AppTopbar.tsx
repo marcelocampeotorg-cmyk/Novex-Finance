@@ -10,7 +10,7 @@ export const AppTopbar: React.FC = () => {
   const { data: session } = authClient.useSession();
   const [isSyncing, setIsSyncing] = useState(false);
   const [isNewAccountOpen, setIsNewAccountOpen] = useState(false);
-  const [summary, setSummary] = useState<{ syncSource: string; accountDisplayName: string; lastSyncAt: string; role: string } | null>(null);
+  const [summary, setSummary] = useState<{ syncSource: string; accountDisplayName: string; lastSyncAt: string | null; role: string } | null>(null);
 
   React.useEffect(() => {
     import("@/server/actions/workspace").then(({ getWorkspaceSummary }) => {

@@ -92,7 +92,7 @@ export async function getWorkspaceSummary() {
     let currentBalanceCents = 0;
     let syncSource: "SINCRONIZADO" | "PENDENTE" | "DESCONECTADO" | "CALCULADO" = "CALCULADO";
     let accountDisplayName = "Conta Local";
-    let lastSyncAt = new Date().toISOString();
+    let lastSyncAt: string | null = null;
     let isOutdated = false;
 
     if (mpIntegration) {
@@ -107,6 +107,7 @@ export async function getWorkspaceSummary() {
       } else if (!mpIntegration.lastSyncAt) {
         syncSource = "PENDENTE";
         isOutdated = true;
+        lastSyncAt = null;
       } else {
         lastSyncAt = mpIntegration.lastSyncAt.toISOString();
         const diffInMinutes = (new Date().getTime() - mpIntegration.lastSyncAt.getTime()) / (1000 * 60);
@@ -202,62 +203,10 @@ export async function updateWorkspaceName(data: { name: string }) {
 }
 
 export async function setManualInitialBalance(targetBalanceCents: number) {
-  try {
-    const { workspaceId } = await requireAuthenticatedWorkspace();
-    const mpIntegration = await getActiveMercadoPagoIntegration(workspaceId);
-
-    if (!mpIntegration) {
-      return { success: false, error: "Nenhuma integração conectada." };
-    }
-
-    // Exclui ajustes manuais antigos para não acumular
-    await db.externalTransaction.deleteMany({
-      where: {
-        workspaceId,
-        externalId: { startsWith: "SALDO_INICIAL_" },
-      },
-    });
-
-    // Recalcula soma atual das transações sem o ajuste antigo
-    const credit = await db.externalTransaction.aggregate({
-      _sum: { amountCents: true },
-      where: { workspaceId, direction: "CREDIT" },
-    });
-    const debit = await db.externalTransaction.aggregate({
-      _sum: { amountCents: true },
-      where: { workspaceId, direction: "DEBIT" },
-    });
-
-    const currentSum = (Number(credit._sum.amountCents) || 0) - (Number(debit._sum.amountCents) || 0);
-    const diff = targetBalanceCents - currentSum;
-
-    if (diff !== 0) {
-      const isCredit = diff > 0;
-      const amountCents = Math.abs(diff);
-
-      await db.externalTransaction.create({
-        data: {
-          workspaceId,
-          integrationAccountId: mpIntegration.id,
-          provider: "MERCADO_PAGO",
-          source: "MANUAL_ADJUSTMENT",
-          externalId: "SALDO_INICIAL_" + Date.now(),
-          type: "TRANSFER",
-          direction: isCredit ? "CREDIT" : "DEBIT",
-          amountCents,
-          netAmountCents: amountCents,
-          status: "APPROVED",
-          occurredAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
-          description: "Ajuste de Saldo Inicial (Manual)",
-          rawReference: "{}",
-        },
-      });
-    }
-
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: String(err) };
-  }
+  return {
+    success: false,
+    error: "Mecanismo de Saldo Inicial Manual desativado na V1. O saldo oficial é derivado exclusivamente de movimentações reais e relatórios de liquidação (Dinheiro em Conta).",
+  };
 }
 
 export async function getDashboardData() {

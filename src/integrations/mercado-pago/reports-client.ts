@@ -110,8 +110,73 @@ export class MercadoPagoReportsClient {
   }
 
   /**
-   * Buscar extrato de movimentações externas (Relatório Dinheiro em Conta / Pagamentos)
+   * Parser oficial do Relatório Dinheiro em Conta (Settlement Report CSV) do Mercado Pago
    */
+  parseSettlementReportCsv(csvText: string): MercadoPagoRawTransaction[] {
+    if (!csvText || !csvText.trim()) return [];
+
+    const lines = csvText.split(/\r?\n/).filter((l) => l.trim().length > 0);
+    if (lines.length <= 1) return [];
+
+    const delimiter = lines[0].includes(";") ? ";" : ",";
+    const headers = lines[0].split(delimiter).map((h) => h.trim().toUpperCase().replace(/^"|"$/g, ""));
+
+    const getColIndex = (name: string) => headers.findIndex((h) => h.includes(name));
+
+    const sourceIdIdx = getColIndex("SOURCE_ID") >= 0 ? getColIndex("SOURCE_ID") : getColIndex("EXTERNAL_ID");
+    const typeIdx = getColIndex("TRANSACTION_TYPE") >= 0 ? getColIndex("TRANSACTION_TYPE") : getColIndex("TYPE");
+    const netAmountIdx = getColIndex("SETTLEMENT_NET_AMOUNT") >= 0 ? getColIndex("SETTLEMENT_NET_AMOUNT") : getColIndex("NET_AMOUNT");
+    const amountIdx = getColIndex("TRANSACTION_AMOUNT") >= 0 ? getColIndex("TRANSACTION_AMOUNT") : getColIndex("AMOUNT");
+    const feeIdx = getColIndex("FEE_AMOUNT") >= 0 ? getColIndex("FEE_AMOUNT") : getColIndex("FEE");
+    const dateIdx = getColIndex("SETTLEMENT_DATE") >= 0 ? getColIndex("SETTLEMENT_DATE") : getColIndex("TRANSACTION_DATE");
+    const descIdx = getColIndex("DESCRIPTION");
+    const refIdx = getColIndex("EXTERNAL_REFERENCE");
+
+    const transactions: MercadoPagoRawTransaction[] = [];
+
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(delimiter).map((c) => c.trim().replace(/^"|"$/g, ""));
+      if (cols.length < headers.length) continue;
+
+      const rawSourceId = sourceIdIdx >= 0 ? cols[sourceIdIdx] : `SETTLE_${i}_${Date.now()}`;
+      if (!rawSourceId) continue;
+
+      const rawNetAmountStr = netAmountIdx >= 0 ? cols[netAmountIdx] : (amountIdx >= 0 ? cols[amountIdx] : "0");
+      const parsedNetVal = parseFloat(rawNetAmountStr.replace(",", ".")) || 0;
+
+      const netAmountCents = Math.round(parsedNetVal * 100);
+      const direction: "CREDIT" | "DEBIT" = netAmountCents >= 0 ? "CREDIT" : "DEBIT";
+      const absNetAmountCents = Math.abs(netAmountCents);
+
+      const rawFeeStr = feeIdx >= 0 ? cols[feeIdx] : "0";
+      const feeCents = Math.round(Math.abs(parseFloat(rawFeeStr.replace(",", ".")) || 0) * 100);
+
+      const rawDateStr = dateIdx >= 0 ? cols[dateIdx] : new Date().toISOString();
+      let occurredAt = new Date().toISOString();
+      try {
+        const d = new Date(rawDateStr);
+        if (!isNaN(d.getTime())) occurredAt = d.toISOString();
+      } catch (_) {}
+
+      const typeStr = typeIdx >= 0 ? cols[typeIdx] : "SETTLEMENT";
+      const descStr = descIdx >= 0 && cols[descIdx] ? cols[descIdx] : `Relatório Liquidação ${typeStr}`;
+      const refStr = refIdx >= 0 ? cols[refIdx] : undefined;
+
+      transactions.push({
+        externalId: rawSourceId,
+        occurredAt,
+        type: typeStr,
+        description: descStr,
+        direction,
+        amountCents: absNetAmountCents,
+        feeCents,
+        netAmountCents: absNetAmountCents,
+        rawReference: refStr,
+      });
+    }
+
+    return transactions;
+  }
   async fetchAccountStatement(startDate?: Date, endDate?: Date): Promise<MercadoPagoRawTransaction[]> {
     try {
       const beginDate = (startDate || new Date(Date.now() - 30 * 24 * 3600 * 1000)).toISOString();

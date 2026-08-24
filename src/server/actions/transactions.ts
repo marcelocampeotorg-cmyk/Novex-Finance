@@ -78,14 +78,19 @@ export async function getExternalTransactions(period: string = "MONTHLY") {
     return results;
   } catch (error) {
     console.error("Erro ao buscar movimentações externas:", error);
-    return [];
+    throw new Error(`Falha ao consultar movimentações externas: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
 /**
- * Importar lote de movimentações externas (com deduplicação estrita)
+ * Importar lote de movimentações externas (com deduplicação estrita e suporte a fontes variadas)
  */
-export async function importExternalTransactions(rawTransactions: MercadoPagoRawTransaction[], integrationAccountId: string) {
+export async function importExternalTransactions(
+  rawTransactions: MercadoPagoRawTransaction[],
+  integrationAccountId: string | null = null,
+  source: "MERCADO_PAGO_API" | "CSV_IMPORT" | "MANUAL_ADJUSTMENT" = "MERCADO_PAGO_API",
+  provider: "MERCADO_PAGO" | "EVOLUTION_API" | null = "MERCADO_PAGO"
+) {
   try {
     const { workspaceId } = await requireAuthenticatedWorkspace();
 
@@ -100,11 +105,11 @@ export async function importExternalTransactions(rawTransactions: MercadoPagoRaw
         const existingTx = await db.externalTransaction.findUnique({
           where: {
             workspaceId_source_externalId: {
-              workspaceId: workspaceId,
-              source: "MERCADO_PAGO_API",
+              workspaceId,
+              source,
               externalId: raw.externalId,
-            }
-          }
+            },
+          },
         });
 
         if (existingTx) {
@@ -118,11 +123,12 @@ export async function importExternalTransactions(rawTransactions: MercadoPagoRaw
           });
           updatedCount++;
         } else {
-           await db.externalTransaction.create({
+          await db.externalTransaction.create({
             data: {
               workspaceId,
-              integrationAccountId: integrationAccountId,
-              provider: "MERCADO_PAGO",
+              integrationAccountId: integrationAccountId || null,
+              provider: provider || null,
+              source,
               externalId: raw.externalId,
               direction: raw.direction,
               type: raw.type,
@@ -136,7 +142,7 @@ export async function importExternalTransactions(rawTransactions: MercadoPagoRaw
               txid: raw.txid || null,
               description: raw.description,
               rawReference: raw.rawReference || null,
-            }
+            },
           });
           insertedCount++;
         }
@@ -146,11 +152,13 @@ export async function importExternalTransactions(rawTransactions: MercadoPagoRaw
       }
     }
 
-    // Atualizar data da última sincronização
-    await db.integrationAccount.update({
-      where: { id: integrationAccountId },
-      data: { lastSyncAt: new Date() },
-    });
+    // Atualizar data da última sincronização se houver conta de integração vinculada
+    if (integrationAccountId) {
+      await db.integrationAccount.update({
+        where: { id: integrationAccountId },
+        data: { lastSyncAt: new Date() },
+      });
+    }
 
     // Disparar motor de conciliação automática após importação
     const reconResult = await runAutomaticReconciliationEngine();
@@ -173,28 +181,29 @@ export async function importExternalTransactions(rawTransactions: MercadoPagoRaw
 }
 
 /**
- * Buscar extrato via API do Mercado Pago e executar importação
+ * Pipeline Oficial do Relatório Dinheiro em Conta (Settlement Report - Assíncrono)
  */
 export async function syncMercadoPagoStatement(force: boolean = false) {
   const { workspaceId } = await requireAuthenticatedWorkspace();
 
   const account = await db.integrationAccount.findFirst({
-    where: { workspaceId, provider: "MERCADO_PAGO" },
+    where: { workspaceId, provider: "MERCADO_PAGO", status: "CONNECTED" },
+    orderBy: { lastValidatedAt: "desc" },
   });
 
-  if (!account || account.status !== "CONNECTED" || !account.encryptedCredentials) {
-    throw new Error("Integração não conectada ou sem credenciais válidas.");
+  if (!account || !account.encryptedCredentials) {
+    throw new Error("Nenhuma integração do Mercado Pago ativa ou conectada.");
   }
 
-  // Verificar cache de 5 minutos, a menos que seja force
+  // Cache de 5 minutos se não for forçado e já possuir sincronização recente
   const CACHE_MINUTES = 5;
   if (!force && account.lastSyncAt) {
     const now = new Date();
     const diffInMinutes = (now.getTime() - account.lastSyncAt.getTime()) / (1000 * 60);
     if (diffInMinutes < CACHE_MINUTES) {
-      return { 
-        success: true, 
-        cached: true, 
+      return {
+        success: true,
+        cached: true,
         message: "Sincronização recente (menos de 5 min). Retornando dados locais.",
         insertedCount: 0,
         updatedCount: 0,
@@ -204,15 +213,18 @@ export async function syncMercadoPagoStatement(force: boolean = false) {
     }
   }
 
-  // 1. Criar SyncRun como PENDING
+  // 1. Criar ou verificar SyncRun em andamento (Pipeline Assíncrono)
+  const beginDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const endDate = new Date();
+
   const syncRun = await db.syncRun.create({
     data: {
       workspaceId,
       integrationAccountId: account.id,
       source: "MERCADO_PAGO_API",
       status: "PROCESSING",
-      beginDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // Últimos 30 dias
-      endDate: new Date(),
+      beginDate,
+      endDate,
       startedAt: new Date(),
     },
   });
@@ -220,15 +232,49 @@ export async function syncMercadoPagoStatement(force: boolean = false) {
   try {
     const credentials = parseMercadoPagoCredentials(account.encryptedCredentials);
     const client = new MercadoPagoReportsClient(credentials.accessToken);
-    const rawTxs = await client.fetchAccountStatement();
 
-    const importResult = await importExternalTransactions(rawTxs, account.id);
-    
-    if (!importResult.success) {
-      throw new Error(importResult.error || "Erro desconhecido na importação");
+    // 2. Solicitar geração assíncrona do Settlement Report
+    const requestRes = await client.requestSettlementReport(beginDate, endDate);
+
+    if (requestRes.reportId || requestRes.fileFileName) {
+      await db.syncRun.update({
+        where: { id: syncRun.id },
+        data: {
+          remoteReportId: requestRes.reportId,
+          remoteFileName: requestRes.fileFileName,
+        },
+      });
     }
 
-    // 2. Atualizar SyncRun para SUCCESS
+    // 3. Consultar relatórios de liquidação disponíveis
+    const reports = await client.listSettlementReports();
+    const readyReport = reports.find((r) => r.status === "READY");
+
+    let rawTxs: MercadoPagoRawTransaction[] = [];
+
+    if (readyReport && readyReport.downloadUrl) {
+      const fileRes = await fetch(readyReport.downloadUrl, {
+        headers: { Authorization: `Bearer ${credentials.accessToken}` },
+      });
+      if (fileRes.ok) {
+        const csvContent = await fileRes.text();
+        rawTxs = client.parseSettlementReportCsv(csvContent);
+      }
+    }
+
+    // 4. Executar importação oficial dos dados do extrato de liquidação
+    const importResult = await importExternalTransactions(
+      rawTxs,
+      account.id,
+      "MERCADO_PAGO_API",
+      "MERCADO_PAGO"
+    );
+
+    if (!importResult.success) {
+      throw new Error(importResult.error || "Erro ao importar transações do relatório");
+    }
+
+    // 5. Finalizar SyncRun como SUCCESS e atualizar lastSyncAt na conta
     await db.syncRun.update({
       where: { id: syncRun.id },
       data: {
@@ -240,51 +286,45 @@ export async function syncMercadoPagoStatement(force: boolean = false) {
       },
     });
 
+    await db.integrationAccount.update({
+      where: { id: account.id },
+      data: { lastSyncAt: new Date() },
+    });
+
     return importResult;
   } catch (error: any) {
-    console.error("Erro na sincronização de extrato do Mercado Pago:", error);
-    
-    // 3. Atualizar SyncRun para FAILED
+    console.error("Erro no pipeline de Dinheiro em Conta do Mercado Pago:", error);
+
     await db.syncRun.update({
       where: { id: syncRun.id },
       data: {
         status: "FAILED",
         finishedAt: new Date(),
-        errorCode: "SYNC_ERROR",
-        errorMessage: error.message || "Erro desconhecido",
+        errorCode: "SETTLEMENT_SYNC_ERROR",
+        errorMessage: error.message || "Erro na geração ou download do relatório",
       },
     });
 
-    return { success: false, error: error.message };
+    return { success: false, error: error.message || "Falha na sincronização assíncrona." };
   }
 }
 
+/**
+ * Importar extrato manual via CSV sem criar IntegrationAccount Mercado Pago fake
+ */
 export async function importCsvExternalTransactions(rawTransactions: MercadoPagoRawTransaction[]) {
   try {
     const { workspaceId } = await requireAuthenticatedWorkspace();
-    
-    // Obter ou registrar conta de integração para upload manual
-    let manualIntegration = await db.integrationAccount.findFirst({
-      where: { workspaceId, provider: "MERCADO_PAGO", environment: "CSV_IMPORT" },
-    });
 
-    if (!manualIntegration) {
-      manualIntegration = await db.integrationAccount.create({
-        data: {
-          workspaceId,
-          provider: "MERCADO_PAGO", // Mantém MERCADO_PAGO mas source será CSV_IMPORT
-          environment: "SANDBOX", // Placeholder, environment shouldn't be CSV_IMPORT since it violates Enum if validated strictly
-          displayName: "Importação Manual (CSV)",
-          status: "CONNECTED",
-        },
-      });
+    if (!rawTransactions || rawTransactions.length === 0) {
+      return { success: false, error: "Nenhuma transação para importar." };
     }
 
-    // Criar SyncRun para CSV
+    // Registrar SyncRun para auditoria de importação CSV sem vínculo de conta externa Mercado Pago
     const syncRun = await db.syncRun.create({
       data: {
         workspaceId,
-        integrationAccountId: manualIntegration.id,
+        integrationAccountId: null,
         source: "CSV_IMPORT",
         status: "PROCESSING",
         beginDate: new Date(),
@@ -293,7 +333,12 @@ export async function importCsvExternalTransactions(rawTransactions: MercadoPago
       },
     });
 
-    const importResult = await importExternalTransactions(rawTransactions, manualIntegration.id);
+    const importResult = await importExternalTransactions(
+      rawTransactions,
+      null, // integrationAccountId is null for CSV
+      "CSV_IMPORT",
+      null  // provider is null for CSV
+    );
 
     await db.syncRun.update({
       where: { id: syncRun.id },
@@ -309,7 +354,7 @@ export async function importCsvExternalTransactions(rawTransactions: MercadoPago
 
     return importResult;
   } catch (error: any) {
-    console.error("Erro na importação manual:", error);
+    console.error("Erro na importação manual via CSV:", error);
     return { success: false, error: error.message };
   }
 }
@@ -422,16 +467,7 @@ export async function getReconciliationSummary(period: string = "MONTHLY") {
     };
   } catch (error) {
     console.error("Erro ao buscar resumo de conciliação:", error);
-    return {
-      totalCount: 0,
-      matchedCount: 0,
-      suggestedCount: 0,
-      unmatchedCount: 0,
-      totalCreditCents: 0,
-      totalDebitCents: 0,
-      totalFeeCents: 0,
-      reconciliationPercentage: 0,
-    };
+    throw new Error(`Falha ao consultar resumo de conciliação: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
