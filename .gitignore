@@ -45,3 +45,21 @@ Thumbs.db
 /coverage/
 /.cache/
 *.zip
+
+# Arquivos de chaves e certificados
+*.pem
+*.key
+*.cert
+*.cer
+*.p12
+*.pfx
+
+# Arquivos temporários e scripts de teste locais
+temp_*
+check-*
+test-*
+*.tmp
+
+# Bancos de dados locais adicionais (Prisma SQLite etc)
+*.db
+*.db-journal
