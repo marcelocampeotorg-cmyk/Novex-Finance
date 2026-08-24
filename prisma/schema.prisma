@@ -203,6 +203,10 @@ model Workspace {
   attachments          Attachment[]
   auditLogs            AuditLog[]
   syncRuns             SyncRun[]
+  paymentIntentions    PaymentIntention[]
+  categoryRules        CategoryRule[]
+  whatsAppLogs         WhatsAppDeliveryLog[]
+  notificationEvents   NotificationEvent[]
 
   @@map("workspaces")
 }
@@ -273,6 +277,7 @@ model Category {
   children       Category[]        @relation("CategoryParent")
   financialItems FinancialItem[]
   ledgerEntries  LedgerEntry[]
+  categoryRules  CategoryRule[]
 
   @@map("categories")
 }
@@ -301,6 +306,7 @@ model FinancialItem {
   installments     Installment[]
   reconciliations  Reconciliation[]
   pixCharges       PixCharge[]
+  paymentIntentions PaymentIntention[]
 
   @@map("financial_items")
 }
@@ -323,6 +329,8 @@ model Installment {
   reconciliations    Reconciliation[]
   pixCharges         PixCharge[]
   ledgerEntries      LedgerEntry[]
+  paymentIntentions  PaymentIntention[]
+  whatsAppLogs       WhatsAppDeliveryLog[]
 
   @@map("installments")
 }
@@ -450,6 +458,7 @@ model PixCharge {
   integrationAccount IntegrationAccount @relation(fields: [integrationAccountId], references: [id], onDelete: Cascade)
   financialItem      FinancialItem      @relation(fields: [financialItemId], references: [id], onDelete: Cascade)
   installment        Installment        @relation(fields: [installmentId], references: [id], onDelete: Cascade)
+  whatsAppLogs       WhatsAppDeliveryLog[]
 
   @@map("pix_charges")
 }
@@ -545,4 +554,81 @@ model WebhookEvent {
 
   @@unique([provider, environment, eventId])
   @@map("webhook_events")
+}
+
+model PaymentIntention {
+  id                  String        @id @default(uuid())
+  workspaceId         String        @map("workspace_id")
+  financialItemId    String        @map("financial_item_id")
+  installmentId      String        @map("installment_id")
+  favoredName         String        @map("favored_name")
+  favoredPixKey       String        @map("favored_pix_key")
+  favoredPixKeyType   String        @map("favored_pix_key_type")
+  expectedAmountCents BigInt        @map("expected_amount_cents")
+  status              String        @default("WAITING") // WAITING, MATCHED, DIVERGENT, EXPIRED, CANCELED
+  txid                String?
+  brCodePayload       String?       @map("br_code_payload")
+  expiresAt           DateTime?     @map("expires_at")
+  createdAt           DateTime      @default(now()) @map("created_at")
+  updatedAt           DateTime      @updatedAt @map("updated_at")
+
+  workspace           Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  financialItem       FinancialItem @relation(fields: [financialItemId], references: [id], onDelete: Cascade)
+  installment         Installment   @relation(fields: [installmentId], references: [id], onDelete: Cascade)
+
+  @@map("payment_intentions")
+}
+
+model CategoryRule {
+  id              String    @id @default(uuid())
+  workspaceId     String    @map("workspace_id")
+  pattern         String
+  categoryId      String    @map("category_id")
+  confidenceScore Int       @default(80) @map("confidence_score")
+  source          String    @default("USER") // USER, SYSTEM
+  isEnabled       Boolean   @default(true) @map("is_enabled")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  category        Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, pattern])
+  @@map("category_rules")
+}
+
+model WhatsAppDeliveryLog {
+  id              String       @id @default(uuid())
+  workspaceId     String       @map("workspace_id")
+  recipientPhone  String       @map("recipient_phone")
+  chargeId        String?      @map("charge_id")
+  installmentId   String?      @map("installment_id")
+  messageType     String       @map("message_type")
+  remoteMessageId String?      @map("remote_message_id")
+  status          String       @default("SENT") // SENT, FAILED, DELIVERED
+  attemptCount    Int          @default(1) @map("attempt_count")
+  errorMessage    String?      @map("error_message")
+  sentAt          DateTime     @default(now()) @map("sent_at")
+  createdAt       DateTime     @default(now()) @map("created_at")
+
+  workspace       Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  pixCharge       PixCharge?   @relation(fields: [chargeId], references: [id], onDelete: SetNull)
+  installment     Installment? @relation(fields: [installmentId], references: [id], onDelete: SetNull)
+
+  @@map("whatsapp_delivery_logs")
+}
+
+model NotificationEvent {
+  id          String    @id @default(uuid())
+  workspaceId String    @map("workspace_id")
+  type        String    // PAYMENT_RECEIVED, DUPLICATE_WARNING, ACTION_REQUIRED, OVERDUE_WARNING, SYNC_FAILED
+  title       String
+  message     String
+  metadata    Json?
+  isRead      Boolean   @default(false) @map("is_read")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("notification_events")
 }

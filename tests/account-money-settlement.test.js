@@ -64,4 +64,7 @@ test("Governança: Ausencia de /v1/payments/search e scripts destrutivos no repo
 
   const scratchDir = path.join(__dirname, "../scratch");
   assert.strictEqual(fs.existsSync(scratchDir), false, "Diretorio scratch destrutivo nao deve existir no repositorio.");
+
+  const afazerPath = path.join(__dirname, "../afazer.md");
+  assert.strictEqual(fs.existsSync(afazerPath), false, "Arquivo afazer.md obsoleto nao deve existir na raiz do repositorio.");
 });

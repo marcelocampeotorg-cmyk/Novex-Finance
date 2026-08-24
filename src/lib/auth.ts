@@ -18,6 +18,21 @@ export const auth = betterAuth({
     enabled: true,
     autoSignIn: true,
   },
+  databaseHooks: {
+    user: {
+      create: {
+        before: async (user) => {
+          if (process.env.ALLOW_PUBLIC_SIGNUP === "false") {
+            const count = await db.user.count();
+            if (count > 0) {
+              throw new Error("Cadastro público desativado no ambiente de produção do NOVEX Finance.");
+            }
+          }
+          return { data: user };
+        },
+      },
+    },
+  },
   session: {
     expiresIn: 30 * 24 * 60 * 60, // 30 dias
     updateAge: 24 * 60 * 60, // 1 dia

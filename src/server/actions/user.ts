@@ -27,3 +27,15 @@ export async function changePassword(input: {
     return { success: false, error: error.message || "Senha atual incorreta ou erro interno." };
   }
 }
+
+export async function getUserProfile() {
+  try {
+    const session = await auth.api.getSession({ headers: await headers() });
+    if (!session?.user) {
+      return { success: false, email: null, name: null };
+    }
+    return { success: true, email: session.user.email, name: session.user.name };
+  } catch (err) {
+    return { success: false, email: null, name: null };
+  }
+}

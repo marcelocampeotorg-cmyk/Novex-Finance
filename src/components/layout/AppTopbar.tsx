@@ -49,7 +49,8 @@ export const AppTopbar: React.FC = () => {
         lastSyncAt: res.lastSyncAt || "",
         role: res.role || "MEMBER",
       });
-      window.location.reload(); // Atualiza toda a tela para refletir o novo saldo
+      const { notifyStoreChange } = await import("@/services/financial-store");
+      notifyStoreChange();
     } catch (e) {
       console.error(e);
     } finally {

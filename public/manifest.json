@@ -1,0 +1,17 @@
+{
+  "short_name": "NOVEX",
+  "name": "NOVEX Finance",
+  "icons": [
+    {
+      "src": "/brand/logo-novex-dark.svg",
+      "type": "image/svg+xml",
+      "sizes": "512x512 192x192 any"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#0B0E17",
+  "theme_color": "#06B6D4",
+  "display": "standalone",
+  "orientation": "portrait",
+  "scope": "/"
+}
