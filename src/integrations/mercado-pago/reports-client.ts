@@ -4,8 +4,14 @@ export interface MercadoPagoReportFile {
   createdDate: string | null;
   totalAmountCents: number;
   transactionCount: number;
-  downloadUrl?: string;
   status: "READY" | "PROCESSING" | "FAILED";
+}
+
+export interface MercadoPagoReportTask {
+  taskId: string;
+  status: "READY" | "PROCESSING" | "FAILED";
+  reportId?: string;
+  fileName?: string;
 }
 
 export interface MercadoPagoRawTransaction {
@@ -121,7 +127,7 @@ export class MercadoPagoReportsClient {
   async requestSettlementReport(
     beginDate?: Date,
     endDate?: Date
-  ): Promise<{ success: boolean; reportId?: string; fileFileName?: string; status?: string; error?: string }> {
+  ): Promise<{ success: boolean; taskId?: string; status?: string; error?: string }> {
     try {
       const begin = (beginDate || new Date(Date.now() - 30 * 24 * 3600 * 1000)).toISOString();
       const end = (endDate || new Date()).toISOString();
@@ -140,13 +146,11 @@ export class MercadoPagoReportsClient {
 
       if (response.status === 202 || response.ok) {
         const data = await response.json();
-        const reportId = data.id !== undefined && data.id !== null ? String(data.id) : undefined;
-        const fileFileName = data.file_name || undefined;
+        const taskId = data.id !== undefined && data.id !== null ? String(data.id) : undefined;
 
         return {
           success: true,
-          reportId,
-          fileFileName,
+          taskId,
           status: data.status || "PROCESSING",
         };
       }
@@ -162,12 +166,35 @@ export class MercadoPagoReportsClient {
     }
   }
 
+  async getSettlementReportTask(taskId: string): Promise<MercadoPagoReportTask> {
+    if (!taskId.trim()) throw new Error("taskId obrigatório.");
+    const response = await fetch(`https://api.mercadopago.com/v1/account/settlement_report/task/${encodeURIComponent(taskId)}`, {
+      headers: { Authorization: `Bearer ${this.accessToken}` },
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status} ao consultar task de settlement_report`);
+    const data = await response.json();
+    const rawStatus = String(data.status || "").toLowerCase();
+    const status = rawStatus === "processed" ? "READY" :
+      ["failed", "error", "cancelled"].includes(rawStatus) ? "FAILED" : "PROCESSING";
+    return {
+      taskId: String(data.id ?? taskId), status,
+      reportId: data.report_id != null ? String(data.report_id) : undefined,
+      fileName: data.file_name || undefined,
+    };
+  }
+
   /**
    * Busca relatórios Dinheiro em Conta gerados via endpoint oficial /search
    * GET https://api.mercadopago.com/v1/account/settlement_report/search
    */
-  async searchSettlementReports(): Promise<MercadoPagoReportFile[]> {
-    const response = await fetch("https://api.mercadopago.com/v1/account/settlement_report/search", {
+  async searchSettlementReports(filter: { id?: string; fileName?: string; beginDate?: Date; endDate?: Date }): Promise<MercadoPagoReportFile[]> {
+    if (!filter.id && !filter.fileName && !filter.beginDate && !filter.endDate) throw new Error("Filtro exato obrigatório para buscar settlement reports.");
+    const params = new URLSearchParams();
+    if (filter.id) params.set("id", filter.id);
+    if (filter.fileName) params.set("file_name", filter.fileName);
+    if (filter.beginDate) params.set("begin_date", filter.beginDate.toISOString());
+    if (filter.endDate) params.set("end_date", filter.endDate.toISOString());
+    const response = await fetch(`https://api.mercadopago.com/v1/account/settlement_report/search?${params}`, {
       headers: {
         Authorization: `Bearer ${this.accessToken}`,
       },
@@ -186,8 +213,7 @@ export class MercadoPagoReportsClient {
       createdDate: f.created_date || null,
       totalAmountCents: f.total_amount !== undefined ? Math.round(Number(f.total_amount) * 100) : 0,
       transactionCount: f.transaction_count || 0,
-      downloadUrl: f.download_url || undefined,
-      status: ["processed", "ready", "created"].includes(String(f.status || "").toLowerCase()) ? "READY" :
+      status: ["processed", "ready"].includes(String(f.status || "").toLowerCase()) ? "READY" :
         String(f.status || "").toLowerCase() === "failed" ? "FAILED" : "PROCESSING",
     }));
   }
@@ -263,7 +289,7 @@ export class MercadoPagoReportsClient {
     let rejectedCount = 0;
 
     const parseMonetaryValue = (valStr: string | undefined): number | null => {
-      if (!valStr || valStr.trim() === "") return 0;
+      if (valStr == null || valStr.trim() === "") return null;
       const cleanStr = valStr.replace(/\s/g, "").replace(",", ".");
       if (!/^-?\d+(\.\d+)?$/.test(cleanStr)) return null;
       const num = parseFloat(cleanStr);

@@ -67,7 +67,7 @@ export async function getFinancialItems(direction?: "PAYABLE" | "RECEIVABLE") {
         settledAmountCents: Number(inst.settledAmountCents),
         dueDate: inst.dueDate.toISOString(),
         status: inst.status,
-        uniqueReference: inst.uniqueReference || `NOVEX-REF-${inst.id.slice(0, 8)}`,
+        uniqueReference: inst.uniqueReference || undefined,
         pixKey: inst.selectedPixKey
           ? {
             id: inst.selectedPixKey.id,
@@ -408,8 +408,8 @@ export async function getOrCreatePaymentIntention(installmentId: string) {
 
     const favoredName = contact?.name?.trim();
     if (!favoredName) return { success: false, error: "Nome real do favorecido não cadastrado." };
-    const merchantCity = process.env.PIX_MERCHANT_CITY?.trim();
-    if (!merchantCity) return { success: false, error: "PIX_MERCHANT_CITY não configurada para gerar BR Code válido." };
+    const merchantCity = contact?.merchantCity?.trim();
+    if (!merchantCity) return { success: false, error: "Cidade real do favorecido não cadastrada." };
 
     // Procurar intenção de pagamento ativa existente
     const existingIntention = await db.paymentIntention.findFirst({
@@ -449,7 +449,8 @@ export async function getOrCreatePaymentIntention(installmentId: string) {
       txId: txid,
     });
 
-    const newIntention = await db.paymentIntention.create({
+    let newIntention;
+    try { newIntention = await db.paymentIntention.create({
       data: {
         workspaceId,
         financialItemId: inst.financialItemId,
@@ -463,7 +464,10 @@ export async function getOrCreatePaymentIntention(installmentId: string) {
         brCodePayload,
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       },
-    });
+    }); } catch (error: any) {
+      if (error?.code !== "P2002") throw error;
+      newIntention = await db.paymentIntention.findFirstOrThrow({ where: { workspaceId, installmentId: inst.id, status: "WAITING" } });
+    }
 
     return {
       success: true,

@@ -58,7 +58,7 @@ export function ReceivablePixChargeModal({
     stopPolling();
 
     try {
-      const res = await generateReceivablePixCharge({ installmentId, amountCents });
+      const res = await generateReceivablePixCharge({ installmentId });
       if (res.success) {
         setChargeData(res);
         if (res.isPaid) {

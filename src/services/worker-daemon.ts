@@ -1,8 +1,8 @@
 import { db } from "@/server/db";
-import { processActiveRecurrences } from "@/server/actions/recurrence";
-import { processNotificationAlerts } from "@/server/actions/notifications";
-import { runAutomaticReconciliationEngine } from "@/server/actions/reconciliation";
-import { syncMercadoPagoStatement } from "@/server/actions/transactions";
+import { processActiveRecurrencesForWorkspace } from "@/server/services/recurrence-service";
+import { processNotificationAlertsForWorkspace } from "@/server/services/notification-service";
+import { reconcileWorkspace } from "@/server/services/reconciliation-service";
+import { continueMercadoPagoSyncRun } from "@/server/services/transactions-service";
 import { INTERNAL_WORKER_CONTEXT } from "@/server/internal-context";
 import { discoverWorkspaceRecurrences } from "@/services/recurrence-discovery";
 
@@ -41,7 +41,7 @@ export class WorkerDaemonService {
       for (const ws of workspaces) {
         // 1. Processar regras de recorrência ativas do workspace
         try {
-          const recRes = await processActiveRecurrences(ws.id);
+          const recRes = await processActiveRecurrencesForWorkspace(ws.id);
           if (recRes.success && recRes.generatedCount) {
             totalRecurrences += recRes.generatedCount;
           }
@@ -56,7 +56,7 @@ export class WorkerDaemonService {
 
         // 2. Avaliar alertas de notificação do workspace
         try {
-          const alerts = await processNotificationAlerts(ws.id);
+          const alerts = await processNotificationAlertsForWorkspace(ws.id);
           totalAlerts += alerts.length;
         } catch (e: any) {
           console.warn(`[WorkerDaemon] Erro ao processar alertas para workspace ${ws.id}:`, e.message);
@@ -64,7 +64,7 @@ export class WorkerDaemonService {
 
         // 3. Executar motor de conciliação automática do workspace
         try {
-          const reconRes = await runAutomaticReconciliationEngine(INTERNAL_WORKER_CONTEXT, ws.id);
+          const reconRes = await reconcileWorkspace(INTERNAL_WORKER_CONTEXT, ws.id);
           if (reconRes.success && reconRes.autoMatchedCount) {
             totalReconciled += reconRes.autoMatchedCount;
           }
@@ -84,7 +84,7 @@ export class WorkerDaemonService {
 
           for (const syncRun of pendingSyncs) {
             console.log(`[WorkerDaemon] Retomando SyncRun ${syncRun.id} para workspace ${ws.id}...`);
-            await syncMercadoPagoStatement({
+            await continueMercadoPagoSyncRun({
               syncRunId: syncRun.id,
               integrationAccountId: syncRun.integrationAccountId,
               internalContext: INTERNAL_WORKER_CONTEXT,

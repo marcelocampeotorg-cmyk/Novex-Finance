@@ -24,8 +24,8 @@ import { formatCurrency, formatDate } from "@/lib/formatters";
 import { FinancialItemDTO, InstallmentDTO, BalanceSummaryDTO } from "@/types";
 import {
   ResponsiveContainer,
-  BarChart,
-  Bar,
+  AreaChart,
+  Area,
   XAxis,
   YAxis,
   Tooltip,
@@ -45,35 +45,29 @@ export default function DashboardPage() {
   const [debtorsCount, setDebtorsCount] = useState<number>(0);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [dashboardState, setDashboardState] = useState<"loading" | "error" | "success">("loading");
 
   const isSyncingRef = React.useRef(false);
 
-  const loadDashboard = async (forceSync: boolean = true) => {
+  const loadDashboard = async () => {
     if (isSyncingRef.current) return;
     isSyncingRef.current = true;
     setIsSyncing(true);
     setSyncError(null);
     try {
-      const { triggerMercadoPagoSync, getDashboardData } = await import("@/server/actions/workspace");
-
-      try {
-        const syncRes = await triggerMercadoPagoSync(forceSync);
-        if (!syncRes.success && "error" in syncRes && typeof syncRes.error === "string") {
-          setSyncError(syncRes.error);
-        }
-      } catch (syncErr: any) {
-        console.warn("Mercado Pago sync ignorado ou com erro:", syncErr?.message);
-      }
-
+      const { getDashboardData } = await import("@/server/actions/workspace");
       const res = await getDashboardData();
+      if (!res.success || !res.summary) throw new Error(res.error || "Falha ao carregar dados financeiros.");
       if (res.summary) setSummary(res.summary);
       if (res.chartData) setChartData(res.chartData);
       if (res.recentTransactions) setRecentTxs(res.recentTransactions);
       if (res.payables) setPayables(res.payables);
       if (typeof res.debtorsCount === "number") setDebtorsCount(res.debtorsCount);
+      setDashboardState("success");
     } catch (e) {
       console.error("Erro ao carregar dados do dashboard com auto-sync:", e);
       setSyncError("Erro de comunicação com o servidor.");
+      setDashboardState("error");
     } finally {
       setIsSyncing(false);
       isSyncingRef.current = false;
@@ -87,11 +81,11 @@ export default function DashboardPage() {
       }).catch(() => setMpConnected(false));
     });
 
-    loadDashboard(false);
+    loadDashboard();
 
     // Polling a cada 5 minutos em segundo plano
     const interval = setInterval(() => {
-      loadDashboard(false);
+      loadDashboard();
     }, 5 * 60 * 1000);
 
     return () => {
@@ -104,19 +98,9 @@ export default function DashboardPage() {
     setPaymentInstallment(inst);
   };
 
-  const displaySummary = summary || {
-    currentBalanceCents: 0,
-    projectedBalanceCents: 0,
-    totalPayableMonthCents: 0,
-    totalReceivableMonthCents: 0,
-    totalOverdueCents: 0,
-    totalDebtorsOwedCents: 0,
-    lastSyncAt: null,
-    syncSource: "CALCULADO" as const,
-    accountDisplayName: "-",
-    unresolvedTransactionsCount: 0,
-    uncategorizedCount: 0,
-  };
+  if (dashboardState === "error") return <div className="p-8 text-sm text-red-400">{syncError || "Não foi possível carregar os dados financeiros."}</div>;
+  if (dashboardState === "loading" || !summary) return <div className="p-8 text-sm text-novex-text-secondary">Carregando dados financeiros...</div>;
+  const displaySummary = summary;
 
   return (
     <div className="space-y-8 animate-in fade-in duration-300">
@@ -125,7 +109,12 @@ export default function DashboardPage() {
         description="Acompanhamento transparente do seu saldo, fluxo de caixa e conciliação financeira."
         actions={
           <button
-            onClick={() => loadDashboard(true)}
+            onClick={async () => {
+              setIsSyncing(true); setSyncError(null);
+              try { const { triggerMercadoPagoSync } = await import("@/server/actions/workspace"); const result = await triggerMercadoPagoSync(true); if (!result.success) throw new Error(("error" in result ? String(result.error) : "") || ("message" in result ? String(result.message) : "Falha ao solicitar atualização.")); await loadDashboard(); }
+              catch (error: any) { setSyncError(error.message || "Falha ao solicitar atualização."); }
+              finally { setIsSyncing(false); }
+            }}
             disabled={isSyncing}
             className={`flex items-center gap-2 text-xs px-3.5 py-2 rounded-lg border transition-all ${
               isSyncing
@@ -146,10 +135,10 @@ export default function DashboardPage() {
                 <AlertTriangle className="h-4 w-4 text-amber-400" />
                 <span className="font-semibold">
                   {displaySummary.syncSource === "DESCONECTADO"
-                    ? "Mercado Pago Desconectado"
+                    ? "Atualização pendente"
                     : syncError
                     ? `Falha no Sync (${syncError})`
-                    : "Não Sincronizado"}
+                    : "Atualização pendente"}
                 </span>
                 <RefreshCw className="h-3.5 w-3.5 ml-1 opacity-70 hover:opacity-100" />
               </>
@@ -157,7 +146,7 @@ export default function DashboardPage() {
               <>
                 <CheckCircle2 className="h-4 w-4 text-emerald-400" />
                 <span className="font-semibold">
-                  Sincronizado ({displaySummary.lastSyncAt ? formatDate(displaySummary.lastSyncAt) : "Pendente"})
+                  Última atualização: {displaySummary.lastSyncAt ? formatDate(displaySummary.lastSyncAt) : "pendente"}
                 </span>
                 <RefreshCw className="h-3.5 w-3.5 ml-1 opacity-70 hover:opacity-100" />
               </>
@@ -169,7 +158,7 @@ export default function DashboardPage() {
       {/* Grid de Cards Métricos Principais */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         <MetricCard
-          title="Saldo Atual"
+          title="Seu dinheiro"
           amountCents={displaySummary.currentBalanceCents}
           overrideText={
             displaySummary.syncSource === "DESCONECTADO" || !displaySummary.lastSyncAt
@@ -178,8 +167,8 @@ export default function DashboardPage() {
           }
           subtitle={
             displaySummary.syncSource === "SINCRONIZADO"
-              ? "Sincronizado via Dinheiro em Conta"
-              : "Conexão pendente"
+              ? displaySummary.balanceDescription || "Movimentação líquida confirmada"
+              : "Atualização pendente"
           }
           icon={Wallet}
           variant="cyan"
@@ -224,15 +213,15 @@ export default function DashboardPage() {
           </div>
           <div className="flex-1">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-novex-text-primary">Status Financeiro do Workspace</h3>
+              <h3 className="text-sm font-bold text-novex-text-primary">Seus próximos pagamentos</h3>
               <span className="text-xs font-bold text-emerald-400">
                 {formatCurrency(displaySummary.currentBalanceCents)}
               </span>
             </div>
             <p className="text-xs text-novex-text-secondary mt-1">
-              {payables.length > 0
-                ? "Existem contas cadastradas prontas para acompanhamento."
-                : "Nenhuma conta em atraso no momento. Clique em 'Nova Conta' para cadastrar seu primeiro lançamento real."}
+              {displaySummary.totalOverdueCents > 0
+                ? `Há ${formatCurrency(displaySummary.totalOverdueCents)} em pagamentos vencidos.`
+                : "Não há valor vencido segundo a consulta financeira atual."}
             </p>
             {payables.length > 0 && payables[0]?.installments?.[0] && (
               <button
@@ -261,7 +250,7 @@ export default function DashboardPage() {
             </p>
           </div>
           <a
-            href="/devedores"
+            href="/contas-a-receber"
             className="mt-4 flex items-center justify-between text-xs font-semibold text-novex-cyan hover:underline"
           >
             <span>Ver detalhes de cobrança</span>
@@ -283,7 +272,7 @@ export default function DashboardPage() {
 
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#2A354D" vertical={false} />
                 <XAxis dataKey="month" stroke="#94A3B8" fontSize={12} tickLine={false} />
                 <YAxis stroke="#94A3B8" fontSize={12} tickLine={false} />
@@ -298,9 +287,9 @@ export default function DashboardPage() {
                   formatter={(value: any) => [`R$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`, ""]}
                 />
                 <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "10px" }} />
-                <Bar dataKey="entradas" fill="#10B981" radius={[4, 4, 0, 0]} name="Entradas" />
-                <Bar dataKey="saídas" fill="#EF4444" radius={[4, 4, 0, 0]} name="Saídas" />
-              </BarChart>
+                <Area type="monotone" dataKey="entradas" stroke="#10B981" fill="#10B98133" name="Entradas" />
+                <Area type="monotone" dataKey="saídas" stroke="#EF4444" fill="#EF444433" name="Saídas" />
+              </AreaChart>
             </ResponsiveContainer>
           </div>
         </div>

@@ -5,7 +5,7 @@ export type InstallmentStatus = "SCHEDULED" | "PARTIAL" | "SETTLED" | "OVERDUE" 
 export type ReconciliationStatus = "UNMATCHED" | "SUGGESTED" | "MATCHED" | "IGNORED" | "REVERSED";
 export type TransactionDirection = "CREDIT" | "DEBIT";
 export type ContactType = "PERSON" | "COMPANY";
-export type PixKeyType = "CPF" | "CNPJ" | "EMAIL" | "PHONE";
+export type PixKeyType = "CPF" | "CNPJ" | "EMAIL" | "PHONE" | "RANDOM";
 
 export interface PixKeyDTO {
   id: string;
@@ -116,5 +116,6 @@ export interface BalanceSummaryDTO {
   accountDisplayName: string;
   unresolvedTransactionsCount: number;
   uncategorizedCount: number;
+  balanceDescription?: string;
   isOutdated?: boolean;
 }

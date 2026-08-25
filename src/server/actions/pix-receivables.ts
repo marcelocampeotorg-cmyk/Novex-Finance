@@ -1,16 +1,15 @@
 "use server";
 
-import crypto from "node:crypto";
 import { z } from "zod";
 import { db } from "@/server/db";
 import { revalidatePath } from "next/cache";
 import { requireAuthenticatedWorkspace } from "@/server/auth-context";
 import { decryptCredentials, parseMercadoPagoCredentials } from "@/lib/server/credentials-crypto";
 import { createPixOrder, getOrderById } from "@/integrations/mercado-pago/orders-client";
+import { assertReceivableDirection, getFixedChargeAmount, getPixChargeIdempotencyKey } from "@/domain/pix-receivable";
 
 const generateChargeSchema = z.object({
   installmentId: z.string().min(1),
-  amountCents: z.number().positive().optional(),
 });
 
 export interface PixChargeStatusResult {
@@ -28,9 +27,10 @@ export interface PixChargeStatusResult {
   debtorName?: string;
   title?: string;
   error?: string;
+  remoteCheckError?: string;
 }
 
-import { getActiveMercadoPagoIntegration } from "@/server/actions/integrations";
+import { getActiveMercadoPagoIntegrationForWorkspace } from "@/server/services/mercado-pago-integration";
 
 /**
  * Gera uma Cobrança Pix via Orders API para uma Parcela de Conta a Receber.
@@ -38,7 +38,6 @@ import { getActiveMercadoPagoIntegration } from "@/server/actions/integrations";
  */
 export async function generateReceivablePixCharge(input: {
   installmentId: string;
-  amountCents?: number;
 }): Promise<PixChargeStatusResult> {
   const context = await requireAuthenticatedWorkspace();
 
@@ -66,7 +65,7 @@ export async function generateReceivablePixCharge(input: {
       },
       pixCharges: {
         where: {
-          status: "PENDING",
+          status: { in: ["CREATING", "PENDING", "ACTION_REQUIRED", "FAILED"] },
         },
         orderBy: {
           createdAt: "desc",
@@ -85,12 +84,14 @@ export async function generateReceivablePixCharge(input: {
   }
 
   // 2. REGRA DE SEGURANÇA EXPLICITA: Apenas Contas a Receber (RECEIVABLE)
-  if (installment.financialItem.direction !== "RECEIVABLE") {
+  try {
+    assertReceivableDirection(installment.financialItem.direction);
+  } catch (error: any) {
     return {
       success: false,
       status: "FAILED",
       isPaid: false,
-      error: "REGRA_DE_SEGURANCA: A Orders API só pode ser utilizada para Contas a Receber. Contas a Pagar não são permitidas neste marco.",
+      error: error.message,
     };
   }
 
@@ -103,7 +104,7 @@ export async function generateReceivablePixCharge(input: {
     return { success: false, status: "PAID", isPaid: true, error: "Esta parcela já está totalmente quitada." };
   }
 
-  const chargeAmountCents = parsed.data.amountCents ? Math.min(parsed.data.amountCents, remainingCents) : remainingCents;
+  const chargeAmountCents = getFixedChargeAmount(totalCents, settledCents);
 
   if (chargeAmountCents <= 0) {
     return { success: false, status: "FAILED", isPaid: false, error: "O valor da cobrança deve ser maior que zero." };
@@ -123,7 +124,7 @@ export async function generateReceivablePixCharge(input: {
   // 5. Verificar integração ativa com Mercado Pago (Regra 23: Resolver dinâmico da integração ativa)
   let integration;
   try {
-    integration = await getActiveMercadoPagoIntegration(context.workspaceId);
+    integration = await getActiveMercadoPagoIntegrationForWorkspace(context.workspaceId);
   } catch (e: any) {
     return {
       success: false,
@@ -135,7 +136,7 @@ export async function generateReceivablePixCharge(input: {
 
   // 6. Verificar se já existe uma cobrança PENDING válida reutilizável
   const existingPending = installment.pixCharges[0];
-  if (existingPending && existingPending.qrCode && existingPending.expiresAt && existingPending.expiresAt > new Date()) {
+  if (existingPending && existingPending.status !== "CREATING" && existingPending.status !== "FAILED" && existingPending.qrCode && existingPending.expiresAt && existingPending.expiresAt > new Date()) {
     return {
       success: true,
       pixChargeId: existingPending.id,
@@ -161,13 +162,12 @@ export async function generateReceivablePixCharge(input: {
   }
 
   // 8. Chave de Idempotência Única e Determinística (Regra 24)
-  const uniqueHash = crypto.createHash("sha256").update(`${context.workspaceId}:${installment.id}:${chargeAmountCents}`).digest("hex").slice(0, 12);
-  const idempotencyKey = `nvx_idemp_${installment.id}_${uniqueHash}`;
+  const idempotencyKey = getPixChargeIdempotencyKey(context.workspaceId, installment.id, chargeAmountCents);
+  const uniqueHash = idempotencyKey.slice(-12);
   const externalReference = `NVX-REC-${installment.id.slice(0, 8)}-${uniqueHash}`;
 
   // 9. Criar Registro Local no Banco (Status CREATING)
-  const pixCharge = await db.pixCharge.create({
-    data: {
+  const pixCharge = existingPending || await db.pixCharge.create({ data: {
       workspaceId: context.workspaceId,
       integrationAccountId: integration.id,
       financialItemId: installment.financialItemId,
@@ -179,8 +179,7 @@ export async function generateReceivablePixCharge(input: {
       amountCents: BigInt(chargeAmountCents),
       currency: "BRL",
       status: "CREATING",
-    },
-  });
+    } });
 
   // 10. Chamar Mercado Pago Orders API
   const orderResult = await createPixOrder({
@@ -306,6 +305,9 @@ export async function getReceivablePixChargeStatus(input: { pixChargeId: string 
       const creds = parseMercadoPagoCredentials(pixCharge.integrationAccount.encryptedCredentials);
       accessToken = creds.accessToken;
       const remoteOrder = await getOrderById({ accessToken, orderId: pixCharge.externalOrderId });
+      if (!remoteOrder.success) {
+        return { success: false, status: pixCharge.status, isPaid: false, pixChargeId: pixCharge.id, remoteCheckError: remoteOrder.errorMessage || "Falha ao consultar Order." };
+      }
 
       if (remoteOrder.success && remoteOrder.isPaid) {
         if (!remoteOrder.paidAt || !remoteOrder.paymentId || remoteOrder.externalReference !== pixCharge.externalReference ||
@@ -386,6 +388,7 @@ export async function getReceivablePixChargeStatus(input: { pixChargeId: string 
       }
     } catch (e) {
       console.error("Erro ao consultar status da Order:", e);
+      return { success: false, status: pixCharge.status, isPaid: false, pixChargeId: pixCharge.id, error: "Falha de comunicação ao consultar status remoto." };
     }
   }
 
@@ -431,4 +434,3 @@ export async function getActivePixChargeForInstallment(input: { installmentId: s
     expiresAt: charge.expiresAt?.toISOString(),
   };
 }
-

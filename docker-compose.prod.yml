@@ -13,7 +13,8 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
       REDIS_URL: redis://redis:6379
       CREDENTIALS_ENCRYPTION_KEY_BASE64: ${CREDENTIALS_ENCRYPTION_KEY_BASE64}
-      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET obrigatorio}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:?NEXT_PUBLIC_APP_URL obrigatoria}
       WORKER_SECRET: ${WORKER_SECRET}
     depends_on:
       postgres:
@@ -21,7 +22,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/worker/run"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -39,7 +40,7 @@ services:
       - ./backups:/backups
       - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5

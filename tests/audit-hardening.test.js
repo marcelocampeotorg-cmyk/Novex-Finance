@@ -31,3 +31,33 @@ test("PWA: service worker limita cache a assets públicos estáticos", () => {
   assert.ok(!sw.includes('caches.match("/")'));
   assert.ok(fs.existsSync(path.join(__dirname, "../public/brand/novex_symbol_original.png")));
 });
+
+test("PWA: registro existe e PNGs do manifest têm dimensões reais", () => {
+  const registration = read("src/components/pwa/ServiceWorkerRegistration.tsx");
+  assert.ok(registration.includes('navigator.serviceWorker.register("/sw.js")'));
+  for (const [file, expected] of [["novex-icon-192.png", 192], ["novex-icon-512.png", 512]]) {
+    const bytes = fs.readFileSync(path.join(__dirname, "../public/brand", file));
+    assert.strictEqual(bytes.readUInt32BE(16), expected);
+    assert.strictEqual(bytes.readUInt32BE(20), expected);
+  }
+});
+
+test("Segurança: ações públicas não aceitam contexto interno ou workspace arbitrário", () => {
+  for (const file of ["transactions.ts", "reconciliation.ts", "notifications.ts", "recurrence.ts"]) {
+    const action = read(`src/server/actions/${file}`);
+    assert.ok(!action.includes("INTERNAL_WORKER_CONTEXT"));
+    assert.ok(!action.includes("targetWorkspaceId"));
+    assert.ok(!action.includes("integrationAccountId"));
+    assert.ok(!action.includes("syncRunId"));
+  }
+  const integrations = read("src/server/actions/integrations.ts");
+  assert.ok(!integrations.includes("getActiveMercadoPagoIntegration(workspaceId"));
+  const publicResolver = integrations.slice(
+    integrations.indexOf("export async function getActiveMercadoPagoIntegration()"),
+    integrations.indexOf("export async function getMercadoPagoIntegrationStatus()")
+  );
+  assert.ok(!publicResolver.includes("encryptedCredentials"));
+  const worker = read("src/services/worker-daemon.ts");
+  assert.ok(worker.includes("@/server/services/"));
+  assert.ok(!worker.includes("@/server/actions/"));
+});

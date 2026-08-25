@@ -2,7 +2,7 @@
 
 import { db } from "@/server/db";
 import { requireAuthenticatedWorkspace } from "@/server/auth-context";
-import { getActiveMercadoPagoIntegration } from "@/server/actions/integrations";
+import { getActiveMercadoPagoIntegrationForWorkspace } from "@/server/services/mercado-pago-integration";
 
 export type IntegrationAccountDTO = {
   id: string;
@@ -53,14 +53,19 @@ export async function getWorkspaceSummary() {
     const unmatchesCount = await db.externalTransaction.count({
       where: { workspaceId, reconciliations: { none: { status: "MATCHED" } } },
     });
+    const uncategorizedCount = await db.externalTransaction.count({
+      where: { workspaceId, ledgerEntries: { some: { categoryId: null } } },
+    });
 
-    const mpIntegration = await getActiveMercadoPagoIntegration(workspaceId);
+    let mpIntegration = null;
+    try { mpIntegration = await getActiveMercadoPagoIntegrationForWorkspace(workspaceId); } catch {}
 
     let currentBalanceCents = 0;
     let syncSource: "SINCRONIZADO" | "PENDENTE" | "DESCONECTADO" | "CALCULADO" = "CALCULADO";
     let accountDisplayName = "Conta Local";
     let lastSyncAt: string | null = null;
     let isOutdated = false;
+    let balanceDescription = "Saldo em reconciliação";
 
     if (mpIntegration) {
       accountDisplayName = mpIntegration.displayName || "Mercado Pago";
@@ -97,6 +102,21 @@ export async function getWorkspaceSummary() {
         if (tx.direction === "DEBIT") balance -= netVal;
       }
       currentBalanceCents = balance;
+      const coveredRuns = await db.syncRun.findMany({
+        where: { workspaceId, integrationAccountId: mpIntegration.id, status: { in: ["SUCCESS", "PARTIAL"] } },
+        orderBy: { beginDate: "asc" }, select: { beginDate: true, endDate: true },
+      });
+      let continuousStart: Date | null = null;
+      let continuousEnd: Date | null = null;
+      for (const run of coveredRuns) {
+        if (!continuousStart) { continuousStart = run.beginDate; continuousEnd = run.endDate; continue; }
+        if (continuousEnd && run.beginDate.getTime() <= continuousEnd.getTime() + 1000) {
+          if (run.endDate > continuousEnd) continuousEnd = run.endDate;
+        }
+      }
+      balanceDescription = continuousStart
+        ? `Movimentação líquida desde ${continuousStart.toLocaleDateString("pt-BR")}${continuousEnd && coveredRuns.some((run) => run.beginDate > continuousEnd!) ? " — cobertura com lacunas" : ""}`
+        : "Saldo em reconciliação";
     }
 
     const debtorContacts = await db.contact.findMany({
@@ -134,7 +154,8 @@ export async function getWorkspaceSummary() {
       syncSource,
       accountDisplayName,
       unresolvedTransactionsCount: unmatchesCount,
-      uncategorizedCount: unmatchesCount,
+      uncategorizedCount,
+      balanceDescription,
       isOutdated,
       role: context.role,
       workspaceName: context.workspaceName,

@@ -2,7 +2,8 @@
 const CACHE_NAME = "novex-static-v2";
 const ASSETS = [
   "/manifest.json",
-  "/brand/novex_symbol_original.png",
+  "/brand/novex-icon-192.png",
+  "/brand/novex-icon-512.png",
   "/brand/novex_logo_horizontal_original.png"
 ];
 

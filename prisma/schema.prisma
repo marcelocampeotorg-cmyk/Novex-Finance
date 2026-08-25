@@ -164,6 +164,7 @@ model SyncRun {
   beginDate            DateTime           @map("begin_date")
   endDate              DateTime           @map("end_date")
   remoteReportId       String?            @map("remote_report_id")
+  remoteTaskId         String?            @map("remote_task_id")
   remoteFileName       String?            @map("remote_file_name")
   startedAt            DateTime?          @map("started_at")
   finishedAt           DateTime?          @map("finished_at")
@@ -232,6 +233,7 @@ model Contact {
   document       String?
   email          String?
   phone          String?
+  merchantCity   String?         @map("merchant_city")
   isDebtor       Boolean         @default(false) @map("is_debtor")
   isPayee        Boolean         @default(false) @map("is_payee")
   notes          String?
@@ -613,6 +615,7 @@ model WhatsAppDeliveryLog {
   status          String       @default("SENT") // SENT, FAILED, DELIVERED
   attemptCount    Int          @default(1) @map("attempt_count")
   errorMessage    String?      @map("error_message")
+  dedupeKey       String       @unique @map("dedupe_key")
   sentAt          DateTime     @default(now()) @map("sent_at")
   createdAt       DateTime     @default(now()) @map("created_at")
 

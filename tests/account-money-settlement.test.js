@@ -93,3 +93,40 @@ test("Governança: Ausencia de /v1/payments/search e scripts destrutivos no repo
   const afazerPath = path.join(__dirname, "../afazer.md");
   assert.strictEqual(fs.existsSync(afazerPath), false, "Arquivo afazer.md obsoleto nao deve existir na raiz do repositorio.");
 });
+
+test("Account Money: criação retorna task id e task pending/processed usa endpoint exato", async () => {
+  const originalFetch = global.fetch;
+  const calls = [];
+  global.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (options.method === "POST") return { status: 202, ok: true, json: async () => ({ id: 741, status: "pending" }) };
+    if (String(url).endsWith("/task/741")) return { ok: true, status: 200, json: async () => ({ id: 741, status: "pending" }) };
+    return { ok: true, status: 200, json: async () => ({ id: 741, status: "processed", report_id: 9001, file_name: "settlement-9001.csv" }) };
+  };
+  try {
+    const client = new MercadoPagoReportsClient("APP_USR-VALID-TEST-TOKEN");
+    const created = await client.requestSettlementReport(new Date("2026-08-01T00:00:00Z"), new Date("2026-08-02T00:00:00Z"));
+    assert.strictEqual(created.taskId, "741");
+    assert.strictEqual((await client.getSettlementReportTask("741")).status, "PROCESSING");
+    global.fetch = async (url, options = {}) => {
+      calls.push({ url: String(url), options });
+      return { ok: true, status: 200, json: async () => ({ id: 741, status: "processed", report_id: 9001, file_name: "settlement-9001.csv" }) };
+    };
+    const ready = await client.getSettlementReportTask("741");
+    assert.deepStrictEqual(ready, { taskId: "741", status: "READY", reportId: "9001", fileName: "settlement-9001.csv" });
+    assert.ok(calls.some((call) => call.url.endsWith("/settlement_report/task/741")));
+  } finally { global.fetch = originalFetch; }
+});
+
+test("Account Money: search exige filtro e envia filtro oficial, sem catálogo global", async () => {
+  const originalFetch = global.fetch;
+  let requestedUrl = "";
+  global.fetch = async (url) => { requestedUrl = String(url); return { ok: true, status: 200, json: async () => ({ results: [] }) }; };
+  try {
+    const client = new MercadoPagoReportsClient("APP_USR-VALID-TEST-TOKEN");
+    await assert.rejects(() => client.searchSettlementReports({}), /Filtro exato obrigatório/);
+    await client.searchSettlementReports({ id: "9001", fileName: "settlement-9001.csv" });
+    assert.match(requestedUrl, /id=9001/);
+    assert.match(requestedUrl, /file_name=settlement-9001.csv/);
+  } finally { global.fetch = originalFetch; }
+});

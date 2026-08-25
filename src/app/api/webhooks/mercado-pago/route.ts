@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/server/db";
 import { decryptCredentials, parseMercadoPagoCredentials } from "@/lib/server/credentials-crypto";
 import { getOrderById } from "@/integrations/mercado-pago/orders-client";
+import { classifyFixedChargePayment } from "@/domain/pix-receivable";
 
 /**
  * Valida a assinatura HMAC-SHA256 do cabeçalho x-signature oficial da Orders API.
@@ -39,7 +40,8 @@ function verifyWebhookSignature(req: NextRequest, dataId: string): { valid: bool
   }
 
   // Validação de tolerância do timestamp (máximo 5 minutos)
-  const timestamp = parseInt(ts, 10);
+  const timestampRaw = Number(ts);
+  const timestamp = ts.length >= 13 ? Math.floor(timestampRaw / 1000) : Math.floor(timestampRaw);
   const now = Math.floor(Date.now() / 1000);
   if (isNaN(timestamp) || Math.abs(now - timestamp) > 300) {
     return { valid: false, reason: "Timestamp da assinatura fora da tolerância de 5 minutos." };
@@ -64,7 +66,8 @@ export async function POST(req: NextRequest) {
 
     // Identificar tipo de recurso (Tópico "order" obrigatório)
     const type = body.type || body.topic || searchParams.get("type") || searchParams.get("topic");
-    const dataId = String(body.data?.id || body.id || searchParams.get("data.id") || searchParams.get("id") || "");
+    const queryDataId = searchParams.get("data.id");
+    const dataId = String(queryDataId || "");
 
     if (!dataId) {
       return NextResponse.json({ error: "ID do recurso não informado" }, { status: 400 });
@@ -76,7 +79,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 1. Validar Assinatura (Exigida obrigatoriamente — sem dev bypass)
-    const sigVerification = verifyWebhookSignature(req, dataId);
+    const sigVerification = verifyWebhookSignature(req, dataId.toLowerCase());
 
     // Regra 30: Determinar ambiente antes de criar registro idempotente
     if (typeof body.live_mode !== "boolean") {
@@ -153,9 +156,9 @@ export async function POST(req: NextRequest) {
     if (!pixCharge) {
       await db.webhookEvent.update({
         where: { id: webhookEvent.id },
-        data: { status: "PROCESSED", lastErrorCode: "PIX_CHARGE_NOT_FOUND" },
+        data: { status: "RECEIVED", lastErrorCode: "PIX_CHARGE_NOT_FOUND_RETRY" },
       });
-      return NextResponse.json({ received: true, note: "Order não pertence a cobrança ativa do NOVEX." }, { status: 200 });
+      return NextResponse.json({ received: true, retry: true, note: "Cobrança ainda não associável; evento preservado para reprocessamento." }, { status: 202 });
     }
 
     if (pixCharge.status === "PAID") {
@@ -176,7 +179,7 @@ export async function POST(req: NextRequest) {
 
     if (remoteOrder.success && remoteOrder.isPaid) {
       if (!remoteOrder.paidAt || !remoteOrder.paymentId || remoteOrder.externalReference !== pixCharge.externalReference ||
-          remoteOrder.amountCents !== Number(pixCharge.amountCents)) {
+          classifyFixedChargePayment(Number(pixCharge.amountCents), remoteOrder.amountCents || 0) === "DIVERGENT") {
         await db.webhookEvent.update({ where: { id: webhookEvent.id }, data: { status: "FAILED", lastErrorCode: "INCOMPLETE_PAYMENT_EVIDENCE" } });
         return NextResponse.json({ received: true, processed: false, reason: "Evidência oficial incompleta ou divergente" }, { status: 202 });
       }

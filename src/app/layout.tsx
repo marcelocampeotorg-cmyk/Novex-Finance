@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { ServiceWorkerRegistration } from "@/components/pwa/ServiceWorkerRegistration";
 
 export const viewport: Viewport = {
   themeColor: "#06B6D4",
@@ -26,6 +27,7 @@ export default function RootLayout({
     <html lang="pt-BR">
       <body className="bg-novex-bg text-novex-text-primary antialiased">
         {children}
+        <ServiceWorkerRegistration />
       </body>
     </html>
   );

@@ -25,7 +25,7 @@ Correção: Removida a ação `refundPixCharge`, neutralizado o cliente de refun
 ### ERR-007 — Exposição de credenciais em Server Action getActiveMercadoPagoIntegration
 Status: RESOLVIDO  
 Resumo: `getActiveMercadoPagoIntegration` retornava `IntegrationAccount` do Prisma completa (com segredos) e aceitava workspaceId sem validação de sessão.  
-Correção: Adicionada validação de contexto com `requireAuthenticatedWorkspace` e retorno sanitizado utilizando o DTO `IntegrationAccountDTO`.
+Correção: O resolver completo foi movido para serviço `server-only`; a Server Action pública não aceita `workspaceId`, autentica a sessão e retorna somente DTO sanitizado, sem `encryptedCredentials`.
 
 ### ERR-008 — Duplicidade da Fonte da Verdade e localização de Skills
 Status: RESOLVIDO  
@@ -95,7 +95,7 @@ Correção: Atualizado o método para propagar exceções HTTP/rede, distinguind
 ### ERR-020 — Seleção de conta ativa dependente de ordenação por lastValidatedAt
 Status: RESOLVIDO
 Resumo: `getActiveMercadoPagoIntegration()` usava `orderBy: { lastValidatedAt: "desc" }` para definir a conta ativa.
-Correção: Atualizada a seleção para validar a presença de uma única conta conectada por ambiente, gerando erro em ambiguidade.
+Correção: O resolver interno único exige exatamente uma conta ativa e a migration `20260824000004_remaining_blockers` adiciona índice único parcial por workspace/provedor.
 
 ### ERR-021 — Relatório de implementação incompatível com o commit real 7a9cd92
 Status: EM_CORRECAO  
@@ -132,21 +132,21 @@ Status: IMPLEMENTADO — AGUARDA VALIDAÇÃO EXTERNA
 Resumo: `getEvolutionApiStatus` e `client.ts` devolviam a chave criptografada/decriptografada para o navegador ou usavam fallback `"42960010999"`.
 
 ### ERR-029 — Assets da PWA ausentes e Service Worker com estratégia de cache insegura
-Status: RESOLVIDO
+Status: IMPLEMENTADO — AGUARDA VALIDAÇÃO EXTERNA
 Resumo: `manifest.json` e `sw.js` apontavam para `/brand/logo-novex-dark.svg` inexistente e o Service Worker aplicava cache-first na raiz.
-Correção: Manifest passou a usar asset NOVEX existente; o service worker limita cache a assets públicos explícitos e exclui navegação/API.
+Correção: Manifest usa PNGs reais 192/512, o RootLayout registra `/sw.js` e o service worker limita cache a assets públicos explícitos e exclui navegação/API. Installability em navegador real ainda não foi comprovada.
 Teste de regressão: `tests/audit-hardening.test.js`.
 
 ### ERR-030 — Drift entre schema Prisma e migrations
-Status: RESOLVIDO
+Status: EM_CORRECAO
 Resumo: Campos e índices financeiros presentes no schema não existiam na migration de domínio.
 Correção: migration forward-only `20260824000003_audit_hardening`, sem editar migrations anteriores.
-Teste de regressão: `tests/audit-hardening.test.js`; fresh DB ainda depende de Docker/PostgreSQL disponível.
+Teste de regressão: `tests/audit-hardening.test.js`; `prisma migrate status` confirmou drift histórico local: `20260824_hardening_phase2`, `20260824000002_hardening_fix` e `20260824000003_hardening_final` constam no banco mas não no checkout. Nenhum reset/resolve foi executado; fresh DB permanece não comprovado.
 
 ### ERR-031 — Account Money continuava run arbitrário e aceitava fallbacks do provedor
 Status: IMPLEMENTADO — AGUARDA VALIDAÇÃO EXTERNA
 Resumo: `syncRunId` era ignorado; status `processed`, tipo obrigatório, zero líquido e payload bruto não eram tratados corretamente.
-Correção: continuação vinculada ao run/conta/workspace, parser fail-closed, status `processed` e `rawProviderData` preservado.
+Correção: `SyncRun` distingue task/report/file, acompanha exatamente `/task/{task-id}`, baixa somente `file_name`, usa search filtrado e parser fail-closed com zero legítimo distinto de campo ausente.
 Teste de regressão: `tests/account-money-settlement.test.js`; falta credencial real Mercado Pago.
 
 ### ERR-032 — Orders/webhook usavam status legado e criavam segundo ledger
@@ -158,7 +158,7 @@ Teste de regressão: `tests/pix-receivables.test.js`; falta sandbox oficial.
 ### ERR-033 — Evolution com segredo fixo, máscara sobrescrevível e teste financeiro falso
 Status: IMPLEMENTADO — AGUARDA VALIDAÇÃO EXTERNA
 Resumo: API key hardcoded, máscara regravável e teste com cliente/valor/Pix fictícios.
-Correção: configuração fail-closed, máscara rejeitada, campo vazio preserva segredo e teste envia somente mensagem neutra.
+Correção: configuração fail-closed, base URL validada, máscara rejeitada, campo vazio preserva segredo; cobrança pública recebe somente `pixChargeId`/estágio, recarrega os dados financeiros no servidor e usa chave de dedupe persistida. Teste manual permanece neutro.
 Teste de regressão: `tests/audit-hardening.test.js`; falta instância Evolution real.
 
 ### ERR-034 — Store financeiro paralelo e tipos Mock no runtime

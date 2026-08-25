@@ -11,6 +11,7 @@ import {
   maskAccessToken,
 } from "@/lib/server/credentials-crypto";
 import { validateAccessToken } from "@/integrations/mercado-pago/credentials-validator";
+import { getActiveMercadoPagoIntegrationForWorkspace } from "@/server/services/mercado-pago-integration";
 
 const saveCredentialsSchema = z.object({
   accessToken: z.string().min(10).max(512),
@@ -33,22 +34,14 @@ export interface IntegrationStatusResult {
 /**
  * Resolver único server-only para obter a integração ativa do Mercado Pago
  */
-export async function getActiveMercadoPagoIntegration(workspaceId: string) {
-  const account = await db.integrationAccount.findFirst({
-    where: {
-      workspaceId,
-      provider: "MERCADO_PAGO",
-      status: "CONNECTED",
-      isActive: true,
-    },
-    orderBy: { lastValidatedAt: "desc" },
-  });
-
-  if (!account || !account.encryptedCredentials) {
-    throw new Error("Nenhuma integração do Mercado Pago ativa ou conectada.");
-  }
-
-  return account;
+export async function getActiveMercadoPagoIntegration() {
+  const context = await requireAuthenticatedWorkspace();
+  const account = await getActiveMercadoPagoIntegrationForWorkspace(context.workspaceId);
+  return {
+    id: account.id, provider: account.provider, status: account.status, environment: account.environment,
+    displayName: account.displayName, lastSyncAt: account.lastSyncAt, lastValidatedAt: account.lastValidatedAt,
+    lastValidationErrorCode: account.lastValidationErrorCode,
+  };
 }
 
 /**
@@ -62,9 +55,8 @@ export async function getMercadoPagoIntegrationStatus(): Promise<IntegrationStat
     where: {
       workspaceId: context.workspaceId,
       provider: "MERCADO_PAGO",
-      status: { in: ["CONNECTED", "CONNECTING", "ERROR"] },
+      status: { in: ["CONNECTED", "CONNECTING", "ERROR"] }, isActive: true,
     },
-    orderBy: { updatedAt: "desc" },
   });
 
   if (!integration || !integration.encryptedCredentials || integration.status === "DISCONNECTED") {
@@ -255,9 +247,8 @@ export async function validateMercadoPagoConnection() {
     where: {
       workspaceId: context.workspaceId,
       provider: "MERCADO_PAGO",
-      status: { in: ["CONNECTED", "ERROR"] },
+      status: { in: ["CONNECTED", "ERROR"] }, isActive: true,
     },
-    orderBy: { updatedAt: "desc" },
   });
 
   if (!integration || !integration.encryptedCredentials) {
@@ -322,9 +313,8 @@ export async function disconnectMercadoPagoIntegration() {
     where: {
       workspaceId: context.workspaceId,
       provider: "MERCADO_PAGO",
-      status: { in: ["CONNECTED", "ERROR", "CONNECTING"] },
+      status: { in: ["CONNECTED", "ERROR", "CONNECTING"] }, isActive: true,
     },
-    orderBy: { updatedAt: "desc" },
   });
 
   if (!existing) {
@@ -420,6 +410,13 @@ export async function saveEvolutionApiCredentials(input: {
 }) {
   try {
     const context = await requireWorkspaceRole(["OWNER", "ADMIN"]);
+    let parsedBaseUrl: URL;
+    try { parsedBaseUrl = new URL(input.baseUrl.trim()); } catch { return { success: false, error: "Base URL inválida." }; }
+    const isLocal = ["localhost", "127.0.0.1", "evolution", "evoapicloud"].includes(parsedBaseUrl.hostname);
+    if (parsedBaseUrl.protocol !== "https:" && !(process.env.NODE_ENV !== "production" && parsedBaseUrl.protocol === "http:") && !isLocal) {
+      return { success: false, error: "Base URL deve usar HTTPS em produção." };
+    }
+    if (!["http:", "https:"].includes(parsedBaseUrl.protocol)) return { success: false, error: "Esquema de URL não permitido." };
 
     if (/[•*]{3,}/.test(input.apiKey)) {
       return { success: false, error: "A máscara da API key não pode ser salva como credencial." };
@@ -435,7 +432,7 @@ export async function saveEvolutionApiCredentials(input: {
     if (!apiKey) return { success: false, error: "API key da Evolution é obrigatória." };
 
     const credentialsPayload = JSON.stringify({
-      baseUrl: input.baseUrl.trim(),
+      baseUrl: parsedBaseUrl.toString().replace(/\/$/, ""),
       apiKey,
       instanceName: input.instanceName.trim(),
     });
