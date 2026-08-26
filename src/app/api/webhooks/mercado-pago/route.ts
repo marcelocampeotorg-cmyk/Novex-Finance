@@ -4,6 +4,7 @@ import { db } from "@/server/db";
 import { decryptCredentials, parseMercadoPagoCredentials } from "@/lib/server/credentials-crypto";
 import { getOrderById } from "@/integrations/mercado-pago/orders-client";
 import { classifyFixedChargePayment } from "@/domain/pix-receivable";
+import { settlePixChargeAtomic } from "@/server/services/pix-settlement-service";
 
 /**
  * Valida a assinatura HMAC-SHA256 do cabeçalho x-signature oficial da Orders API.
@@ -158,7 +159,7 @@ export async function POST(req: NextRequest) {
         where: { id: webhookEvent.id },
         data: { status: "RECEIVED", lastErrorCode: "PIX_CHARGE_NOT_FOUND_RETRY" },
       });
-      return NextResponse.json({ received: true, retry: true, note: "Cobrança ainda não associável; evento preservado para reprocessamento." }, { status: 202 });
+      return NextResponse.json({ error: "Cobrança ainda não registrada; aguardando retry do Mercado Pago." }, { status: 500 });
     }
 
     if (pixCharge.status === "PAID") {
@@ -185,64 +186,41 @@ export async function POST(req: NextRequest) {
       }
       const paidAt = new Date(remoteOrder.paidAt);
 
-      // BAIXA ATÔMICA DA PARCELA
-      await db.$transaction(async (tx) => {
-        const currentCharge = await tx.pixCharge.findUnique({ where: { id: pixCharge.id } });
-        const currentInstallment = await tx.installment.findUnique({ where: { id: pixCharge.installmentId } });
+      // BAIXA ATÔMICA DA PARCELA COM CLAIM EXCLUSIVO VIA SERVIÇO UNIFICADO (Correção L)
+      await settlePixChargeAtomic({
+        pixChargeId: pixCharge.id,
+        installmentId: pixCharge.installmentId,
+        workspaceId: pixCharge.workspaceId,
+        amountCents: Number(pixCharge.amountCents),
+        paidAt,
+        actorType: "WEBHOOK",
+        actorId: "MERCADO_PAGO_WEBHOOK",
+        externalOrderId: dataId,
+      });
 
-        if (!currentCharge || currentCharge.status === "PAID" || !currentInstallment || currentInstallment.status === "SETTLED") {
-          return;
-        }
-
-        await tx.pixCharge.update({
-          where: { id: pixCharge.id },
-          data: {
-            status: "PAID",
-            paidAt,
-            lastCheckedAt: new Date(),
-          },
-        });
-
-        const currentSettled = Number(currentInstallment.settledAmountCents);
-        const chargeAmount = Number(currentCharge.amountCents);
-        const totalAmount = Number(currentInstallment.amountCents);
-        const newSettled = currentSettled + chargeAmount;
-        const newStatus = newSettled >= totalAmount ? "SETTLED" : "PARTIAL";
-
-        await tx.installment.update({
-          where: { id: pixCharge.installmentId },
-          data: {
-            settledAmountCents: BigInt(newSettled),
-            status: newStatus,
-            settlementDate: paidAt,
-          },
-        });
-
-        await tx.webhookEvent.update({
+      await db.webhookEvent.update({
+        where: { id: webhookEvent.id },
+        data: { status: "PROCESSED", processedAt: new Date() },
+      });
+    } else if (!remoteOrder.success) {
+      // Correção J: Falha remota transitória NÃO marca PROCESSED — fica retryable
+      const isTransient = remoteOrder.errorCode === "TIMEOUT" || remoteOrder.errorCode === "NETWORK_ERROR" ||
+        (remoteOrder.errorCode?.startsWith("HTTP_5"));
+      if (isTransient) {
+        await db.webhookEvent.update({
           where: { id: webhookEvent.id },
-          data: {
-            status: "PROCESSED",
-            processedAt: new Date(),
-          },
+          data: { status: "RECEIVED", lastErrorCode: `REMOTE_TRANSIENT:${remoteOrder.errorCode}` },
         });
-
-        await tx.auditLog.create({
-          data: {
-            workspaceId: pixCharge.workspaceId,
-            actorType: "SYSTEM",
-            actorId: "MERCADO_PAGO_WEBHOOK",
-            action: "MP_PIX_WEBHOOK_SETTLED",
-            entityType: "PixCharge",
-            entityId: pixCharge.id,
-            metadata: {
-              orderId: dataId,
-              amountCents: chargeAmount,
-              installmentId: pixCharge.installmentId,
-            },
-          },
-        });
+        // Retornar 500 para induzir retry do Mercado Pago
+        return NextResponse.json({ error: "Falha transitória ao consultar Order" }, { status: 500 });
+      }
+      // Erro permanente (ex: HTTP_404) — marcar como FAILED, não PROCESSED
+      await db.webhookEvent.update({
+        where: { id: webhookEvent.id },
+        data: { status: "FAILED", lastErrorCode: `REMOTE_PERMANENT:${remoteOrder.errorCode}` },
       });
     } else {
+      // remoteOrder.success mas não isPaid — status legítimo, pode marcar PROCESSED
       await db.webhookEvent.update({
         where: { id: webhookEvent.id },
         data: { status: "PROCESSED" },

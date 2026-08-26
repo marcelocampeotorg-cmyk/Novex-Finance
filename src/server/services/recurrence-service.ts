@@ -1,8 +1,17 @@
-import "server-only";
+if (process.env.NODE_ENV !== "test") {
+  try { require("server-only"); } catch (e) {}
+}
 
-import { db } from "@/server/db";
-import { revalidatePath } from "next/cache";
-import { requireAuthenticatedWorkspace } from "@/server/auth-context";
+import { db } from "../db.ts";
+function safeRevalidatePath(path: string) {
+  try {
+    const { revalidatePath } = require("next/cache");
+    revalidatePath(path);
+  } catch (e) {
+    // Ignorado em testes unitários fora do runtime Next.js
+  }
+}
+import { requireAuthenticatedWorkspace } from "../auth-context.ts";
 
 export interface CreateRecurrenceInput {
   title: string;
@@ -46,9 +55,9 @@ export async function calculateNextRecurrenceDate(
   return next;
 }
 
-export async function getRecurrenceRules() {
+export async function getRecurrenceRules(targetWorkspaceId?: string) {
   try {
-    const { workspaceId } = await requireAuthenticatedWorkspace();
+    const workspaceId = targetWorkspaceId || (await requireAuthenticatedWorkspace()).workspaceId;
 
     const rules = await db.recurrenceRule.findMany({
       where: { workspaceId },
@@ -62,28 +71,34 @@ export async function getRecurrenceRules() {
       orderBy: { createdAt: "desc" },
     });
 
-    return rules.map((rule) => {
-      const sampleItem = rule.financialItems[0];
-      return {
-        id: rule.id,
-        title: sampleItem?.title || "Recorrência sem título",
-        description: sampleItem?.description || undefined,
-        direction: sampleItem?.direction || "PAYABLE",
-        amountCents: sampleItem ? Number(sampleItem.totalAmountCents) : 0,
-        frequency: rule.frequency,
-        interval: rule.interval,
-        dayOfMonth: rule.dayOfMonth || undefined,
-        startsAt: rule.startsAt.toISOString(),
-        endsAt: rule.endsAt ? rule.endsAt.toISOString() : undefined,
-        nextRunAt: rule.nextRunAt ? rule.nextRunAt.toISOString() : rule.startsAt.toISOString(),
-        active: rule.active,
-        contactName: sampleItem?.contact?.name || undefined,
-        categoryName: sampleItem?.category?.name || "Geral",
-      };
-    });
-  } catch (error) {
+    return {
+      success: true as const,
+      rules: rules.map((rule) => {
+        const sampleItem = rule.financialItems[0];
+        return {
+          id: rule.id,
+          title: sampleItem?.title || "Recorrência sem título",
+          description: sampleItem?.description || undefined,
+          direction: sampleItem?.direction || "PAYABLE",
+          amountCents: sampleItem ? Number(sampleItem.totalAmountCents) : 0,
+          frequency: rule.frequency,
+          interval: rule.interval,
+          dayOfMonth: rule.dayOfMonth || undefined,
+          startsAt: rule.startsAt.toISOString(),
+          endsAt: rule.endsAt ? rule.endsAt.toISOString() : undefined,
+          nextRunAt: rule.nextRunAt ? rule.nextRunAt.toISOString() : rule.startsAt.toISOString(),
+          active: rule.active,
+          contactName: sampleItem?.contact?.name || undefined,
+          categoryName: sampleItem?.category?.name || "Geral",
+        };
+      }),
+    };
+  } catch (error: any) {
     console.error("Erro ao buscar regras de recorrência:", error);
-    return [];
+    return {
+      success: false as const,
+      error: error?.message || String(error),
+    };
   }
 }
 
@@ -162,10 +177,10 @@ export async function createRecurrenceRule(input: CreateRecurrenceInput) {
         },
       });
 
-      revalidatePath("/recorrencias");
-      revalidatePath("/contas-a-pagar");
-      revalidatePath("/contas-a-receber");
-      revalidatePath("/");
+      safeRevalidatePath("/recorrencias");
+      safeRevalidatePath("/contas-a-pagar");
+      safeRevalidatePath("/contas-a-receber");
+      safeRevalidatePath("/");
       return { success: true, ruleId: rule.id };
     });
   } catch (error: any) {
@@ -216,55 +231,61 @@ export async function processActiveRecurrencesForWorkspace(targetWorkspaceId?: s
 
       const runDate = rule.nextRunAt || rule.startsAt;
 
-      // Contar quantas parcelas já foram geradas para incrementar a sequência
-      const existingItemsCount = await db.financialItem.count({
-        where: { recurrenceRuleId: rule.id },
-      });
+      try {
+        await db.$transaction(async (tx) => {
+          const existingItemsCount = await tx.financialItem.count({
+            where: { recurrenceRuleId: rule.id },
+          });
+          const sequenceNumber = existingItemsCount + 1;
 
-      const sequenceNumber = existingItemsCount + 1;
+          const newItem = await tx.financialItem.create({
+            data: {
+              workspaceId,
+              direction: templateItem.direction,
+              kind: "RECURRING",
+              title: templateItem.title,
+              description: templateItem.description,
+              contactId: templateItem.contactId,
+              categoryId: templateItem.categoryId,
+              totalAmountCents: templateItem.totalAmountCents,
+              startDate: runDate,
+              status: "ACTIVE",
+              recurrenceRuleId: rule.id,
+              scheduledOccurrenceAt: runDate,
+            },
+          });
 
-      // Criar nova ocorrência financeira
-      const newItem = await db.financialItem.create({
-        data: {
-          workspaceId,
-          direction: templateItem.direction,
-          kind: "RECURRING",
-          title: templateItem.title,
-          description: templateItem.description,
-          contactId: templateItem.contactId,
-          categoryId: templateItem.categoryId,
-          totalAmountCents: templateItem.totalAmountCents,
-          startDate: runDate,
-          status: "ACTIVE",
-          recurrenceRuleId: rule.id,
-        },
-      });
+          await tx.installment.create({
+            data: {
+              financialItemId: newItem.id,
+              sequence: sequenceNumber,
+              amountCents: templateItem.totalAmountCents,
+              dueDate: runDate,
+              status: "SCHEDULED",
+              uniqueReference: `REC-${rule.id.slice(0, 6)}-${sequenceNumber}`,
+            },
+          });
 
-      await db.installment.create({
-        data: {
-          financialItemId: newItem.id,
-          sequence: sequenceNumber,
-          amountCents: templateItem.totalAmountCents,
-          dueDate: runDate,
-          status: "SCHEDULED",
-          uniqueReference: `REC-${rule.id.slice(0, 6)}-${sequenceNumber}`,
-        },
-      });
-
-      // Atualizar data da próxima execução
-      const nextRunDate = await calculateNextRecurrenceDate(runDate, rule.frequency, rule.interval, rule.dayOfMonth || undefined);
-      await db.recurrenceRule.update({
-        where: { id: rule.id },
-        data: { nextRunAt: nextRunDate },
-      });
-
-      generatedCount++;
+          const nextRunDate = await calculateNextRecurrenceDate(runDate, rule.frequency, rule.interval, rule.dayOfMonth || undefined);
+          await tx.recurrenceRule.update({
+            where: { id: rule.id },
+            data: { nextRunAt: nextRunDate },
+          });
+        });
+        generatedCount++;
+      } catch (e: any) {
+        if (e.code === "P2002") {
+          console.log(`[RecurrenceService] Ocorrência para regra ${rule.id} em ${runDate.toISOString()} já criada por outro worker (idempotente).`);
+        } else {
+          throw e;
+        }
+      }
     }
 
-    revalidatePath("/recorrencias");
-    revalidatePath("/contas-a-pagar");
-    revalidatePath("/contas-a-receber");
-    revalidatePath("/");
+    safeRevalidatePath("/recorrencias");
+    safeRevalidatePath("/contas-a-pagar");
+    safeRevalidatePath("/contas-a-receber");
+    safeRevalidatePath("/");
 
     return { success: true, generatedCount };
   } catch (error: any) {
@@ -282,7 +303,7 @@ export async function toggleRecurrenceRule(ruleId: string, active: boolean) {
       data: { active },
     });
 
-    revalidatePath("/recorrencias");
+    safeRevalidatePath("/recorrencias");
     return { success: true };
   } catch (error: any) {
     console.error("Erro ao alterar status da recorrência:", error);
@@ -298,7 +319,7 @@ export async function deleteRecurrenceRule(ruleId: string) {
       where: { id: ruleId, workspaceId },
     });
 
-    revalidatePath("/recorrencias");
+    safeRevalidatePath("/recorrencias");
     return { success: true };
   } catch (error: any) {
     console.error("Erro ao deletar regra de recorrência:", error);

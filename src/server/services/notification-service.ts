@@ -192,8 +192,9 @@ export async function processNotificationAlertsForWorkspace(targetWorkspaceId?: 
  * Resolver de credenciais server-side da Evolution API
  */
 async function resolveEvolutionCredentials(workspaceId: string) {
+  // Correção N: Usar apenas integração CONNECTED + isActive=true
   const integration = await db.integrationAccount.findFirst({
-    where: { workspaceId, provider: "EVOLUTION_API", status: "CONNECTED" },
+    where: { workspaceId, provider: "EVOLUTION_API", status: "CONNECTED", isActive: true },
   });
 
   if (!integration || !integration.encryptedCredentials) {
@@ -256,6 +257,38 @@ export async function sendWhatsAppDebtorReminder(input: { pixChargeId: string; m
     const dedupeKey = `whatsapp:${workspaceId}:${charge.id}:${input.messageStage}`;
     const existing = await db.whatsAppDeliveryLog.findUnique({ where: { dedupeKey } });
     if (existing?.status === "SENT" || existing?.status === "DELIVERED") return { success: true, messageId: existing.remoteMessageId };
+
+    // Correção M: Claim persistente ANTES da chamada à Evolution
+    // Cria registro SENDING para impedir envio concorrente
+    let deliveryLog;
+    try {
+      deliveryLog = await db.whatsAppDeliveryLog.upsert({
+        where: { dedupeKey },
+        update: {
+          // Se já existe como FAILED, permite retry
+          status: existing?.status === "FAILED" ? "SENDING" : existing?.status || "SENDING",
+          attemptCount: { increment: 1 },
+        },
+        create: {
+          workspaceId,
+          recipientPhone: charge.installment.financialItem.contact.phone,
+          chargeId: charge.id,
+          installmentId: charge.installmentId,
+          messageType: input.messageStage,
+          dedupeKey,
+          status: "SENDING",
+        },
+      });
+      // Se outro processo já reclamou (SENDING/SENT/DELIVERED), abortar
+      if (deliveryLog.status !== "SENDING" && deliveryLog.status !== "FAILED") {
+        return { success: true, messageId: deliveryLog.remoteMessageId };
+      }
+    } catch (e: any) {
+      // P2002 unique conflict = outro processo já criou
+      if (e.code === "P2002") return { success: true, messageId: null };
+      throw e;
+    }
+
     const creds = await resolveEvolutionCredentials(workspaceId);
     const { evolutionAPIClient } = await import("@/integrations/evolution-api/client");
 
@@ -270,21 +303,16 @@ export async function sendWhatsAppDebtorReminder(input: { pixChargeId: string; m
       instanceName: creds.instanceName,
     });
 
-    // Regra 38: Registrar Log de Envio em whatsapp_delivery_logs
-    await db.whatsAppDeliveryLog.upsert({ where: { dedupeKey }, update: {
-        remoteMessageId: result.messageId || null, status: result.success ? "SENT" : "FAILED",
-        errorMessage: result.success ? null : result.error || "Falha no envio", attemptCount: { increment: 1 }, sentAt: new Date(),
-      }, create: {
-        workspaceId,
-        recipientPhone: charge.installment.financialItem.contact.phone,
-        chargeId: charge.id,
-        installmentId: charge.installmentId,
-        messageType: input.messageStage,
-        dedupeKey,
+    // Atualizar resultado final
+    await db.whatsAppDeliveryLog.update({
+      where: { dedupeKey },
+      data: {
         remoteMessageId: result.messageId || null,
         status: result.success ? "SENT" : "FAILED",
         errorMessage: result.success ? null : result.error || "Falha no envio",
-      } });
+        sentAt: result.success ? new Date() : undefined,
+      },
+    });
 
     return result;
   } catch (error: any) {

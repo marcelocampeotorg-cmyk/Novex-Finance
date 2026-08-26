@@ -83,10 +83,23 @@ export default function DashboardPage() {
 
     loadDashboard();
 
-    // Polling a cada 5 minutos em segundo plano
-    const interval = setInterval(() => {
-      loadDashboard();
-    }, 5 * 60 * 1000);
+    // Polling inteligente a cada 15 segundos em segundo plano
+    let lastKnownTimestamp = 0;
+    const interval = setInterval(async () => {
+      if (isSyncingRef.current) return;
+      try {
+        const { getWorkspaceLastUpdateTimestamp } = await import("@/server/actions/workspace");
+        const res = await getWorkspaceLastUpdateTimestamp();
+        if (res.success && res.timestamp > lastKnownTimestamp) {
+          if (lastKnownTimestamp !== 0) {
+            loadDashboard();
+          }
+          lastKnownTimestamp = res.timestamp;
+        }
+      } catch (e) {
+        // Falha silenciosa no polling em background
+      }
+    }, 15000);
 
     return () => {
       clearInterval(interval);

@@ -223,9 +223,18 @@ export async function continueMercadoPagoSyncRun(
     account = await getActiveMercadoPagoIntegrationForWorkspace(workspaceId);
   }
 
-  // Cache de 5 minutos se não for forçado e já possuir sincronização recente
+  // 1. Verificar se existe SyncRun em andamento (PROCESSING) ou criar novo
+  let syncRun = syncRunId ? await db.syncRun.findFirst({
+    where: { id: syncRunId, workspaceId, integrationAccountId: account.id, status: "PROCESSING" },
+  }) : await db.syncRun.findFirst({
+    where: { workspaceId, integrationAccountId: account.id, status: "PROCESSING" },
+    orderBy: { createdAt: "desc" },
+  });
+  if (syncRunId && !syncRun) throw new Error("SyncRun específico não encontrado ou não pertence à integração/workspace.");
+
+  // Cache de 5 minutos: impede criação de NOVO sync, mas NUNCA impede continuação de um existente
   const CACHE_MINUTES = 5;
-  if (!isForce && account.lastSyncAt) {
+  if (!syncRun && !isForce && account.lastSyncAt) {
     const now = new Date();
     const diffInMinutes = (now.getTime() - account.lastSyncAt.getTime()) / (1000 * 60);
     if (diffInMinutes < CACHE_MINUTES) {
@@ -240,15 +249,6 @@ export async function continueMercadoPagoSyncRun(
       };
     }
   }
-
-  // 1. Verificar se existe SyncRun em andamento (PROCESSING) ou criar novo
-  let syncRun = syncRunId ? await db.syncRun.findFirst({
-    where: { id: syncRunId, workspaceId, integrationAccountId: account.id, status: "PROCESSING" },
-  }) : await db.syncRun.findFirst({
-    where: { workspaceId, integrationAccountId: account.id, status: "PROCESSING" },
-    orderBy: { createdAt: "desc" },
-  });
-  if (syncRunId && !syncRun) throw new Error("SyncRun específico não encontrado ou não pertence à integração/workspace.");
 
   const beginDate = syncRun ? syncRun.beginDate : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   const endDate = syncRun ? syncRun.endDate : new Date();

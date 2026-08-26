@@ -187,7 +187,8 @@ export default function ConfiguracoesPage() {
     try {
       const res = await validateMercadoPagoConnection();
       if (res.success) {
-        setMpFeedback({ type: "success", msg: "Conexão de Sandbox testada e validada com sucesso!" });
+        const envLabel = mpStatus?.environment === "PRODUCTION" ? "Produção" : "Sandbox";
+        setMpFeedback({ type: "success", msg: `Conexão de ${envLabel} testada e validada com sucesso!` });
       } else {
         setMpFeedback({ type: "error", msg: res.errorMessage || "Falha ao testar a conexão com o Mercado Pago." });
       }
@@ -439,7 +440,7 @@ export default function ConfiguracoesPage() {
               <ShieldCheck className="h-5 w-5 text-emerald-400" />
               <div>
                 <h3 className="text-base font-bold text-novex-text-primary">Integração Mercado Pago</h3>
-                <span className="text-[11px] text-novex-text-muted">Credenciais do Desenvolvedor (Sandbox)</span>
+                <span className="text-[11px] text-novex-text-muted">Credenciais do Desenvolvedor ({mpStatus?.environment === "PRODUCTION" ? "Produção" : "Sandbox"})</span>
               </div>
             </div>
 
@@ -530,7 +531,7 @@ export default function ConfiguracoesPage() {
           <form onSubmit={handleConnectMercadoPago} className="space-y-4 text-xs pt-2">
             <div>
               <label className="font-semibold text-novex-text-secondary block mb-1">
-                Public Key (Chave Pública Sandbox)
+                Public Key (Chave Pública)
               </label>
               <input
                 type="text"
@@ -543,7 +544,7 @@ export default function ConfiguracoesPage() {
 
             <div>
               <label className="font-semibold text-novex-text-secondary block mb-1">
-                Access Token (Sandbox) *
+                Access Token *
               </label>
 
               <div className="relative">

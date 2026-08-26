@@ -14,6 +14,8 @@ export interface WorkerRunResult {
   notificationsResult?: { alertsCount: number };
   reconciliationResult?: { autoMatchedCount: number };
   resumedSyncRunsCount?: number;
+  partialSyncRunsCount?: number;
+  failedSyncRunsCount?: number;
   error?: string;
 }
 
@@ -37,6 +39,8 @@ export class WorkerDaemonService {
       let totalAlerts = 0;
       let totalReconciled = 0;
       let resumedSyncs = 0;
+      let partialCount = 0;
+      let failedCount = 0;
 
       for (const ws of workspaces) {
         // 1. Processar regras de recorrência ativas do workspace
@@ -73,23 +77,34 @@ export class WorkerDaemonService {
         }
 
         // 4. Continuar SyncRuns pendentes ou interrompidos (PROCESSING) do workspace (Regra 33)
+        // Correção B: Filtra apenas source MERCADO_PAGO_API para não enviar CSV_IMPORT ao pipeline MP
         try {
           const pendingSyncs = await db.syncRun.findMany({
             where: {
               workspaceId: ws.id,
               status: "PROCESSING",
+              source: "MERCADO_PAGO_API",
             },
             take: 5,
           });
 
           for (const syncRun of pendingSyncs) {
-            console.log(`[WorkerDaemon] Retomando SyncRun ${syncRun.id} para workspace ${ws.id}...`);
-            await continueMercadoPagoSyncRun({
-              syncRunId: syncRun.id,
-              integrationAccountId: syncRun.integrationAccountId,
-              internalContext: INTERNAL_WORKER_CONTEXT,
-            });
-            resumedSyncs++;
+            try {
+              console.log(`[WorkerDaemon] Retomando SyncRun ${syncRun.id} para workspace ${ws.id}...`);
+              const syncResult = await continueMercadoPagoSyncRun({
+                syncRunId: syncRun.id,
+                integrationAccountId: syncRun.integrationAccountId,
+                internalContext: INTERNAL_WORKER_CONTEXT,
+              });
+              // Correção C: Distinguir SUCCESS / PARTIAL / FAILED
+              if (syncResult && 'status' in syncResult && syncResult.status === 'PARTIAL') {
+                partialCount++;
+              }
+              resumedSyncs++;
+            } catch (syncErr: any) {
+              failedCount++;
+              console.error(`[WorkerDaemon] SyncRun ${syncRun.id} falhou:`, syncErr.message);
+            }
           }
         } catch (e: any) {
           console.warn(`[WorkerDaemon] Erro ao retomar SyncRuns para workspace ${ws.id}:`, e.message);
@@ -100,14 +115,19 @@ export class WorkerDaemonService {
         `[WorkerDaemon] Rotina finalizada com sucesso. Workspaces: ${workspaces.length}, Recorrências geradas: ${totalRecurrences}, Alertas ativos: ${totalAlerts}, Auto-conciliações: ${totalReconciled}, SyncRuns retomados: ${resumedSyncs}`
       );
 
+      // Correção C: success é false se houve falhas internas
+      const overallSuccess = failedCount === 0;
+
       return {
-        success: true,
+        success: overallSuccess,
         executedAt,
         processedWorkspacesCount: workspaces.length,
         recurrenceResult: { generatedCount: totalRecurrences },
         notificationsResult: { alertsCount: totalAlerts },
         reconciliationResult: { autoMatchedCount: totalReconciled },
         resumedSyncRunsCount: resumedSyncs,
+        partialSyncRunsCount: partialCount,
+        failedSyncRunsCount: failedCount,
       };
     } catch (err: any) {
       console.error("[WorkerDaemon] Erro durante execução da rotina de background:", err);

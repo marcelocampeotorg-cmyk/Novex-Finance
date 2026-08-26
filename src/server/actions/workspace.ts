@@ -32,33 +32,42 @@ export async function getWorkspaceSummary() {
       include: { financialItem: true },
     });
 
-    let totalPayableMonthCents = 0;
-    let totalReceivableMonthCents = 0;
+    // Correção G: Filtrar por mês corrente para métricas "no mês"
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+    let totalPayablePendingCents = 0;
+    let totalReceivablePendingCents = 0;
     let totalOverdueCents = 0;
 
     installments.forEach((inst: any) => {
       const remainingCents = Number(inst.amountCents - inst.settledAmountCents);
+      if (inst.status === "SETTLED" || inst.status === "CANCELED") return;
+      const inMonth = inst.dueDate >= monthStart && inst.dueDate <= monthEnd;
       if (inst.financialItem.direction === "PAYABLE") {
-        if (inst.status !== "SETTLED" && inst.status !== "CANCELED") {
-          totalPayableMonthCents += remainingCents;
-          if (inst.dueDate < now) totalOverdueCents += remainingCents;
-        }
+        if (inMonth) totalPayablePendingCents += remainingCents;
+        if (inst.dueDate < now) totalOverdueCents += remainingCents;
       } else {
-        if (inst.status !== "SETTLED" && inst.status !== "CANCELED") {
-          totalReceivableMonthCents += remainingCents;
-        }
+        if (inMonth) totalReceivablePendingCents += remainingCents;
       }
     });
 
+    // Correção I: IGNORED é decisão encerrada, não é unresolved
     const unmatchesCount = await db.externalTransaction.count({
-      where: { workspaceId, reconciliations: { none: { status: "MATCHED" } } },
+      where: { workspaceId, reconciliations: { none: { status: { in: ["MATCHED", "IGNORED"] } } } },
     });
     const uncategorizedCount = await db.externalTransaction.count({
       where: { workspaceId, ledgerEntries: { some: { categoryId: null } } },
     });
 
     let mpIntegration = null;
-    try { mpIntegration = await getActiveMercadoPagoIntegrationForWorkspace(workspaceId); } catch {}
+    try {
+      mpIntegration = await getActiveMercadoPagoIntegrationForWorkspace(workspaceId);
+    } catch (e: any) {
+      if (!e.message?.includes("Nenhuma integração") && !e.message?.includes("Configuração inválida")) {
+        throw e;
+      }
+    }
 
     let currentBalanceCents = 0;
     let syncSource: "SINCRONIZADO" | "PENDENTE" | "DESCONECTADO" | "CALCULADO" = "CALCULADO";
@@ -102,8 +111,9 @@ export async function getWorkspaceSummary() {
         if (tx.direction === "DEBIT") balance -= netVal;
       }
       currentBalanceCents = balance;
+      // Correção D/E: Coverage usa SOMENTE SUCCESS, não PARTIAL
       const coveredRuns = await db.syncRun.findMany({
-        where: { workspaceId, integrationAccountId: mpIntegration.id, status: { in: ["SUCCESS", "PARTIAL"] } },
+        where: { workspaceId, integrationAccountId: mpIntegration.id, status: "SUCCESS" },
         orderBy: { beginDate: "asc" }, select: { beginDate: true, endDate: true },
       });
       let continuousStart: Date | null = null;
@@ -114,19 +124,20 @@ export async function getWorkspaceSummary() {
           if (run.endDate > continuousEnd) continuousEnd = run.endDate;
         }
       }
+      // Correção F: Semântica correta — movimentação líquida conhecida, não saldo absoluto
       balanceDescription = continuousStart
-        ? `Movimentação líquida desde ${continuousStart.toLocaleDateString("pt-BR")}${continuousEnd && coveredRuns.some((run) => run.beginDate > continuousEnd!) ? " — cobertura com lacunas" : ""}`
-        : "Saldo em reconciliação";
+        ? `Movimentação líquida conhecida desde ${continuousStart.toLocaleDateString("pt-BR")}${continuousEnd && coveredRuns.some((run) => run.beginDate > continuousEnd!) ? " — cobertura com lacunas" : ""}`
+        : "Movimentação líquida em reconciliação";
     }
 
     const debtorContacts = await db.contact.findMany({
       where: { workspaceId, isDebtor: true, deletedAt: null },
       select: { id: true }
     });
+    // Correção H: totalDebtorsOwedCents = amount - settled (dívida parcial real)
     let totalDebtorsOwedCents = 0;
     if (debtorContacts.length > 0) {
-      const debtorItems = await db.installment.aggregate({
-        _sum: { amountCents: true },
+      const debtorInstallments = await db.installment.findMany({
         where: {
           financialItem: {
             workspaceId,
@@ -136,18 +147,22 @@ export async function getWorkspaceSummary() {
           },
           status: { notIn: ["SETTLED", "CANCELED"] },
         },
+        select: { amountCents: true, settledAmountCents: true },
       });
-      totalDebtorsOwedCents = Number(debtorItems._sum.amountCents) || 0;
+      for (const di of debtorInstallments) {
+        totalDebtorsOwedCents += Number(di.amountCents - di.settledAmountCents);
+      }
     }
 
-    const projectedBalanceCents = currentBalanceCents + totalReceivableMonthCents - totalPayableMonthCents;
+    // Correção F: Projeção é fluxo projetado, não saldo absoluto
+    const projectedFlowCents = currentBalanceCents + totalReceivablePendingCents - totalPayablePendingCents;
 
     return {
       success: true as const,
       currentBalanceCents,
-      projectedBalanceCents,
-      totalPayableMonthCents,
-      totalReceivableMonthCents,
+      projectedBalanceCents: projectedFlowCents,
+      totalPayableMonthCents: totalPayablePendingCents,
+      totalReceivableMonthCents: totalReceivablePendingCents,
       totalOverdueCents,
       totalDebtorsOwedCents,
       lastSyncAt,
@@ -294,5 +309,37 @@ export async function triggerMercadoPagoSync(force: boolean = false) {
     return await syncMercadoPagoStatement(force);
   } catch (error: any) {
     return { success: false, error: error?.message || String(error) };
+  }
+}
+
+export async function getWorkspaceLastUpdateTimestamp() {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+    const lastTx = await db.externalTransaction.findFirst({
+      where: { workspaceId },
+      orderBy: { occurredAt: "desc" },
+      select: { occurredAt: true },
+    });
+    const lastInst = await db.installment.findFirst({
+      where: { financialItem: { workspaceId } },
+      orderBy: { updatedAt: "desc" },
+      select: { updatedAt: true },
+    });
+    const lastRun = await db.syncRun.findFirst({
+      where: { workspaceId },
+      orderBy: { updatedAt: "desc" },
+      select: { updatedAt: true },
+    });
+
+    const dates = [
+      lastTx?.occurredAt,
+      lastInst?.updatedAt,
+      lastRun?.updatedAt
+    ].filter(Boolean) as Date[];
+
+    if (dates.length === 0) return { success: true, timestamp: Date.now() };
+    return { success: true, timestamp: Math.max(...dates.map(d => d.getTime())) };
+  } catch (err) {
+    return { success: false, timestamp: Date.now() };
   }
 }

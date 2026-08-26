@@ -1,6 +1,5 @@
-import { headers, cookies } from "next/headers";
-import { auth } from "@/lib/auth";
-import { db } from "@/server/db";
+import { auth } from "../lib/auth.ts";
+import { db } from "./db.ts";
 
 export interface AuthenticatedWorkspaceContext {
   userId: string;
@@ -16,6 +15,7 @@ export interface AuthenticatedWorkspaceContext {
  * Obter a sessão atual a partir das requisições HTTP (headers e cookies)
  */
 export async function requireSession() {
+  const { headers } = require("next/headers");
   const session = await auth.api.getSession({
     headers: await headers(),
   });

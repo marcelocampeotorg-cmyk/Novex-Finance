@@ -1,6 +1,6 @@
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
-import { db } from "@/server/db";
+import { db } from "../server/db.ts";
 
 if (!process.env.AUTH_SECRET) {
   throw new Error("FATAL: Variável de ambiente AUTH_SECRET obrigatória ausente.");

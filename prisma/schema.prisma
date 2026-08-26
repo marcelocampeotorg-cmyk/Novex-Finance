@@ -297,6 +297,7 @@ model FinancialItem {
   startDate        DateTime           @map("start_date")
   status           FinancialStatus    @default(ACTIVE)
   recurrenceRuleId String?            @map("recurrence_rule_id")
+  scheduledOccurrenceAt DateTime?     @map("scheduled_occurrence_at")
   source           String             @default("USER")
   deletedAt        DateTime?          @map("deleted_at")
   createdAt        DateTime           @default(now()) @map("created_at")
@@ -310,6 +311,7 @@ model FinancialItem {
   pixCharges       PixCharge[]
   paymentIntentions PaymentIntention[]
 
+  @@unique([recurrenceRuleId, scheduledOccurrenceAt])
   @@map("financial_items")
 }
 

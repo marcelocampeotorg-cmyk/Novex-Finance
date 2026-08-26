@@ -7,6 +7,7 @@ import { requireAuthenticatedWorkspace } from "@/server/auth-context";
 import { decryptCredentials, parseMercadoPagoCredentials } from "@/lib/server/credentials-crypto";
 import { createPixOrder, getOrderById } from "@/integrations/mercado-pago/orders-client";
 import { assertReceivableDirection, getFixedChargeAmount, getPixChargeIdempotencyKey } from "@/domain/pix-receivable";
+import { settlePixChargeAtomic } from "@/server/services/pix-settlement-service";
 
 const generateChargeSchema = z.object({
   installmentId: z.string().min(1),
@@ -314,61 +315,18 @@ export async function getReceivablePixChargeStatus(input: { pixChargeId: string 
             remoteOrder.amountCents !== Number(pixCharge.amountCents)) {
           return { success: false, status: "INCOMPLETE", isPaid: false, error: "Order processada sem evidências oficiais completas ou com valor/referência divergente." };
         }
-        // LIQUIDAÇÃO ATÔMICA DA PARCELA VIA TRANSAÇÃO PRISMA
+        // LIQUIDAÇÃO ATÔMICA DA PARCELA VIA CLAIM UNIFICADO (Correção L — polling)
         const paidAt = new Date(remoteOrder.paidAt);
 
-        await db.$transaction(async (tx) => {
-          const currentCharge = await tx.pixCharge.findUnique({ where: { id: pixCharge.id } });
-          const currentInstallment = await tx.installment.findUnique({ where: { id: pixCharge.installmentId } });
-
-          if (!currentCharge || currentCharge.status === "PAID" || !currentInstallment || currentInstallment.status === "SETTLED") {
-            return;
-          }
-
-          // Bloquear e atualizar PixCharge
-          await tx.pixCharge.update({
-            where: { id: pixCharge.id },
-            data: {
-              status: "PAID",
-              paidAt,
-              lastCheckedAt: new Date(),
-            },
-          });
-
-          // Atualizar valor liquidado da parcela
-          const currentSettled = Number(currentInstallment.settledAmountCents);
-          const chargeAmt = Number(currentCharge.amountCents);
-          const totalAmount = Number(currentInstallment.amountCents);
-          const newSettled = currentSettled + chargeAmt;
-
-          const newStatus = newSettled >= totalAmount ? "SETTLED" : "PARTIAL";
-
-          await tx.installment.update({
-            where: { id: pixCharge.installmentId },
-            data: {
-              settledAmountCents: BigInt(newSettled),
-              status: newStatus,
-              settlementDate: paidAt,
-            },
-          });
-
-          // Registrar Auditoria
-          await tx.auditLog.create({
-            data: {
-              workspaceId: context.workspaceId,
-              actorType: "USER",
-              actorId: context.userId,
-              action: "MP_PIX_CHARGE_SETTLED",
-              entityType: "PixCharge",
-              entityId: pixCharge.id,
-              metadata: {
-                externalOrderId: pixCharge.externalOrderId,
-                amountCents: chargeAmt,
-                installmentId: pixCharge.installmentId,
-                newStatus,
-              },
-            },
-          });
+        await settlePixChargeAtomic({
+          pixChargeId: pixCharge.id,
+          installmentId: pixCharge.installmentId,
+          workspaceId: context.workspaceId,
+          amountCents: Number(pixCharge.amountCents),
+          paidAt,
+          actorType: "USER",
+          actorId: context.userId,
+          externalOrderId: pixCharge.externalOrderId || undefined,
         });
 
         revalidatePath("/contas-a-receber");
