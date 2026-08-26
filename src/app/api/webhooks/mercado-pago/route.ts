@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 1. Validar Assinatura (Exigida obrigatoriamente — sem dev bypass)
-    const sigVerification = verifyWebhookSignature(req, dataId.toLowerCase());
+    const sigVerification = verifyWebhookSignature(req, dataId);
 
     // Regra 30: Determinar ambiente antes de criar registro idempotente
     if (typeof body.live_mode !== "boolean") {
@@ -184,18 +184,16 @@ export async function POST(req: NextRequest) {
         await db.webhookEvent.update({ where: { id: webhookEvent.id }, data: { status: "FAILED", lastErrorCode: "INCOMPLETE_PAYMENT_EVIDENCE" } });
         return NextResponse.json({ received: true, processed: false, reason: "Evidência oficial incompleta ou divergente" }, { status: 202 });
       }
-      const paidAt = new Date(remoteOrder.paidAt);
+      const paidAt = remoteOrder.providerUpdatedAt ? new Date(remoteOrder.providerUpdatedAt) : new Date();
 
       // BAIXA ATÔMICA DA PARCELA COM CLAIM EXCLUSIVO VIA SERVIÇO UNIFICADO (Correção L)
       await settlePixChargeAtomic({
         pixChargeId: pixCharge.id,
-        installmentId: pixCharge.installmentId,
-        workspaceId: pixCharge.workspaceId,
-        amountCents: Number(pixCharge.amountCents),
         paidAt,
         actorType: "WEBHOOK",
         actorId: "MERCADO_PAGO_WEBHOOK",
         externalOrderId: dataId,
+        paidAmountCents: remoteOrder.paidAmountCents,
       });
 
       await db.webhookEvent.update({

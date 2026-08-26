@@ -79,16 +79,18 @@ export async function getWorkspaceSummary() {
     if (mpIntegration) {
       accountDisplayName = mpIntegration.displayName || "Mercado Pago";
       
-      if (mpIntegration.status !== "CONNECTED") {
+      const lastRun = await db.syncRun.findFirst({
+        where: { workspaceId, integrationAccountId: mpIntegration.id },
+        orderBy: { createdAt: "desc" },
+      });
+
+      if (mpIntegration.status !== "CONNECTED" || mpIntegration.lastValidationErrorCode) {
         syncSource = "DESCONECTADO";
         isOutdated = true;
-      } else if (mpIntegration.lastValidationErrorCode) {
-        syncSource = "DESCONECTADO";
-        isOutdated = true;
-      } else if (!mpIntegration.lastSyncAt) {
+      } else if (!mpIntegration.lastSyncAt || lastRun?.status === "PARTIAL") {
         syncSource = "PENDENTE";
         isOutdated = true;
-        lastSyncAt = null;
+        lastSyncAt = mpIntegration.lastSyncAt ? mpIntegration.lastSyncAt.toISOString() : null;
       } else {
         lastSyncAt = mpIntegration.lastSyncAt.toISOString();
         const diffInMinutes = (new Date().getTime() - mpIntegration.lastSyncAt.getTime()) / (1000 * 60);
@@ -337,9 +339,9 @@ export async function getWorkspaceLastUpdateTimestamp() {
       lastRun?.updatedAt
     ].filter(Boolean) as Date[];
 
-    if (dates.length === 0) return { success: true, timestamp: Date.now() };
+    if (dates.length === 0) return { success: true, timestamp: 0 };
     return { success: true, timestamp: Math.max(...dates.map(d => d.getTime())) };
   } catch (err) {
-    return { success: false, timestamp: Date.now() };
+    return { success: false, timestamp: 0 };
   }
 }

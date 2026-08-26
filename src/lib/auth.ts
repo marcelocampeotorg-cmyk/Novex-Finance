@@ -30,6 +30,15 @@ export const auth = betterAuth({
           }
           return { data: user };
         },
+        after: async (user) => {
+          if (process.env.ALLOW_PUBLIC_SIGNUP === "false") {
+            const count = await db.user.count();
+            if (count > 1) {
+              await db.user.delete({ where: { id: user.id } }).catch(() => {});
+              throw new Error("Cadastro público desativado: limite de bootstrap excedido por concorrência.");
+            }
+          }
+        },
       },
     },
   },

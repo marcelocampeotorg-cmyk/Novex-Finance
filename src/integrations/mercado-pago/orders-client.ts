@@ -30,7 +30,9 @@ export interface GetOrderResult {
   status?: string;
   isPaid?: boolean;
   amountCents?: number;
+  paidAmountCents?: number;
   paidAt?: string;
+  providerUpdatedAt?: string;
   paymentId?: string;
   externalReference?: string;
   statusDetail?: string;
@@ -205,22 +207,28 @@ export async function getOrderById(input: { accessToken: string; orderId: string
       const paymentStatus = String(paymentObj?.status || "").toLowerCase();
       const statusDetail = String(paymentObj?.status_detail || "").toLowerCase();
 
-      // Regra 26: Validação estrita de status, payment transaction status e status_detail (acreditado)
-      const isPaid = orderStatus === "processed" && paymentStatus === "processed" && statusDetail === "accredited";
+      // Regra oficial Orders API: Validação estrita de status, payment transaction status e status_detail
+      const isPaid = (orderStatus === "processed" || orderStatus === "accredited") &&
+        (paymentStatus === "processed" || paymentStatus === "accredited") &&
+        (statusDetail === "accredited" || statusDetail === "processed");
 
-      // Regra 27: Nunca inventar data de pagamento. Sem data oficial de aprovação -> paidAt = null
-      const paidAt = paymentObj?.date_approved || data.date_approved || null;
+      // Timestamp oficial da API de Orders (last_updated_date ou created_date)
+      const providerUpdatedAt = data.last_updated_date || data.created_date || new Date().toISOString();
+
+      const amountCents = paymentObj?.amount != null ? Math.round(Number(paymentObj.amount) * 100) : (data.total_amount != null ? Math.round(Number(data.total_amount) * 100) : undefined);
+      const paidAmountCents = paymentObj?.paid_amount != null ? Math.round(Number(paymentObj.paid_amount) * 100) : amountCents;
 
       return {
         success: true,
         orderId: String(data.id),
         status: orderStatus,
         isPaid,
-        paidAt: paidAt || undefined,
-        paymentId: paymentObj?.id ? String(paymentObj.id) : paymentObj?.reference_id ? String(paymentObj.reference_id) : undefined,
+        providerUpdatedAt,
+        paymentId: paymentObj?.id ? String(paymentObj.id) : undefined,
         externalReference: data.external_reference || undefined,
         statusDetail,
-        amountCents: paymentObj?.paid_amount != null ? Math.round(Number(paymentObj.paid_amount) * 100) : undefined,
+        amountCents,
+        paidAmountCents,
       };
     }
 

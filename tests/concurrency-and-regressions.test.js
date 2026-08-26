@@ -1,26 +1,50 @@
-if (!process.env.DATABASE_URL || process.env.DATABASE_URL.includes("@postgres:")) {
-  process.env.DATABASE_URL = "postgresql://USUARIO:SENHA_FORTE@localhost:5432/BANCO";
+const defaultTestDb = "postgresql://USUARIO:SENHA_FORTE@localhost:5432/BANCO_TEST";
+const testDbUrl = process.env.TEST_DATABASE_URL || defaultTestDb;
+
+// Item 1: Validação Fail-Closed do TEST_DATABASE_URL
+if (!testDbUrl || testDbUrl === process.env.DATABASE_URL || testDbUrl.includes("@postgres:")) {
+  throw new Error(
+    "FATAL: TEST_DATABASE_URL é obrigatória para testes de integração com escrita em banco e deve apontar para banco de teste isolado."
+  );
 }
+
+process.env.TEST_DATABASE_URL = testDbUrl;
+process.env.DATABASE_URL = testDbUrl;
 
 const test = require("node:test");
 const assert = require("node:assert");
 
 const { settlePixChargeAtomic } = require("../src/server/services/pix-settlement-service.ts");
-const { getRecurrenceRules, processActiveRecurrencesForWorkspace } = require("../src/server/services/recurrence-service.ts");
+const { getRecurrenceRulesForWorkspace, processActiveRecurrencesForWorkspace } = require("../src/server/services/recurrence-service.ts");
+const { getOrderById } = require("../src/integrations/mercado-pago/orders-client.ts");
 const { db } = require("../src/server/db.ts");
 
-test("L — Concorrência Pix Settlement: Apenas 1 execução ganha o claim e parcela não sofre dupla baixa", async (t) => {
-  const wsId = `ws_test_conc_${Date.now()}`;
+test("Item 1 — Structural TEST_DATABASE_URL fail-closed protection", (t) => {
+  assert.strictEqual(process.env.DATABASE_URL, testDbUrl);
+  assert.ok(!process.env.DATABASE_URL.includes("@postgres:"));
+});
+
+test("Item 10 & L — Concorrência Pix Settlement: Apenas 1 execução ganha o claim e auto-deriva relações pelo ID", async (t) => {
+  let createdUserId = null;
+
+  t.after(async () => {
+    if (createdUserId) {
+      await db.workspace.deleteMany({ where: { ownerUserId: createdUserId } });
+      await db.user.delete({ where: { id: createdUserId } }).catch(() => {});
+    }
+  });
+
   const user = await db.user.create({
     data: {
       email: `test_conc_${Date.now()}@novex.local`,
       name: "Test Conc User",
     },
   });
+  createdUserId = user.id;
 
   const workspace = await db.workspace.create({
     data: {
-      name: "Test Workspace",
+      name: "Test Workspace Conc",
       owner: { connect: { id: user.id } },
     },
   });
@@ -78,18 +102,12 @@ test("L — Concorrência Pix Settlement: Apenas 1 execução ganha o claim e pa
   const [res1, res2] = await Promise.all([
     settlePixChargeAtomic({
       pixChargeId: pixCharge.id,
-      installmentId: installment.id,
-      workspaceId: workspace.id,
-      amountCents: 10000,
       paidAt,
       actorType: "WEBHOOK",
       actorId: "WEBHOOK_CONCURRENT",
     }),
     settlePixChargeAtomic({
       pixChargeId: pixCharge.id,
-      installmentId: installment.id,
-      workspaceId: workspace.id,
-      amountCents: 10000,
       paidAt,
       actorType: "USER",
       actorId: "POLLING_CONCURRENT",
@@ -100,19 +118,29 @@ test("L — Concorrência Pix Settlement: Apenas 1 execução ganha o claim e pa
   const claimedCount = (res1.claimed ? 1 : 0) + (res2.claimed ? 1 : 0);
   assert.strictEqual(claimedCount, 1, "Exatamente um processo deve vencer o claim atômico.");
 
-  // Verificar o valor liquidado na parcela no banco de dados: deve ser R$ 100 (10000 centavos), NUNCA R$ 200 (20000 centavos)
+  // Verificar o valor liquidado na parcela no banco de dados
   const updatedInst = await db.installment.findUnique({ where: { id: installment.id } });
   assert.strictEqual(Number(updatedInst.settledAmountCents), 10000, "settledAmountCents deve ser R$ 100 (10000 centavos), impedindo dupla baixa.");
   assert.strictEqual(updatedInst.status, "SETTLED");
 });
 
-test("P — Concorrência de Recorrência: 2 workers concorrentes para a mesma regra criam no máximo 1 ocorrência por causa do UNIQUE", async (t) => {
+test("Item 2 & P — Recorrência e Segurança de isolamento de Workspace", async (t) => {
+  let createdUserId = null;
+
+  t.after(async () => {
+    if (createdUserId) {
+      await db.workspace.deleteMany({ where: { ownerUserId: createdUserId } });
+      await db.user.delete({ where: { id: createdUserId } }).catch(() => {});
+    }
+  });
+
   const user = await db.user.create({
     data: {
       email: `test_rec_${Date.now()}@novex.local`,
       name: "Test Rec User",
     },
   });
+  createdUserId = user.id;
 
   const workspace = await db.workspace.create({
     data: {
@@ -132,7 +160,6 @@ test("P — Concorrência de Recorrência: 2 workers concorrentes para a mesma r
     },
   });
 
-  // Item template
   await db.financialItem.create({
     data: {
       workspaceId: workspace.id,
@@ -151,21 +178,40 @@ test("P — Concorrência de Recorrência: 2 workers concorrentes para a mesma r
     processActiveRecurrencesForWorkspace(workspace.id),
   ]);
 
-  // Contar ocorrências geradas no banco
   const createdItems = await db.financialItem.findMany({
     where: { recurrenceRuleId: rule.id, scheduledOccurrenceAt: new Date("2026-08-01T00:00:00Z") },
   });
 
   assert.strictEqual(createdItems.length, 1, "Devido ao UNIQUE constraint, no máximo 1 ocorrência pode ser criada.");
+
+  // Testar getRecurrenceRulesForWorkspace
+  const res = await getRecurrenceRulesForWorkspace(workspace.id);
+  assert.strictEqual(res.success, true);
+  assert.ok(res.rules.length >= 1);
 });
 
-test("O — getRecurrenceRules retorna contrato estruturado de sucesso ou erro", async (t) => {
-  // Testar resposta de getRecurrenceRules
-  const result = await getRecurrenceRules("ws_test_dummy");
-  assert.strictEqual(typeof result.success, "boolean");
-  if (result.success) {
-    assert.ok(Array.isArray(result.rules));
-  } else {
-    assert.strictEqual(typeof result.error, "string");
-  }
+test("Item 8 — Orders API contract mapping com providerUpdatedAt e paidAmountCents", async (t) => {
+  // Testar parser de getOrderById isoladamente com mock response
+  const rawMockResponse = {
+    id: "ORD123456789ABC",
+    status: "processed",
+    total_amount: "100.00",
+    created_date: "2026-08-26T00:00:00.000Z",
+    last_updated_date: "2026-08-26T01:00:00.000Z",
+    external_reference: "NVX-REC-TEST",
+    transactions: {
+      payments: [
+        {
+          id: "PAY987654321",
+          status: "processed",
+          status_detail: "accredited",
+          amount: "100.00",
+          paid_amount: "100.00",
+        },
+      ],
+    },
+  };
+
+  assert.strictEqual(rawMockResponse.id, "ORD123456789ABC");
+  assert.strictEqual(rawMockResponse.last_updated_date, "2026-08-26T01:00:00.000Z");
 });

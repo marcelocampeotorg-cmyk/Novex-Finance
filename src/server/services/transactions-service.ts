@@ -346,16 +346,18 @@ export async function continueMercadoPagoSyncRun(
       },
     });
 
-    // Regra 10 & 11: Fechamento bem-sucedido do SyncRun atualiza lastSyncAt e horizonte de cobertura
-    await db.integrationAccount.update({
-      where: { id: account.id },
-      data: {
-        lastSyncAt: new Date(),
-        firstImportedAt: account.firstImportedAt || beginDate,
-        coverageStart: !account.coverageStart || beginDate < account.coverageStart ? beginDate : account.coverageStart,
-        coverageEnd: !account.coverageEnd || endDate > account.coverageEnd ? endDate : account.coverageEnd,
-      },
-    });
+    // Item 4: Fechamento bem-sucedido (SUCCESS) atualiza lastSyncAt e horizonte de cobertura
+    if (finalRunStatus === "SUCCESS") {
+      await db.integrationAccount.update({
+        where: { id: account.id },
+        data: {
+          lastSyncAt: new Date(),
+          firstImportedAt: account.firstImportedAt || beginDate,
+          coverageStart: !account.coverageStart || beginDate < account.coverageStart ? beginDate : account.coverageStart,
+          coverageEnd: !account.coverageEnd || endDate > account.coverageEnd ? endDate : account.coverageEnd,
+        },
+      });
+    }
 
     return {
       ...importResult,

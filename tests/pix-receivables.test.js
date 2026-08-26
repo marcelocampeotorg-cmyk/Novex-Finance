@@ -35,14 +35,32 @@ test("Regra de Liquidação: Order criada em estado PENDING não marca a parcela
 test("Orders API: somente processed/accredited com evidências oficiais é pago", async (t) => {
   t.mock.method(global, "fetch", async () => ({
     status: 200,
-    json: async () => ({ id: "ORD-1", status: "processed", external_reference: "REF-1", transactions: { payments: [{ id: "PAY-1", status: "processed", status_detail: "accredited", paid_amount: "100.00", date_approved: "2026-08-24T10:00:00Z" }] } }),
+    json: async () => ({
+      id: "ORD-1",
+      status: "processed",
+      total_amount: "100.00",
+      created_date: "2026-08-24T10:00:00Z",
+      external_reference: "REF-1",
+      transactions: {
+        payments: [
+          {
+            id: "PAY-1",
+            status: "processed",
+            status_detail: "accredited",
+            amount: "100.00",
+            paid_amount: "100.00",
+          },
+        ],
+      },
+    }),
   }));
   const result = await getOrderById({ accessToken: "TOKEN", orderId: "ORD-1" });
   assert.strictEqual(result.isPaid, true);
   assert.strictEqual(result.amountCents, 10000);
+  assert.strictEqual(result.paidAmountCents, 10000);
   assert.strictEqual(result.paymentId, "PAY-1");
   assert.strictEqual(result.externalReference, "REF-1");
-  assert.strictEqual(result.paidAt, "2026-08-24T10:00:00Z");
+  assert.strictEqual(result.providerUpdatedAt, "2026-08-24T10:00:00Z");
 });
 
 test("Orders API: status approved legado não é aceito como Orders processada", async (t) => {

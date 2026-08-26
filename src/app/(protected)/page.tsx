@@ -171,7 +171,7 @@ export default function DashboardPage() {
       {/* Grid de Cards Métricos Principais */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         <MetricCard
-          title="Seu dinheiro"
+          title="Movimentação Líquida Conhecida"
           amountCents={displaySummary.currentBalanceCents}
           overrideText={
             displaySummary.syncSource === "DESCONECTADO" || !displaySummary.lastSyncAt
@@ -190,27 +190,27 @@ export default function DashboardPage() {
         />
 
         <MetricCard
-          title="Saldo Projetado no Mês"
+          title="Fluxo Projetado do Mês"
           amountCents={displaySummary.projectedBalanceCents}
-          subtitle="Saldo + Recebimentos - Pagamentos"
+          subtitle="Movimentação + Recebimentos - Pagamentos no mês"
           icon={TrendingUp}
           variant="default"
           valueColor="auto"
         />
 
         <MetricCard
-          title="Total a Pagar (Pendente)"
+          title="A Pagar neste Mês"
           amountCents={displaySummary.totalPayableMonthCents}
-          subtitle="Geral pendente em aberto"
+          subtitle="Pendente no mês vigente"
           icon={ArrowUpRight}
           variant="default"
           valueColor="red"
         />
 
         <MetricCard
-          title="Total a Receber (Pendente)"
+          title="A Receber neste Mês"
           amountCents={displaySummary.totalReceivableMonthCents}
-          subtitle="Geral previsto a entrar"
+          subtitle="Previsto no mês vigente"
           icon={ArrowDownLeft}
           variant="success"
           valueColor="green"

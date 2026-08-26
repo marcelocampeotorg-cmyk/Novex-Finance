@@ -136,31 +136,44 @@ export async function processNotificationAlertsForWorkspace(targetWorkspaceId?: 
     const title = inst.financialItem.title;
     const contactName = inst.financialItem.contact?.name;
     const direction = inst.financialItem.direction;
-    const amountCents = Number(inst.amountCents);
+    
+    // Item 13: Calcular o saldo remanescente da parcela (amountCents - settledAmountCents)
+    const remainingAmountCents = Number(inst.amountCents - inst.settledAmountCents);
+    if (remainingAmountCents <= 0) continue;
 
     let alertType: "DUE_SOON" | "DUE_TODAY" | "OVERDUE" | null = null;
+    let stageKey = "";
     let message = "";
 
     if (daysDiff < 0 || inst.status === "OVERDUE") {
-      alertType = "OVERDUE";
-      message = `${direction === "PAYABLE" ? "Conta a pagar" : "Cobrança"} de R$ ${(amountCents / 100).toFixed(2)} está atrasada há ${Math.abs(daysDiff)} dia(s).`;
+      const overdueDays = Math.abs(daysDiff);
+      // Item 13: Aplicar overdueFrequency (ex: a cada N dias de atraso)
+      const freq = rule.overdueFrequency > 0 ? rule.overdueFrequency : 1;
+      if (overdueDays === 1 || overdueDays % freq === 0) {
+        alertType = "OVERDUE";
+        stageKey = `OVERDUE_${overdueDays}D`;
+        message = `${direction === "PAYABLE" ? "Conta a pagar" : "Cobrança"} de R$ ${(remainingAmountCents / 100).toFixed(2)} está atrasada há ${overdueDays} dia(s).`;
+      }
     } else if (daysDiff === 0 && rule.onDueDate) {
       alertType = "DUE_TODAY";
-      message = `${direction === "PAYABLE" ? "Conta a pagar" : "Cobrança"} de R$ ${(amountCents / 100).toFixed(2)} vence HOJE.`;
+      stageKey = "DUE_TODAY";
+      message = `${direction === "PAYABLE" ? "Conta a pagar" : "Cobrança"} de R$ ${(remainingAmountCents / 100).toFixed(2)} vence HOJE.`;
     } else if (daysDiff > 0 && rule.daysBefore.includes(daysDiff)) {
       alertType = "DUE_SOON";
-      message = `${direction === "PAYABLE" ? "Conta a pagar" : "Cobrança"} de R$ ${(amountCents / 100).toFixed(2)} vence em ${daysDiff} dia(s).`;
+      // Item 13: Chaves distintas para estágios 7d, 3d, 1d (evita deduplicação indevida entre estágios)
+      stageKey = `DUE_SOON_${daysDiff}D`;
+      message = `${direction === "PAYABLE" ? "Conta a pagar" : "Cobrança"} de R$ ${(remainingAmountCents / 100).toFixed(2)} vence em ${daysDiff} dia(s).`;
     }
 
-    if (alertType) {
-      const alertId = `ALERT-${alertType}-${inst.id}`;
+    if (alertType && stageKey) {
+      const alertId = `ALERT-${stageKey}-${inst.id}`;
       alerts.push({
         id: alertId,
         installmentId: inst.id,
         financialItemId: inst.financialItemId,
         title,
         contactName,
-        amountCents,
+        amountCents: remainingAmountCents,
         dueDate: inst.dueDate.toISOString(),
         direction,
         type: alertType,
@@ -168,19 +181,19 @@ export async function processNotificationAlertsForWorkspace(targetWorkspaceId?: 
         daysDiff: Math.abs(daysDiff),
       });
 
-      // Regra 39: Notificação no banco persistente sem duplicação
-      const dedupeKey = `event_${workspaceId}_${inst.id}_${alertType}`;
+      // Item 13: dedupeKey único por estágio (ex: event_ws_instId_DUE_SOON_7D)
+      const dedupeKey = `event_${workspaceId}_${inst.id}_${stageKey}`;
       await db.notificationEvent.upsert({
-          where: { dedupeKey },
-          update: { message },
-          create: {
-            workspaceId,
-            type: alertType,
-            title,
-            message,
-            dedupeKey,
-            metadata: { installmentId: inst.id, amountCents },
-          },
+        where: { dedupeKey },
+        update: { message },
+        create: {
+          workspaceId,
+          type: alertType,
+          title,
+          message,
+          dedupeKey,
+          metadata: { installmentId: inst.id, amountCents: remainingAmountCents },
+        },
       });
     }
   }
@@ -254,39 +267,50 @@ export async function sendWhatsAppDebtorReminder(input: { pixChargeId: string; m
       include: { installment: { include: { financialItem: { include: { contact: true } } } } },
     });
     if (!charge?.qrCode || !charge.installment.financialItem.contact?.phone) throw new Error("Cobrança Pix/telefone reais não encontrados.");
+    
     const dedupeKey = `whatsapp:${workspaceId}:${charge.id}:${input.messageStage}`;
-    const existing = await db.whatsAppDeliveryLog.findUnique({ where: { dedupeKey } });
-    if (existing?.status === "SENT" || existing?.status === "DELIVERED") return { success: true, messageId: existing.remoteMessageId };
 
-    // Correção M: Claim persistente ANTES da chamada à Evolution
-    // Cria registro SENDING para impedir envio concorrente
-    let deliveryLog;
-    try {
-      deliveryLog = await db.whatsAppDeliveryLog.upsert({
-        where: { dedupeKey },
-        update: {
-          // Se já existe como FAILED, permite retry
-          status: existing?.status === "FAILED" ? "SENDING" : existing?.status || "SENDING",
-          attemptCount: { increment: 1 },
-        },
-        create: {
-          workspaceId,
-          recipientPhone: charge.installment.financialItem.contact.phone,
-          chargeId: charge.id,
-          installmentId: charge.installmentId,
-          messageType: input.messageStage,
-          dedupeKey,
-          status: "SENDING",
-        },
-      });
-      // Se outro processo já reclamou (SENDING/SENT/DELIVERED), abortar
-      if (deliveryLog.status !== "SENDING" && deliveryLog.status !== "FAILED") {
-        return { success: true, messageId: deliveryLog.remoteMessageId };
+    // Item 3: Atomic claim exclusivity
+    const existingLog = await db.whatsAppDeliveryLog.findUnique({ where: { dedupeKey } });
+
+    if (existingLog) {
+      if (existingLog.status === "SENT" || existingLog.status === "DELIVERED") {
+        return { success: true, messageId: existingLog.remoteMessageId, alreadySent: true };
       }
-    } catch (e: any) {
-      // P2002 unique conflict = outro processo já criou
-      if (e.code === "P2002") return { success: true, messageId: null };
-      throw e;
+      if (existingLog.status === "SENDING") {
+        return { success: false, error: "Envio de cobrança já em andamento por outro processo." };
+      }
+      if (existingLog.status === "FAILED") {
+        // Transição atômica FAILED -> SENDING
+        const claim = await db.whatsAppDeliveryLog.updateMany({
+          where: { dedupeKey, status: "FAILED" },
+          data: { status: "SENDING", attemptCount: { increment: 1 } },
+        });
+        if (claim.count === 0) {
+          return { success: false, error: "Outra tentativa de envio já foi iniciada por outro processo." };
+        }
+      }
+    } else {
+      // Ausência de log -> Criar SENDING atômico
+      try {
+        await db.whatsAppDeliveryLog.create({
+          data: {
+            workspaceId,
+            recipientPhone: charge.installment.financialItem.contact.phone,
+            chargeId: charge.id,
+            installmentId: charge.installmentId,
+            messageType: input.messageStage,
+            dedupeKey,
+            status: "SENDING",
+            attemptCount: 1,
+          },
+        });
+      } catch (e: any) {
+        if (e.code === "P2002") {
+          return { success: false, error: "Concorrência: outro envio foi iniciado por outro processo." };
+        }
+        throw e;
+      }
     }
 
     const creds = await resolveEvolutionCredentials(workspaceId);
@@ -303,7 +327,7 @@ export async function sendWhatsAppDebtorReminder(input: { pixChargeId: string; m
       instanceName: creds.instanceName,
     });
 
-    // Atualizar resultado final
+    // Atualizar resultado final do envio
     await db.whatsAppDeliveryLog.update({
       where: { dedupeKey },
       data: {

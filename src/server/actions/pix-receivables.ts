@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { requireAuthenticatedWorkspace } from "@/server/auth-context";
 import { decryptCredentials, parseMercadoPagoCredentials } from "@/lib/server/credentials-crypto";
 import { createPixOrder, getOrderById } from "@/integrations/mercado-pago/orders-client";
-import { assertReceivableDirection, getFixedChargeAmount, getPixChargeIdempotencyKey } from "@/domain/pix-receivable";
+import { assertReceivableDirection, classifyFixedChargePayment, getFixedChargeAmount, getPixChargeIdempotencyKey } from "@/domain/pix-receivable";
 import { settlePixChargeAtomic } from "@/server/services/pix-settlement-service";
 
 const generateChargeSchema = z.object({
@@ -136,22 +136,26 @@ export async function generateReceivablePixCharge(input: {
   }
 
   // 6. Verificar se já existe uma cobrança PENDING válida reutilizável
-  const existingPending = installment.pixCharges[0];
-  if (existingPending && existingPending.status !== "CREATING" && existingPending.status !== "FAILED" && existingPending.qrCode && existingPending.expiresAt && existingPending.expiresAt > new Date()) {
+  const existingPending = installment.pixCharges.find(
+    (c) => (c.status === "PENDING" || c.status === "ACTION_REQUIRED") && c.qrCode && c.expiresAt && c.expiresAt > new Date()
+  );
+  if (existingPending) {
     return {
       success: true,
       pixChargeId: existingPending.id,
-      externalOrderId: existingPending.externalOrderId || undefined,
+      externalOrderId: existingPending.externalOrderId ?? undefined,
       status: existingPending.status,
       isPaid: existingPending.status === "PAID",
       amountCents: Number(existingPending.amountCents),
-      qrCode: existingPending.qrCode,
-      ticketUrl: existingPending.ticketUrl || undefined,
-      expiresAt: existingPending.expiresAt.toISOString(),
+      qrCode: existingPending.qrCode ?? undefined,
+      ticketUrl: existingPending.ticketUrl ?? undefined,
+      expiresAt: existingPending.expiresAt ? existingPending.expiresAt.toISOString() : undefined,
       debtorName: installment.financialItem.contact?.name || "Devedor",
       title: installment.financialItem.title,
     };
   }
+
+  const existingCreating = installment.pixCharges.find((c) => c.status === "CREATING");
 
   // 7. Descriptografar Access Token
   let accessToken: string;
@@ -162,25 +166,47 @@ export async function generateReceivablePixCharge(input: {
     return { success: false, status: "FAILED", isPaid: false, error: "Erro ao descriptografar credencial do workspace." };
   }
 
-  // 8. Chave de Idempotência Única e Determinística (Regra 24)
-  const idempotencyKey = getPixChargeIdempotencyKey(context.workspaceId, installment.id, chargeAmountCents);
-  const uniqueHash = idempotencyKey.slice(-12);
-  const externalReference = `NVX-REC-${installment.id.slice(0, 8)}-${uniqueHash}`;
+  // 8. Chave de Idempotência e Referência (Reutilizar se CREATING, ou Nova Chave para FAILED/EXPIRED)
+  const attemptTag = Date.now();
+  const idempotencyKey = existingCreating
+    ? existingCreating.idempotencyKey
+    : `pix_${context.workspaceId}_${installment.id}_${chargeAmountCents}_${attemptTag}`;
+  const externalReference = existingCreating
+    ? existingCreating.externalReference
+    : `NVX-REC-${installment.id.slice(0, 8)}-${idempotencyKey.slice(-12)}`;
 
-  // 9. Criar Registro Local no Banco (Status CREATING)
-  const pixCharge = existingPending || await db.pixCharge.create({ data: {
-      workspaceId: context.workspaceId,
-      integrationAccountId: integration.id,
-      financialItemId: installment.financialItemId,
-      installmentId: installment.id,
-      provider: "MERCADO_PAGO",
-      environment: integration.environment,
-      externalReference,
-      idempotencyKey,
-      amountCents: BigInt(chargeAmountCents),
-      currency: "BRL",
-      status: "CREATING",
-    } });
+  // 9. Criar Registro Local no Banco (Status CREATING com proteção contra concorrência)
+  let pixCharge = existingCreating;
+  if (!pixCharge) {
+    try {
+      pixCharge = await db.pixCharge.create({
+        data: {
+          workspaceId: context.workspaceId,
+          integrationAccountId: integration.id,
+          financialItemId: installment.financialItemId,
+          installmentId: installment.id,
+          provider: "MERCADO_PAGO",
+          environment: integration.environment,
+          externalReference,
+          idempotencyKey,
+          amountCents: BigInt(chargeAmountCents),
+          currency: "BRL",
+          status: "CREATING",
+        },
+      });
+    } catch (err: any) {
+      if (err.code === "P2002") {
+        const found = await db.pixCharge.findFirst({
+          where: { installmentId: installment.id },
+          orderBy: { createdAt: "desc" },
+        });
+        if (found) pixCharge = found;
+      }
+      if (!pixCharge) {
+        return { success: false, status: "FAILED", isPaid: false, error: "Falha na criação concorrente da cobrança Pix." };
+      }
+    }
+  }
 
   // 10. Chamar Mercado Pago Orders API
   const orderResult = await createPixOrder({
@@ -311,22 +337,20 @@ export async function getReceivablePixChargeStatus(input: { pixChargeId: string 
       }
 
       if (remoteOrder.success && remoteOrder.isPaid) {
-        if (!remoteOrder.paidAt || !remoteOrder.paymentId || remoteOrder.externalReference !== pixCharge.externalReference ||
-            remoteOrder.amountCents !== Number(pixCharge.amountCents)) {
+        if (!remoteOrder.paymentId || remoteOrder.externalReference !== pixCharge.externalReference ||
+            classifyFixedChargePayment(Number(pixCharge.amountCents), remoteOrder.paidAmountCents || remoteOrder.amountCents || 0) === "DIVERGENT") {
           return { success: false, status: "INCOMPLETE", isPaid: false, error: "Order processada sem evidências oficiais completas ou com valor/referência divergente." };
         }
         // LIQUIDAÇÃO ATÔMICA DA PARCELA VIA CLAIM UNIFICADO (Correção L — polling)
-        const paidAt = new Date(remoteOrder.paidAt);
+        const paidAt = remoteOrder.providerUpdatedAt ? new Date(remoteOrder.providerUpdatedAt) : new Date();
 
         await settlePixChargeAtomic({
           pixChargeId: pixCharge.id,
-          installmentId: pixCharge.installmentId,
-          workspaceId: context.workspaceId,
-          amountCents: Number(pixCharge.amountCents),
           paidAt,
           actorType: "USER",
           actorId: context.userId,
           externalOrderId: pixCharge.externalOrderId || undefined,
+          paidAmountCents: remoteOrder.paidAmountCents,
         });
 
         revalidatePath("/contas-a-receber");

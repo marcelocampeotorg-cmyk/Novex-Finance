@@ -55,10 +55,8 @@ export async function calculateNextRecurrenceDate(
   return next;
 }
 
-export async function getRecurrenceRules(targetWorkspaceId?: string) {
+export async function getRecurrenceRulesForWorkspace(workspaceId: string) {
   try {
-    const workspaceId = targetWorkspaceId || (await requireAuthenticatedWorkspace()).workspaceId;
-
     const rules = await db.recurrenceRule.findMany({
       where: { workspaceId },
       include: {
@@ -73,23 +71,22 @@ export async function getRecurrenceRules(targetWorkspaceId?: string) {
 
     return {
       success: true as const,
-      rules: rules.map((rule) => {
-        const sampleItem = rule.financialItems[0];
+      rules: rules.map((r) => {
+        const item = r.financialItems[0];
         return {
-          id: rule.id,
-          title: sampleItem?.title || "Recorrência sem título",
-          description: sampleItem?.description || undefined,
-          direction: sampleItem?.direction || "PAYABLE",
-          amountCents: sampleItem ? Number(sampleItem.totalAmountCents) : 0,
-          frequency: rule.frequency,
-          interval: rule.interval,
-          dayOfMonth: rule.dayOfMonth || undefined,
-          startsAt: rule.startsAt.toISOString(),
-          endsAt: rule.endsAt ? rule.endsAt.toISOString() : undefined,
-          nextRunAt: rule.nextRunAt ? rule.nextRunAt.toISOString() : rule.startsAt.toISOString(),
-          active: rule.active,
-          contactName: sampleItem?.contact?.name || undefined,
-          categoryName: sampleItem?.category?.name || "Geral",
+          id: r.id,
+          title: item?.title || "Recorrência",
+          direction: item?.direction || "PAYABLE",
+          amountCents: Number(item?.totalAmountCents || 0),
+          frequency: r.frequency,
+          interval: r.interval,
+          dayOfMonth: r.dayOfMonth,
+          startsAt: r.startsAt,
+          endsAt: r.endsAt,
+          nextRunAt: r.nextRunAt,
+          active: r.active,
+          contactName: item?.contact?.name,
+          categoryName: item?.category?.name,
         };
       }),
     };
@@ -97,9 +94,14 @@ export async function getRecurrenceRules(targetWorkspaceId?: string) {
     console.error("Erro ao buscar regras de recorrência:", error);
     return {
       success: false as const,
-      error: error?.message || String(error),
+      error: error?.message || "Falha ao buscar regras de recorrência.",
     };
   }
+}
+
+export async function getRecurrenceRules(targetWorkspaceId?: string) {
+  const workspaceId = targetWorkspaceId || (await requireAuthenticatedWorkspace()).workspaceId;
+  return getRecurrenceRulesForWorkspace(workspaceId);
 }
 
 export async function createRecurrenceRule(input: CreateRecurrenceInput) {

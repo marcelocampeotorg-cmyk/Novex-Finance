@@ -145,9 +145,9 @@ Teste de regressão: `tests/audit-hardening.test.js`.
 
 ### ERR-030 — Drift entre schema Prisma e migrations
 Status: RESOLVIDO
-Resumo: Campos e índices financeiros presentes no schema não existiam na migration de domínio, e o banco estava com migrations não rastreadas localmente.
-Correção: migration forward-only `20260824000003_audit_hardening` e `20260824000004_remaining_blockers`. Os registros fantasmas do banco (`20260824_hardening_phase2`, `20260824000002_hardening_fix` e `20260824000003_hardening_final`) foram removidos e as migrations aplicadas corretamente.
-Teste de regressão: `prisma migrate status` confirmou `Database schema is up to date!`.
+Resumo: Campos e índices financeiros presentes no schema apresentavam divergências em relação a migrations antigas de ambiente local.
+Correção: O schema foi alinhado via aplicação da cadeia canônica forward-only de 6 migrations (`20240101000000_init` até `20260825000005_recurrence_idempotency`). O ambiente de desenvolvimento teve seu histórico de migrations reinicializado a partir da cadeia oficial versionada no Git, reprovando e descontinuando qualquer manipulação manual direta na tabela `_prisma_migrations`.
+Teste de regressão: `npx prisma migrate status` confirma alinhamento canônico em banco limpo.
 
 ### ERR-031 — Account Money continuava run arbitrário e aceitava fallbacks do provedor
 Status: BLOQUEADO (Requer token de Sandbox/Produção real do Mercado Pago)
@@ -174,10 +174,10 @@ Correção: store reduzido a barramento de invalidação, exclusão usa Server A
 Teste: typecheck e build.
 
 ### ERR-035 — Segredos e banco Evolution na infraestrutura Docker
-Status: RESOLVIDO
+Status: PENDENTE DE VALIDAÇÃO EXTERNA
 Resumo: compose continha senhas/chaves fixas e não criava `evolution_db`.
-Correção: variáveis obrigatórias sem defaults secretos, placeholders em `.env.example` e init SQL idempotente do banco Evolution.
-Evidência pendente: Resolvido. O docker compose rodou com sucesso.
+Correção: variáveis obrigatórias sem defaults secretos em código, placeholders seguros em `.env.example` e init SQL idempotente do banco Evolution no Compose.
+Evidência pendente: Estrutura Docker Compose validada localmente. PENDENTE DE VALIDAÇÃO EXTERNA / PRODUÇÃO até que credenciais reais da Evolution API e Mercado Pago sejam injetadas no ambiente.
 
 ### ERR-036 — Descoberta de recorrências ausente
 Status: RESOLVIDO

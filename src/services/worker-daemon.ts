@@ -41,6 +41,7 @@ export class WorkerDaemonService {
       let resumedSyncs = 0;
       let partialCount = 0;
       let failedCount = 0;
+      let subsystemErrorsCount = 0;
 
       for (const ws of workspaces) {
         // 1. Processar regras de recorrência ativas do workspace
@@ -48,13 +49,17 @@ export class WorkerDaemonService {
           const recRes = await processActiveRecurrencesForWorkspace(ws.id);
           if (recRes.success && recRes.generatedCount) {
             totalRecurrences += recRes.generatedCount;
+          } else if (!recRes.success) {
+            subsystemErrorsCount++;
           }
         } catch (e: any) {
+          subsystemErrorsCount++;
           console.warn(`[WorkerDaemon] Erro ao processar recorrências para workspace ${ws.id}:`, e.message);
         }
         try {
           await discoverWorkspaceRecurrences(ws.id);
         } catch (e: any) {
+          subsystemErrorsCount++;
           console.warn(`[WorkerDaemon] Erro ao descobrir recorrências para workspace ${ws.id}:`, e.message);
         }
 
@@ -63,6 +68,7 @@ export class WorkerDaemonService {
           const alerts = await processNotificationAlertsForWorkspace(ws.id);
           totalAlerts += alerts.length;
         } catch (e: any) {
+          subsystemErrorsCount++;
           console.warn(`[WorkerDaemon] Erro ao processar alertas para workspace ${ws.id}:`, e.message);
         }
 
@@ -71,13 +77,15 @@ export class WorkerDaemonService {
           const reconRes = await reconcileWorkspace(INTERNAL_WORKER_CONTEXT, ws.id);
           if (reconRes.success && reconRes.autoMatchedCount) {
             totalReconciled += reconRes.autoMatchedCount;
+          } else if (reconRes && !reconRes.success) {
+            subsystemErrorsCount++;
           }
         } catch (e: any) {
+          subsystemErrorsCount++;
           console.warn(`[WorkerDaemon] Erro ao executar conciliação para workspace ${ws.id}:`, e.message);
         }
 
         // 4. Continuar SyncRuns pendentes ou interrompidos (PROCESSING) do workspace (Regra 33)
-        // Correção B: Filtra apenas source MERCADO_PAGO_API para não enviar CSV_IMPORT ao pipeline MP
         try {
           const pendingSyncs = await db.syncRun.findMany({
             where: {
@@ -96,7 +104,6 @@ export class WorkerDaemonService {
                 integrationAccountId: syncRun.integrationAccountId,
                 internalContext: INTERNAL_WORKER_CONTEXT,
               });
-              // Correção C: Distinguir SUCCESS / PARTIAL / FAILED
               if (syncResult && 'status' in syncResult && syncResult.status === 'PARTIAL') {
                 partialCount++;
               }
@@ -107,16 +114,22 @@ export class WorkerDaemonService {
             }
           }
         } catch (e: any) {
+          subsystemErrorsCount++;
           console.warn(`[WorkerDaemon] Erro ao retomar SyncRuns para workspace ${ws.id}:`, e.message);
         }
       }
 
-      console.log(
-        `[WorkerDaemon] Rotina finalizada com sucesso. Workspaces: ${workspaces.length}, Recorrências geradas: ${totalRecurrences}, Alertas ativos: ${totalAlerts}, Auto-conciliações: ${totalReconciled}, SyncRuns retomados: ${resumedSyncs}`
-      );
+      const overallSuccess = subsystemErrorsCount === 0 && failedCount === 0;
 
-      // Correção C: success é false se houve falhas internas
-      const overallSuccess = failedCount === 0;
+      if (overallSuccess) {
+        console.log(
+          `[WorkerDaemon] Rotina finalizada com sucesso. Workspaces: ${workspaces.length}, Recorrências geradas: ${totalRecurrences}, Alertas ativos: ${totalAlerts}, Auto-conciliações: ${totalReconciled}, SyncRuns retomados: ${resumedSyncs}`
+        );
+      } else {
+        console.warn(
+          `[WorkerDaemon] Rotina finalizada com alertas/falhas parciais. Erros em subsistemas: ${subsystemErrorsCount}, SyncRuns falhos: ${failedCount}, Parciais: ${partialCount}`
+        );
+      }
 
       return {
         success: overallSuccess,
@@ -127,7 +140,7 @@ export class WorkerDaemonService {
         reconciliationResult: { autoMatchedCount: totalReconciled },
         resumedSyncRunsCount: resumedSyncs,
         partialSyncRunsCount: partialCount,
-        failedSyncRunsCount: failedCount,
+        failedSyncRunsCount: failedCount + subsystemErrorsCount,
       };
     } catch (err: any) {
       console.error("[WorkerDaemon] Erro durante execução da rotina de background:", err);
