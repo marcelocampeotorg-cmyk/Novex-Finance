@@ -213,11 +213,12 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         <MetricCard
           title={displaySummary.financeMode === "HYBRID" ? "Saldo Mercado Pago" : "Saldo Consolidado"}
-          amountCents={displaySummary.monthNetCents ?? 0}
-          subtitle="Saldo atual disponível hoje"
+          amountCents={displaySummary.mercadoPagoOfficialBalanceCents ?? 0}
+          overrideText={displaySummary.mercadoPagoOfficialBalanceCents === null ? "Em reconciliação" : undefined}
+          subtitle={displaySummary.mercadoPagoOfficialBalanceCents === null ? "Aguardando âncora oficial comprovada" : "Saldo oficial comprovado"}
           icon={Wallet}
           variant="cyan"
-          badgeText="Hoje"
+          badgeText={displaySummary.mercadoPagoOfficialBalanceCents === null ? "Em Reconciliação" : "Oficial"}
           valueColor="white"
         />
 

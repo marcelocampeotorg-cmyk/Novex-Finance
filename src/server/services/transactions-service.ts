@@ -138,9 +138,26 @@ export async function importExternalTransactions(
           });
 
           if (existingTx) {
+            const isSettlement = Boolean(
+              raw.rawProviderData &&
+              ((raw.rawProviderData as any).SETTLEMENT_DATE || (raw.rawProviderData as any).SETTLEMENT_NET_AMOUNT || raw.type === "SETTLEMENT")
+            );
+            const needsFinancialSync = isSettlement && (
+              Number(existingTx.amountCents) !== raw.amountCents ||
+              Number(existingTx.netAmountCents) !== raw.netAmountCents ||
+              existingTx.direction !== raw.direction ||
+              existingTx.occurredAt.getTime() !== occurredDate.getTime()
+            );
+
             await tx.externalTransaction.update({
               where: { id: existingTx.id },
               data: {
+                direction: isSettlement ? raw.direction : existingTx.direction,
+                amountCents: isSettlement ? BigInt(raw.amountCents) : existingTx.amountCents,
+                feeCents: isSettlement ? BigInt(raw.feeCents ?? 0) : existingTx.feeCents,
+                netAmountCents: isSettlement ? BigInt(raw.netAmountCents) : existingTx.netAmountCents,
+                occurredAt: isSettlement ? occurredDate : existingTx.occurredAt,
+                type: isSettlement ? raw.type : existingTx.type,
                 description: raw.description && raw.description !== "SETTLEMENT" ? raw.description : existingTx.description,
                 counterpartName: raw.counterpartName || existingTx.counterpartName || null,
                 counterpartDocument: raw.counterpartDocument || existingTx.counterpartDocument || null,
@@ -149,6 +166,40 @@ export async function importExternalTransactions(
                 rawProviderData: raw.rawProviderData ? (raw.rawProviderData as any) : existingTx.rawProviderData || undefined,
               },
             });
+
+            if (needsFinancialSync) {
+              await tx.ledgerEntry.updateMany({
+                where: { externalTransactionId: existingTx.id },
+                data: {
+                  direction: raw.direction,
+                  amountCents: BigInt(raw.netAmountCents),
+                  occurredAt: occurredDate,
+                },
+              });
+
+              await tx.auditLog.create({
+                data: {
+                  workspaceId,
+                  actorType: "SYSTEM",
+                  actorId: "SYSTEM",
+                  action: "TRANSACTION_FINANCIAL_REPAIRED_FROM_SETTLEMENT",
+                  entityType: "ExternalTransaction",
+                  entityId: existingTx.id,
+                  metadata: {
+                    previous: {
+                      amountCents: Number(existingTx.amountCents),
+                      netAmountCents: Number(existingTx.netAmountCents),
+                      direction: existingTx.direction,
+                    },
+                    repaired: {
+                      amountCents: raw.amountCents,
+                      netAmountCents: raw.netAmountCents,
+                      direction: raw.direction,
+                    },
+                  },
+                },
+              });
+            }
 
             // Auto-categorizar se categoria no ledgerEntry for nula
             const categoryName = await categorizeTransactionDescription(raw.description, workspaceId);
@@ -346,27 +397,8 @@ export async function continueMercadoPagoSyncRun(
   try {
     const credentials = parseMercadoPagoCredentials(account.encryptedCredentials!);
     const client = new MercadoPagoReportsClient(credentials.accessToken);
-    const paymentsClient = new MercadoPagoPaymentsClient(credentials.accessToken);
 
-    // 1. Sincronização em Tempo Real de Pagamentos Recentes (/v1/payments/search)
-    try {
-      const livePayments = await paymentsClient.searchLivePayments({ limit: 100, userId: account.externalAccountId || undefined });
-      if (livePayments.length > 0) {
-        await importExternalTransactions(
-          livePayments,
-          account.id,
-          "MERCADO_PAGO_API",
-          "MERCADO_PAGO",
-          INTERNAL_WORKER_CONTEXT,
-          workspaceId,
-          account.financialAccountId,
-        );
-      }
-    } catch (e: any) {
-      console.warn("[TransactionsService] Erro não bloqueante ao consultar live payments:", e.message);
-    }
-
-    // 2. Solicitar geração assíncrona do Settlement Report se ainda não tiver ID remoto
+    // 1. Solicitar geração assíncrona do Settlement Report se ainda não tiver ID remoto
     if (!syncRun.remoteTaskId) {
       const requestRes = await client.requestSettlementReport(beginDate, endDate);
       if (!requestRes.success) {
@@ -475,26 +507,6 @@ export async function continueMercadoPagoSyncRun(
           historyBackfillStatus,
         },
       });
-
-      // Atualizar saldo apurado da FinancialAccount associada
-      if (account.financialAccountId) {
-        const allTx = await db.externalTransaction.findMany({
-          where: { workspaceId, integrationAccountId: account.id, quarantinedAt: null },
-          select: { direction: true, netAmountCents: true },
-        });
-        let calculatedBalance = 0;
-        for (const t of allTx) {
-          calculatedBalance += (t.direction === "CREDIT" ? Number(t.netAmountCents) : -Number(t.netAmountCents));
-        }
-        await db.financialAccount.update({
-          where: { id: account.financialAccountId },
-          data: {
-            officialBalanceCents: BigInt(calculatedBalance),
-            officialBalanceStatus: "CONFIRMED",
-            officialBalanceAt: new Date(),
-          },
-        });
-      }
     }
 
     return {
@@ -769,11 +781,7 @@ export async function enrichAllMercadoPagoTransactions(internalContext?: symbol,
     const credentials = parseMercadoPagoCredentials(account.encryptedCredentials);
     const paymentsClient = new MercadoPagoPaymentsClient(credentials.accessToken);
 
-    // 1. Buscar live payments recentes
-    const livePayments = await paymentsClient.searchLivePayments({ limit: 100, userId: account.externalAccountId || undefined });
-    const paymentMap = new Map(livePayments.map((p) => [p.externalId, p]));
-
-    // 2. Buscar apenas transações que ainda precisam de enriquecimento
+    // 1. Buscar apenas transações que ainda precisam de enriquecimento
     const txsToEnrich = await db.externalTransaction.findMany({
       where: {
         workspaceId,
@@ -792,14 +800,12 @@ export async function enrichAllMercadoPagoTransactions(internalContext?: symbol,
 
     let enrichedCount = 0;
     for (const tx of txsToEnrich) {
-      let pData = paymentMap.get(tx.externalId);
-      if (!pData) {
-        // Pausa preventiva de 100ms entre requisições para conformidade estrita com a política de rate limit
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        const rawPayment = await paymentsClient.getPaymentDetails(tx.externalId);
-        if (rawPayment && (rawPayment.status === "approved" || rawPayment.status === "accredited")) {
-          pData = paymentsClient.mapPaymentToRawTransaction(rawPayment, account.externalAccountId || undefined);
-        }
+      // Pausa preventiva de 100ms entre requisições para conformidade estrita com a política de rate limit
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const rawPayment = await paymentsClient.getPaymentDetails(tx.externalId);
+      let pData: any = null;
+      if (rawPayment && (rawPayment.status === "approved" || rawPayment.status === "accredited")) {
+        pData = paymentsClient.mapPaymentToRawTransaction(rawPayment, account.externalAccountId || undefined);
       }
 
       if (pData) {

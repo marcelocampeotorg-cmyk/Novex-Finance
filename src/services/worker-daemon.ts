@@ -85,74 +85,73 @@ export class WorkerDaemonService {
           console.warn(`[WorkerDaemon] Erro ao executar conciliação para workspace ${ws.id}:`, e.message);
         }
 
-        // 4. Continuar SyncRuns pendentes ou interrompidos (PROCESSING) do workspace (Regra 33)
+        // 4. Continuar SyncRuns pendentes ou executar sync controlado do Mercado Pago
         try {
-          if (ws.financeMode === "HYBRID") {
-            try {
-              await continueMercadoPagoSyncRun({ force: false, internalContext: INTERNAL_WORKER_CONTEXT, workspaceId: ws.id });
-              await enrichAllMercadoPagoTransactions(INTERNAL_WORKER_CONTEXT, ws.id);
-              resumedSyncs++;
-            } catch (syncErr: any) {
-              console.warn(`[WorkerDaemon] Live sync Mercado Pago para workspace ${ws.id}:`, syncErr.message);
-            }
-          }
+          const mpIntegrations = await db.integrationAccount.findMany({
+            where: { workspaceId: ws.id, provider: "MERCADO_PAGO", status: "CONNECTED", isActive: true },
+          });
 
-          const pendingSyncs = ws.financeMode === "HYBRID" ? await db.syncRun.findMany({
-            where: {
-              workspaceId: ws.id,
-              status: "PROCESSING",
-              source: "MERCADO_PAGO_API",
-            },
-            take: 5,
-          }) : [];
-
-          for (const syncRun of pendingSyncs) {
-            try {
-              console.log(`[WorkerDaemon] Retomando SyncRun ${syncRun.id} para workspace ${ws.id}...`);
-              const syncResult = await continueMercadoPagoSyncRun({
-                syncRunId: syncRun.id,
-                integrationAccountId: syncRun.integrationAccountId,
-                internalContext: INTERNAL_WORKER_CONTEXT,
+          for (const integration of mpIntegrations) {
+            // Verificar se já existe um SyncRun PROCESSING ativo para esta integração
+            const activeSync = await db.syncRun.findFirst({
+              where: {
                 workspaceId: ws.id,
-              });
-              if (syncResult && 'status' in syncResult && syncResult.status === 'PARTIAL') {
-                partialCount++;
-              }
-              resumedSyncs++;
-            } catch (syncErr: any) {
-              failedCount++;
-              console.error(`[WorkerDaemon] SyncRun ${syncRun.id} falhou:`, syncErr.message);
-            }
-          }
-
-          if (pendingSyncs.length === 0 && ws.financeMode === "HYBRID") {
-            const integrations = await db.integrationAccount.findMany({
-              where: { workspaceId: ws.id, provider: "MERCADO_PAGO", status: "CONNECTED", isActive: true },
-              select: { id: true, historyBackfillStatus: true },
+                integrationAccountId: integration.id,
+                status: "PROCESSING",
+              },
+              orderBy: { createdAt: "desc" },
             });
-            for (const integration of integrations) {
-              if (["NOT_STARTED", "IN_PROGRESS"].includes(integration.historyBackfillStatus)) {
+
+            if (activeSync) {
+              try {
+                console.log(`[WorkerDaemon] Retomando SyncRun ativo ${activeSync.id} para integração ${integration.id}...`);
+                const syncResult = await continueMercadoPagoSyncRun({
+                  syncRunId: activeSync.id,
+                  integrationAccountId: integration.id,
+                  internalContext: INTERNAL_WORKER_CONTEXT,
+                  workspaceId: ws.id,
+                });
+                if (syncResult && "status" in syncResult && syncResult.status === "PARTIAL") {
+                  partialCount++;
+                }
+                resumedSyncs++;
+              } catch (syncErr: any) {
+                failedCount++;
+                console.error(`[WorkerDaemon] SyncRun ${activeSync.id} falhou:`, syncErr.message);
+              }
+            } else {
+              // Sem run em processamento: iniciar nova rodada apenas se respeitar cadência mínima
+              const now = Date.now();
+              const lastSyncTime = integration.lastSyncAt ? integration.lastSyncAt.getTime() : 0;
+              const isBackfill = ["NOT_STARTED", "IN_PROGRESS"].includes(integration.historyBackfillStatus);
+              const minIntervalMs = isBackfill ? 30 * 1000 : 5 * 60 * 1000;
+
+              if (now - lastSyncTime >= minIntervalMs) {
                 try {
-                  await continueMercadoPagoSyncRun({
+                  const syncResult = await continueMercadoPagoSyncRun({
                     integrationAccountId: integration.id,
                     internalContext: INTERNAL_WORKER_CONTEXT,
                     workspaceId: ws.id,
                   });
+                  if (syncResult && "status" in syncResult && syncResult.status === "PARTIAL") {
+                    partialCount++;
+                  }
+                  await enrichAllMercadoPagoTransactions(INTERNAL_WORKER_CONTEXT, ws.id);
                   resumedSyncs++;
                 } catch (syncErr: any) {
                   failedCount++;
-                  console.error(`[WorkerDaemon] Backfill da integração ${integration.id} falhou:`, syncErr.message);
+                  console.error(`[WorkerDaemon] Novo Sync para integração ${integration.id} falhou:`, syncErr.message);
                 }
               }
             }
           }
         } catch (e: any) {
           subsystemErrorsCount++;
-          console.warn(`[WorkerDaemon] Erro ao retomar SyncRuns para workspace ${ws.id}:`, e.message);
+          console.warn(`[WorkerDaemon] Erro ao gerenciar SyncRuns para workspace ${ws.id}:`, e.message);
         }
       }
 
-      const overallSuccess = subsystemErrorsCount === 0 && failedCount === 0;
+      const overallSuccess = subsystemErrorsCount === 0 && failedCount === 0 && partialCount === 0;
 
       if (overallSuccess) {
         console.log(

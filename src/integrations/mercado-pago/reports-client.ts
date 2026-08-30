@@ -120,43 +120,60 @@ export class MercadoPagoReportsClient {
     this.accessToken = accessToken;
   }
 
+  private formatIsoWithoutMs(date: Date): string {
+    return date.toISOString().replace(/\.\d{3}Z$/, "Z");
+  }
+
   /**
    * Garante que a configuração do relatório de liquidação exista na conta do Mercado Pago.
    * Se a conta nunca tiver configurado o relatório, cria a configuração padrão automaticamente.
    */
   async ensureReportConfig(): Promise<void> {
+    const requiredColumns = [
+      { key: "SOURCE_ID" },
+      { key: "EXTERNAL_REFERENCE" },
+      { key: "TRANSACTION_TYPE" },
+      { key: "DESCRIPTION" },
+      { key: "TRANSACTION_AMOUNT" },
+      { key: "TRANSACTION_CURRENCY" },
+      { key: "FEE_AMOUNT" },
+      { key: "SETTLEMENT_NET_AMOUNT" },
+      { key: "SETTLEMENT_CURRENCY" },
+      { key: "TRANSACTION_DATE" },
+      { key: "SETTLEMENT_DATE" },
+      { key: "PAYMENT_METHOD" },
+      { key: "PAYMENT_METHOD_TYPE" },
+    ];
+
     const reportConfig = {
       file_name_prefix: "novex-settlement",
       display_timezone: "GMT-03",
       frequency: { type: "daily", value: 1, hour: 0 },
       separator: ";",
       scheduled: false,
-      include_withdraw: false,
-      columns: [
-        { key: "SOURCE_ID" },
-        { key: "EXTERNAL_REFERENCE" },
-        { key: "TRANSACTION_TYPE" },
-        { key: "DESCRIPTION" },
-        { key: "TRANSACTION_AMOUNT" },
-        { key: "TRANSACTION_CURRENCY" },
-        { key: "FEE_AMOUNT" },
-        { key: "SETTLEMENT_NET_AMOUNT" },
-        { key: "SETTLEMENT_CURRENCY" },
-        { key: "TRANSACTION_DATE" },
-        { key: "SETTLEMENT_DATE" },
-        { key: "PAYMENT_METHOD" },
-      ],
+      include_withdraw: true,
+      columns: requiredColumns,
     };
+
     const configRes = await fetch("https://api.mercadopago.com/v1/account/settlement_report/config", {
       headers: { Authorization: `Bearer ${this.accessToken}` },
     });
+
     if (configRes.ok) {
       const currentConfig = await configRes.json();
       const currentColumns = new Set(
         Array.isArray(currentConfig.columns) ? currentConfig.columns.map((column: any) => String(column?.key || "")) : []
       );
-      const requiredColumns = reportConfig.columns.map((column) => column.key);
-      if (requiredColumns.every((column) => currentColumns.has(column))) return;
+      const missingColumns = requiredColumns.filter((col) => !currentColumns.has(col.key));
+      const hasWithdraw = currentConfig.include_withdraw === true;
+
+      if (missingColumns.length === 0 && hasWithdraw) return;
+
+      const updatePayload = {
+        ...currentConfig,
+        include_withdraw: true,
+        columns: requiredColumns,
+      };
 
       const updateRes = await fetch("https://api.mercadopago.com/v1/account/settlement_report/config", {
         method: "PUT",
@@ -164,25 +181,29 @@ export class MercadoPagoReportsClient {
           Authorization: `Bearer ${this.accessToken}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(reportConfig),
+        body: JSON.stringify(updatePayload),
       });
+
       if (!updateRes.ok) {
         const errorData = await updateRes.json().catch(() => ({}));
         throw new Error(errorData.message || errorData.error || `HTTP ${updateRes.status} ao atualizar configuração do settlement_report`);
       }
       return;
     }
+
     if (configRes.status !== 404) {
       throw new Error(`HTTP ${configRes.status} ao consultar configuração do settlement_report`);
     }
+
     const createRes = await fetch("https://api.mercadopago.com/v1/account/settlement_report/config", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${this.accessToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(reportConfig),
-        });
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(reportConfig),
+    });
+
     if (!createRes.ok && createRes.status !== 409) {
       throw new Error(`HTTP ${createRes.status} ao criar configuração do settlement_report`);
     }
@@ -193,15 +214,14 @@ export class MercadoPagoReportsClient {
    * POST https://api.mercadopago.com/v1/account/settlement_report
    */
   async requestSettlementReport(
-    beginDate?: Date,
-    endDate?: Date
-  ): Promise<{ success: boolean; taskId?: string; status?: string; fileName?: string; error?: string }> {
+    beginDate: Date,
+    endDate: Date
+  ): Promise<{ success: boolean; taskId?: string; status?: "PROCESSING" | "READY"; fileName?: string; error?: string }> {
     try {
       await this.ensureReportConfig();
 
-      const toMercadoPagoUtc = (date: Date) => date.toISOString().replace(/\.\d{3}Z$/, "Z");
-      const begin = toMercadoPagoUtc(beginDate || new Date(Date.now() - 30 * 24 * 3600 * 1000));
-      const end = toMercadoPagoUtc(endDate || new Date());
+      const begin = this.formatIsoWithoutMs(beginDate);
+      const end = this.formatIsoWithoutMs(endDate);
 
       const response = await fetch("https://api.mercadopago.com/v1/account/settlement_report", {
         method: "POST",
@@ -215,7 +235,7 @@ export class MercadoPagoReportsClient {
         }),
       });
 
-      if (response.status === 202 || response.ok) {
+      if (response.ok) {
         const data = await response.json();
         const taskId = data.id !== undefined && data.id !== null ? String(data.id) : undefined;
 
@@ -230,6 +250,7 @@ export class MercadoPagoReportsClient {
       const errMsg = String(errData.message || errData.error || "");
 
       // Resiliência: se o Mercado Pago atingiu o limite de relatórios gerados simultâneos (HTTP 400 Max number of reports)
+      // SOMENTE reutilizar se o relatório na lista corresponder estritamente às datas solicitadas
       if (response.status === 400 || errMsg.toLowerCase().includes("max number of reports")) {
         try {
           const listRes = await fetch("https://api.mercadopago.com/v1/account/settlement_report/list", {
@@ -237,13 +258,24 @@ export class MercadoPagoReportsClient {
           });
           if (listRes.ok) {
             const list = await listRes.json();
-            const readyReport = Array.isArray(list) ? list.find((r: any) => r.status === "processed" && r.file_name) : null;
-            if (readyReport) {
+            const requestedBeginUtc = new Date(begin).getTime();
+            const requestedEndUtc = new Date(end).getTime();
+
+            const matchingReport = Array.isArray(list) ? list.find((r: any) => {
+              if (r.status !== "processed" || !r.file_name) return false;
+              if (!r.begin_date || !r.end_date) return false;
+              const repBegin = new Date(r.begin_date).getTime();
+              const repEnd = new Date(r.end_date).getTime();
+              return Math.abs(repBegin - requestedBeginUtc) <= 2 * 3600 * 1000 &&
+                     Math.abs(repEnd - requestedEndUtc) <= 2 * 3600 * 1000;
+            }) : null;
+
+            if (matchingReport) {
               return {
                 success: true,
-                taskId: String(readyReport.id),
+                taskId: String(matchingReport.id),
                 status: "READY",
-                fileName: readyReport.file_name,
+                fileName: matchingReport.file_name,
               };
             }
           }

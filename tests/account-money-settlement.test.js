@@ -80,12 +80,15 @@ test("Account Money: payload bruto do provedor e zero líquido real são preserv
   assert.strictEqual(result.transactions[0].rawProviderData.METADATA, "fee-total");
 });
 
-test("Governança: Ausencia de /v1/payments/search e scripts destrutivos no repositório", () => {
+test("Governança: Ausencia de /v1/payments/search no pipeline do Ledger e scripts destrutivos no repositório", () => {
   const reportsClientPath = path.join(__dirname, "../src/integrations/mercado-pago/reports-client.ts");
-  const content = fs.readFileSync(reportsClientPath, "utf-8");
+  const reportsContent = fs.readFileSync(reportsClientPath, "utf-8");
+  assert.strictEqual(reportsContent.includes("payments/search"), false, "reports-client.ts nao deve conter payments/search");
+  assert.strictEqual(reportsContent.includes("fetchAccountStatement"), false, "reports-client.ts nao deve conter fetchAccountStatement");
 
-  assert.strictEqual(content.includes("payments/search"), false, "reports-client.ts nao deve conter payments/search");
-  assert.strictEqual(content.includes("fetchAccountStatement"), false, "reports-client.ts nao deve conter fetchAccountStatement");
+  const txServicePath = path.join(__dirname, "../src/server/services/transactions-service.ts");
+  const txContent = fs.readFileSync(txServicePath, "utf-8");
+  assert.strictEqual(txContent.includes("searchLivePayments"), false, "transactions-service.ts nao deve conter chamada para searchLivePayments");
 
   const scratchDir = path.join(__dirname, "../scratch");
   assert.strictEqual(fs.existsSync(scratchDir), false, "Diretorio scratch destrutivo nao deve existir no repositorio.");

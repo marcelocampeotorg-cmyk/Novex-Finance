@@ -204,31 +204,17 @@ export async function getWorkspaceSummary() {
     // Correção F: Projeção é fluxo projetado, não saldo absoluto
     const projectedFlowCents = knownNetMovementCents + totalReceivablePendingCents - totalPayablePendingCents;
     const mercadoPagoBalanceStatus: "CONFIRMED" | "RECONCILING" | "UNAVAILABLE" =
-      mercadoPagoAccount?.officialBalanceStatus === "CONFIRMED" || (mpIntegration && mpIntegration.status === "CONNECTED")
+      mercadoPagoAccount?.officialBalanceStatus === "CONFIRMED"
         ? "CONFIRMED"
+        : mpIntegration && mpIntegration.status === "CONNECTED"
+        ? "RECONCILING"
         : "UNAVAILABLE";
 
     let mercadoPagoOfficialBalanceCents: number | null = null;
-    if (mercadoPagoBalanceStatus === "CONFIRMED") {
-      if (mercadoPagoAccount?.openingBalanceCents !== null && mercadoPagoAccount?.openingBalanceCents !== undefined && mercadoPagoAccount?.openingBalanceAt) {
-        const entries = await db.ledgerEntry.findMany({
-          where: {
-            workspaceId,
-            financialAccountId: mercadoPagoAccount.id,
-            occurredAt: { gte: mercadoPagoAccount.openingBalanceAt },
-            OR: [{ externalTransaction: null }, { externalTransaction: { quarantinedAt: null } }],
-          },
-          select: { direction: true, amountCents: true },
-        });
-        mercadoPagoOfficialBalanceCents = calculateAnchoredBalance(
-          Number(mercadoPagoAccount.openingBalanceCents),
-          entries.map((entry) => ({ direction: entry.direction, amountCents: Number(entry.amountCents) }))
-        );
-      } else if (mercadoPagoAccount?.officialBalanceCents !== null && mercadoPagoAccount?.officialBalanceCents !== undefined) {
-        mercadoPagoOfficialBalanceCents = Number(mercadoPagoAccount.officialBalanceCents);
-      } else {
-        mercadoPagoOfficialBalanceCents = monthNetCents;
-      }
+    if (mercadoPagoAccount?.officialBalanceStatus === "CONFIRMED" && mercadoPagoAccount?.officialBalanceCents !== null && mercadoPagoAccount?.officialBalanceCents !== undefined) {
+      mercadoPagoOfficialBalanceCents = Number(mercadoPagoAccount.officialBalanceCents);
+    } else {
+      mercadoPagoOfficialBalanceCents = null;
     }
 
     const consolidatedBalanceCents = calculateConsolidatedBalance({ mode: financeMode, manualBalanceCents, mercadoPagoOfficialBalanceCents });
@@ -298,6 +284,9 @@ export async function setAccountBalanceAnchor(data: {
       where: { id: data.financialAccountId, workspaceId },
     });
     if (!account) return { success: false, error: "Conta financeira não encontrada." };
+    if (account.type !== "MANUAL") {
+      return { success: false, error: "Apenas contas manuais podem receber âncora de saldo manual. A conta Mercado Pago não pode ser alterada manualmente." };
+    }
 
     const anchorDate = new Date(data.openingBalanceAt);
     if (isNaN(anchorDate.getTime())) return { success: false, error: "Data de âncora inválida." };
@@ -307,8 +296,6 @@ export async function setAccountBalanceAnchor(data: {
       data: {
         openingBalanceCents: BigInt(data.openingBalanceCents),
         openingBalanceAt: anchorDate,
-        officialBalanceStatus: "CONFIRMED",
-        officialBalanceAt: new Date(),
       },
     });
 
