@@ -172,36 +172,42 @@ export default function DashboardPage() {
             }}
             disabled={isSyncing}
             className={`flex items-center gap-2 text-xs px-3.5 py-2 rounded-lg border transition-all ${
-              isSyncing
+              isSyncing || displaySummary.syncSource === "PROCESSANDO"
                 ? "bg-novex-surface1 text-novex-cyan border-novex-cyan/40 cursor-wait shadow-sm"
-                : syncError || (displaySummary.syncSource !== "SINCRONIZADO" && displaySummary.syncSource !== "CALCULADO")
+                : syncError || displaySummary.syncSource === "FALHA"
+                ? "bg-red-500/10 text-red-300 border-red-500/30 hover:bg-red-500/20"
+                : displaySummary.syncSource === "DESCONECTADO" || displaySummary.syncSource === "PENDENTE"
                 ? "bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20"
                 : "bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20"
             }`}
             title="Clique para sincronizar com Mercado Pago agora"
           >
-            {isSyncing ? (
+            {isSyncing || displaySummary.syncSource === "PROCESSANDO" ? (
               <>
                 <RefreshCw className="h-4 w-4 animate-spin text-novex-cyan" />
-                <span className="font-semibold text-novex-cyan">Sincronizando...</span>
+                <span className="font-semibold text-novex-cyan">Sincronização em andamento...</span>
               </>
-            ) : syncError || displaySummary.syncSource === "DESCONECTADO" || displaySummary.syncSource === "PENDENTE" ? (
+            ) : syncError || displaySummary.syncSource === "FALHA" ? (
+              <>
+                <AlertTriangle className="h-4 w-4 text-red-400" />
+                <span className="font-semibold text-red-300">
+                  {syncError ? `Falha no Sync: ${syncError}` : "Falha na sincronização"}
+                </span>
+                <RefreshCw className="h-3.5 w-3.5 ml-1 opacity-70 hover:opacity-100" />
+              </>
+            ) : displaySummary.syncSource === "DESCONECTADO" || displaySummary.syncSource === "PENDENTE" ? (
               <>
                 <AlertTriangle className="h-4 w-4 text-amber-400" />
-                <span className="font-semibold">
-                  {displaySummary.syncSource === "DESCONECTADO"
-                    ? "Atualização pendente"
-                    : syncError
-                    ? `Falha no Sync (${syncError})`
-                    : "Atualização pendente"}
+                <span className="font-semibold text-amber-300">
+                  {displaySummary.syncSource === "DESCONECTADO" ? "Integração Desconectada" : "Atualização pendente"}
                 </span>
                 <RefreshCw className="h-3.5 w-3.5 ml-1 opacity-70 hover:opacity-100" />
               </>
             ) : (
               <>
                 <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                <span className="font-semibold">
-                  Última atualização: {displaySummary.lastSyncAt ? formatDate(displaySummary.lastSyncAt) : "pendente"}
+                <span className="font-semibold text-emerald-300">
+                  Última sincronização: {displaySummary.lastSyncAt ? formatDate(displaySummary.lastSyncAt) : "pendente"}
                 </span>
                 <RefreshCw className="h-3.5 w-3.5 ml-1 opacity-70 hover:opacity-100" />
               </>

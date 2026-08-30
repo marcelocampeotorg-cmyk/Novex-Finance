@@ -320,22 +320,22 @@ Status: RESOLVIDO
 - **Correção:** Eliminadas todas as travas condicionais de `financeMode` em `transactions-service.ts` e `workspace.ts`. A existência de integração ativa/conectada governa a leitura e sincronização.
 - **Teste:** Testes comportamentais em `tests/forensic-finance-rules.test.js`.
 
-### ERR-049 — Concorrência de SyncRun permitindo dois POSTs remotos simultâneos
+### ERR-049 — Concorrência de SyncRun permitindo dois POSTs remotos simultâneos e risco de claim abandonado
 Status: RESOLVIDO
-- **Data:** 2026-08-29
+- **Data:** 2026-08-29 / Atualizado em 2026-08-30
 - **Área:** concorrência e idempotência de relatórios remotos
-- **Sintoma:** Duas requisições simultâneas compartilhavam o mesmo SyncRun com `remoteTaskId: null` e ambas disparavam `requestSettlementReport` no Mercado Pago.
-- **Causa:** Falta de trava transacional atômica antes do disparo HTTP externo.
-- **Correção:** Implementado claim atômico via `updateMany` condicional no PostgreSQL (`errorCode: "REQUESTING_REPORT"`). Apenas uma execução ganha o direito do POST; a outra retorna em andamento (`PROCESSING`).
-- **Teste:** Teste com concorrência real simulada em `tests/forensic-finance-rules.test.js`.
+- **Sintoma:** Duas requisições simultâneas compartilhavam o mesmo SyncRun com `remoteTaskId: null` e ambas disparavam `requestSettlementReport` no Mercado Pago. Adicionalmente, se o processo sofresse crash durante o claim, o status ficava preso em `REQUESTING_REPORT` indefinidamente.
+- **Causa:** Falta de trava atômica antes do disparo HTTP externo e falta de expiração de lease temporal no claim.
+- **Correção:** Implementado claim atômico com lease de 2 minutos via `updateMany` condicional no PostgreSQL (`errorCode: "REQUESTING_REPORT"` com `startedAt < now - 2min` permitindo recuperação de worker morto). Implementada verificação prévia determinística na lista de relatórios do Mercado Pago antes de emitir qualquer novo POST (evita chamadas duplicadas em falhas de persistência após o POST).
+- **Teste:** Testes comportamentais em `tests/forensic-finance-rules.test.js` cobrindo claim atômico, lease ativo e recuperação pós-expiração.
 
-### ERR-050 — Forçar sincronização e cooldown ignorando momento real da falha
+### ERR-050 — Forçar sincronização e cooldown ignorando momento real da falha e falta de backoff progressivo real
 Status: RESOLVIDO
-- **Data:** 2026-08-29
+- **Data:** 2026-08-29 / Atualizado em 2026-08-30
 - **Área:** proteção contra rate limits e cotas da API
-- **Sintoma:** Cliques repetidos na UI (force=true) ou ticks do worker calculavam cooldown a partir do `createdAt` do run (que podia ter sido criado minutos antes da falha), permitindo loops de chamadas contra o provedor bloqueado.
-- **Causa:** Cálculo temporal baseado em `createdAt` e `force=true` contornando proteções.
-- **Correção:** Referência temporal ajustada para `finishedAt || updatedAt || createdAt` e proteção central implementada diretamente no `continueMercadoPagoSyncRun`, aplicando backoff de 15 minutos em `Max number of reports` / 429 e 5 minutos em falhas gerais.
+- **Sintoma:** Cliques repetidos na UI (force=true) ou ticks do worker calculavam cooldown a partir do `createdAt` do run e não aumentavam o tempo de espera após falhas consecutivas, gerando dezenas de SyncRuns `FAILED` durante indisponibilidade do provedor.
+- **Causa:** Cálculo temporal baseado em `createdAt`, ausência de rate limit central no `isForce` e intervalos fixos em vez de progressivos.
+- **Correção:** Referência temporal ajustada para `finishedAt || updatedAt || createdAt`. Implementado backoff progressivo real com base no histórico de falhas consecutivas (15m -> 30m -> 60m para Max Reports/429; 5m -> 15m -> 30m para falhas gerais). Inserido rate limit central de 60 segundos mesmo com `isForce=true`.
 - **Teste:** Testes em `tests/forensic-finance-rules.test.js`.
 
 ### ERR-051 — Inferência implícita de ambiente MP por prefixo de token e cast de NAO_DETECTADO
@@ -346,3 +346,30 @@ Status: RESOLVIDO
 - **Causa:** Falta de validação estrita do enum de ambiente no backend e frontend.
 - **Correção:** `saveCredentialsSchema` exige explicitamente `"PRODUCTION" | "SANDBOX"` sem fallback implícito e `configuracoes/page.tsx` somente atribui se o valor for estritamente um dos dois.
 - **Teste:** Testes em `tests/forensic-finance-rules.test.js`.
+
+### ERR-052 — Worker Daemon não iniciava nova sincronização quando activeSync era nulo
+Status: RESOLVIDO
+- **Data:** 2026-08-30
+- **Área:** orquestração em background / Worker Daemon
+- **Sintoma:** Após o término de um SyncRun (`activeSync === null`), os ticks subsequentes do worker não iniciavam uma nova sincronização automática, parando de puxar novas movimentações.
+- **Causa:** Bloco de decisão de novo sync estava estruturado incorretamente dentro da cláusula `if (activeSync)` em vez de estar no ramo `else`.
+- **Correção:** Estrutura corrigida com bifurcação estrita: `if (activeSync)` apenas retoma o run em andamento; `else` avalia a política de cadência e backoff progressivo e dispara novo ciclo quando elegível.
+- **Teste:** Teste estrutural e comportamental em `tests/forensic-finance-rules.test.js`.
+
+### ERR-053 — Transações históricas criadas por Payments API sem comprovação de liquidação contábil
+Status: RESOLVIDO
+- **Data:** 2026-08-30
+- **Área:** conciliação contábil / auditoria forense
+- **Sintoma:** 97 das 125 ExternalTransactions possuíam dados originados da antiga Payments API, podendo inflar ganhos e gastos do mês com eventos não liquidados.
+- **Causa:** Histórico legado utilizava `/v1/payments/search` como fonte primária sem confrontar com os relatórios de liquidação.
+- **Correção:** Auditoria forense confrontou todas as 97 transações com todos os 52 relatórios oficiais de liquidação existentes no Mercado Pago. 34 foram comprovadas com dados exatos e seus `rawProviderData` foram restaurados com o CSV do Settlement Report (movendo os dados de pagamento para `rawEnrichmentData`). As 63 transações restantes sem evidência contábil foram postas em quarentena auditável (`quarantinedAt: new Date()`, `quarantineReason: "UNCONFIRMED_PAYMENTS_API_IMPORT"`), expurgando R$ 1.146,95 de distorção não comprovada do mês de Agosto/2026.
+- **Evidência:** Auditoria forense no banco e registro no `AuditLog` com id de lote `BATCH_97`.
+
+### ERR-054 — Interface da Home exibindo CheckCircle verde em status PROCESSANDO e FALHA
+Status: RESOLVIDO
+- **Data:** 2026-08-30
+- **Área:** UI / Dashboard / Feedback de Sincronização
+- **Sintoma:** A Home exibia o ícone `CheckCircle2` verde com texto de última atualização mesmo quando o último run havia falhado (`FALHA`) ou estava em andamento (`PROCESSANDO`).
+- **Causa:** As condições na Home apenas desviavam para alerta nos estados `DESCONECTADO` e `PENDENTE`.
+- **Correção:** Mapeamento visual estrito: `PROCESSANDO` exibe spinner de carregamento e texto "Sincronização em andamento..."; `FALHA` exibe badge vermelho com `AlertTriangle` e mensagem de erro; `CheckCircle2` verde é renderizado exclusivamente no status `SINCRONIZADO`.
+- **Teste:** Teste em `tests/forensic-finance-rules.test.js`.

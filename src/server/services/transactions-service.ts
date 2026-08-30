@@ -346,9 +346,33 @@ export async function continueMercadoPagoSyncRun(
 
     if (lastRun && lastRun.status === "FAILED") {
       const failureTime = (lastRun.finishedAt || lastRun.updatedAt || lastRun.createdAt).getTime();
+
+      let consecutiveFailures = 0;
+      const recentRuns = await db.syncRun.findMany({
+        where: { workspaceId, integrationAccountId: account.id },
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        select: { status: true },
+      });
+      for (const r of recentRuns) {
+        if (r.status === "FAILED") consecutiveFailures++;
+        else break;
+      }
+
       const isMaxReports = Boolean(lastRun.errorMessage && lastRun.errorMessage.includes("Max number of reports"));
       const isRateLimit = Boolean(lastRun.errorMessage && (lastRun.errorMessage.includes("429") || lastRun.errorMessage.includes("Rate limit")));
-      const cooldownMs = (isMaxReports || isRateLimit) ? 15 * 60 * 1000 : 5 * 60 * 1000;
+
+      let cooldownMs: number;
+      if (isMaxReports || isRateLimit) {
+        cooldownMs = consecutiveFailures >= 3 ? 60 * 60 * 1000 : (consecutiveFailures === 2 ? 30 * 60 * 1000 : 15 * 60 * 1000);
+      } else if (consecutiveFailures >= 3) {
+        cooldownMs = 30 * 60 * 1000;
+      } else if (consecutiveFailures === 2) {
+        cooldownMs = 15 * 60 * 1000;
+      } else {
+        cooldownMs = 5 * 60 * 1000;
+      }
+
       const timeSinceFailure = Date.now() - failureTime;
 
       if (timeSinceFailure < cooldownMs) {
@@ -366,7 +390,24 @@ export async function continueMercadoPagoSyncRun(
       }
     }
 
-    // Cache de 5 minutos para sucessos completos
+    // Rate limit central de 60 segundos mesmo com isForce para evitar tempestades de chamadas
+    if (isForce && account.lastSyncAt) {
+      const now = new Date();
+      const diffInSeconds = (now.getTime() - account.lastSyncAt.getTime()) / 1000;
+      if (diffInSeconds < 60) {
+        return {
+          success: true,
+          cached: true,
+          message: "Sincronização recente (menos de 1 min). Retornando dados locais.",
+          insertedCount: 0,
+          updatedCount: 0,
+          skippedCount: 0,
+          autoMatchedCount: 0,
+        };
+      }
+    }
+
+    // Cache normal de 5 minutos para chamadas não forçadas
     const CACHE_MINUTES = 5;
     if (!isForce && account.lastSyncAt && account.historyBackfillStatus === "COMPLETE") {
       const now = new Date();
@@ -445,21 +486,29 @@ export async function continueMercadoPagoSyncRun(
 
     // 1. Solicitar geração assíncrona do Settlement Report se ainda não tiver ID remoto
     if (!syncRun.remoteTaskId) {
-      // Atomic claim para garantir que exatamente 1 execução ganhe o direito de fazer o POST remoto para este SyncRun
+      // Atomic claim com lease de 2 minutos para permitir recuperação de claim abandonado
+      const LEASE_MS = 2 * 60 * 1000;
+      const nowClaim = new Date();
+      const staleClaimThreshold = new Date(nowClaim.getTime() - LEASE_MS);
+
       const claimRes = await db.syncRun.updateMany({
         where: {
           id: syncRun.id,
           remoteTaskId: null,
-          errorCode: { not: "REQUESTING_REPORT" },
+          OR: [
+            { errorCode: { not: "REQUESTING_REPORT" } },
+            { errorCode: "REQUESTING_REPORT", startedAt: { lt: staleClaimThreshold } },
+          ],
         },
         data: {
           errorCode: "REQUESTING_REPORT",
+          startedAt: nowClaim,
         },
       });
 
       if (claimRes.count === 0) {
-        // Outro processo concorrente já está disparando a solicitação
-        console.log(`[TransactionsService] Solicitação remota já reivindicada por processo concorrente para SyncRun ${syncRun.id}.`);
+        // Outro processo concorrente já está disparando a solicitação e o lease está ativo
+        console.log(`[TransactionsService] Solicitação remota já reivindicada por processo concorrente ativo para SyncRun ${syncRun.id}.`);
         return {
           success: true,
           status: "PROCESSING",
@@ -471,47 +520,86 @@ export async function continueMercadoPagoSyncRun(
         };
       }
 
-      let requestRes;
+      // 1.1 Recuperação de resultado remoto ambíguo: verificar se já existe relatório correspondente antes de emitir POST
       try {
-        requestRes = await client.requestSettlementReport(beginDate, endDate);
-      } catch (reqErr: any) {
-        await db.syncRun.update({
-          where: { id: syncRun.id },
-          data: { errorCode: runPurpose },
+        const listRes = await fetch("https://api.mercadopago.com/v1/account/settlement_report/list", {
+          headers: { Authorization: `Bearer ${credentials.accessToken}` },
         });
-        throw reqErr;
+        if (listRes.ok) {
+          const list = await listRes.json();
+          const requestedBeginIso = new Date(beginDate).toISOString().replace(/\.\d{3}Z$/, "Z");
+          const requestedEndIso = new Date(endDate).toISOString().replace(/\.\d{3}Z$/, "Z");
+
+          const existingReport = Array.isArray(list) ? list.find((r: any) => {
+            if (r.status !== "processed" || !r.file_name || !r.begin_date || !r.end_date) return false;
+            const repBeginIso = new Date(r.begin_date).toISOString().replace(/\.\d{3}Z$/, "Z");
+            const repEndIso = new Date(r.end_date).toISOString().replace(/\.\d{3}Z$/, "Z");
+            return repBeginIso === requestedBeginIso && repEndIso === requestedEndIso;
+          }) : null;
+
+          if (existingReport) {
+            await db.syncRun.update({
+              where: { id: syncRun.id },
+              data: {
+                remoteTaskId: String(existingReport.id),
+                remoteFileName: existingReport.file_name,
+                remoteReportId: String(existingReport.id),
+                errorCode: runPurpose,
+              },
+            });
+            syncRun.remoteTaskId = String(existingReport.id);
+            syncRun.remoteFileName = existingReport.file_name;
+            syncRun.remoteReportId = String(existingReport.id);
+          }
+        }
+      } catch (ambiguousErr) {
+        console.warn("[TransactionsService] Verificação prévia de relatório existente falhou:", ambiguousErr);
       }
 
-      if (!requestRes.success) {
-        await db.syncRun.update({
-          where: { id: syncRun.id },
-          data: { errorCode: runPurpose },
-        });
-        throw new Error(requestRes.error || "Falha ao solicitar relatório de liquidação no Mercado Pago.");
-      }
+      // Se após a verificação prévia ainda não tiver remoteTaskId, emite a chamada POST oficial
+      if (!syncRun.remoteTaskId) {
+        let requestRes;
+        try {
+          requestRes = await client.requestSettlementReport(beginDate, endDate);
+        } catch (reqErr: any) {
+          await db.syncRun.update({
+            where: { id: syncRun.id },
+            data: { errorCode: runPurpose },
+          });
+          throw reqErr;
+        }
 
-      if (requestRes.fileName && requestRes.status === "READY") {
-        await db.syncRun.update({
-          where: { id: syncRun.id },
-          data: {
-            remoteTaskId: requestRes.taskId || "DIRECT",
-            remoteFileName: requestRes.fileName,
-            remoteReportId: requestRes.taskId || "DIRECT",
-            errorCode: runPurpose,
-          },
-        });
-        syncRun.remoteTaskId = requestRes.taskId || "DIRECT";
-        syncRun.remoteFileName = requestRes.fileName;
-        syncRun.remoteReportId = requestRes.taskId || "DIRECT";
-      } else if (requestRes.taskId) {
-        await db.syncRun.update({
-          where: { id: syncRun.id },
-          data: {
-            remoteTaskId: requestRes.taskId,
-            errorCode: runPurpose,
-          },
-        });
-        syncRun.remoteTaskId = requestRes.taskId;
+        if (!requestRes.success) {
+          await db.syncRun.update({
+            where: { id: syncRun.id },
+            data: { errorCode: runPurpose },
+          });
+          throw new Error(requestRes.error || "Falha ao solicitar relatório de liquidação no Mercado Pago.");
+        }
+
+        if (requestRes.fileName && requestRes.status === "READY") {
+          await db.syncRun.update({
+            where: { id: syncRun.id },
+            data: {
+              remoteTaskId: requestRes.taskId || "DIRECT",
+              remoteFileName: requestRes.fileName,
+              remoteReportId: requestRes.taskId || "DIRECT",
+              errorCode: runPurpose,
+            },
+          });
+          syncRun.remoteTaskId = requestRes.taskId || "DIRECT";
+          syncRun.remoteFileName = requestRes.fileName;
+          syncRun.remoteReportId = requestRes.taskId || "DIRECT";
+        } else if (requestRes.taskId) {
+          await db.syncRun.update({
+            where: { id: syncRun.id },
+            data: {
+              remoteTaskId: requestRes.taskId,
+              errorCode: runPurpose,
+            },
+          });
+          syncRun.remoteTaskId = requestRes.taskId;
+        }
       }
     }
 

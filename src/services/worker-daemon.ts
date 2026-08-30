@@ -115,6 +115,7 @@ export class WorkerDaemonService {
             });
 
             if (activeSync) {
+              // 1. Se já existe um SyncRun PROCESSING ativo, apenas retomamos e avançamos
               try {
                 console.log(`[WorkerDaemon] Retomando SyncRun ativo ${activeSync.id} para integração ${integration.id}...`);
                 const syncResult = await continueMercadoPagoSyncRun({
@@ -131,7 +132,8 @@ export class WorkerDaemonService {
                 failedCount++;
                 console.error(`[WorkerDaemon] SyncRun ${activeSync.id} falhou:`, syncErr.message);
               }
-              // Decisão estrita de CRIAR novo report: baseada no momento real da última falha ou término
+            } else {
+              // 2. Se NÃO existe SyncRun ativo, avaliamos a política de cadência e backoff progressivo antes de iniciar um novo
               const now = Date.now();
               const lastRun = await db.syncRun.findFirst({
                 where: { integrationAccountId: integration.id },
@@ -141,17 +143,42 @@ export class WorkerDaemonService {
               const lastEventTime = lastRun
                 ? (lastRun.finishedAt || lastRun.updatedAt || lastRun.createdAt).getTime()
                 : 0;
+
+              // Calcular falhas consecutivas para backoff progressivo real
+              let consecutiveFailures = 0;
+              if (lastRun?.status === "FAILED") {
+                const recentRuns = await db.syncRun.findMany({
+                  where: { integrationAccountId: integration.id },
+                  orderBy: { createdAt: "desc" },
+                  take: 5,
+                  select: { status: true }
+                });
+                for (const r of recentRuns) {
+                  if (r.status === "FAILED") consecutiveFailures++;
+                  else break;
+                }
+              }
+
               const isBackfill = ["NOT_STARTED", "IN_PROGRESS"].includes(integration.historyBackfillStatus);
-              const isLastFailed = lastRun?.status === "FAILED";
               const isMaxReports = Boolean(lastRun?.errorMessage && lastRun.errorMessage.includes("Max number of reports"));
               const isRateLimit = Boolean(lastRun?.errorMessage && (lastRun.errorMessage.includes("429") || lastRun.errorMessage.includes("Rate limit")));
 
-              // Backoff progressivo: 15 min em Max Reports/429, 5 min em falha geral, 60s em backfill saudável
-              const minIntervalMs = (isMaxReports || isRateLimit)
-                ? 15 * 60 * 1000
-                : isLastFailed
-                ? 5 * 60 * 1000
-                : (isBackfill ? 60 * 1000 : 5 * 60 * 1000);
+              // Backoff progressivo real:
+              // - Em Max Reports / 429: 15 min (1ª falha) -> 30 min (2ª) -> 60 min (3ª+)
+              // - Em falha geral: 5 min (1ª falha) -> 15 min (2ª) -> 30 min (3ª+)
+              // - Em operação normal: 60s em backfill, 5 min em incremental saudável
+              let minIntervalMs: number;
+              if (isMaxReports || isRateLimit) {
+                minIntervalMs = consecutiveFailures >= 3 ? 60 * 60 * 1000 : (consecutiveFailures === 2 ? 30 * 60 * 1000 : 15 * 60 * 1000);
+              } else if (consecutiveFailures >= 3) {
+                minIntervalMs = 30 * 60 * 1000;
+              } else if (consecutiveFailures === 2) {
+                minIntervalMs = 15 * 60 * 1000;
+              } else if (consecutiveFailures === 1) {
+                minIntervalMs = 5 * 60 * 1000;
+              } else {
+                minIntervalMs = isBackfill ? 60 * 1000 : 5 * 60 * 1000;
+              }
 
               if (now - lastEventTime >= minIntervalMs) {
                 try {

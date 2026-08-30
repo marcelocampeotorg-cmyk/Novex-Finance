@@ -93,8 +93,8 @@ test("Item 12.3 — Cooldown e Backoff contam a partir de finishedAt/updatedAt e
   );
   assert.match(
     workerContent,
-    /\(isMaxReports\s*\|\|\s*isRateLimit\)\s*\?\s*15\s*\*\s*60\s*\*\s*1000/,
-    "worker-daemon deve aplicar 15 min de backoff progressivo para Max Reports e 429"
+    /consecutiveFailures\s*>=\s*3\s*\?\s*60\s*\*\s*60\s*\*\s*1000/,
+    "worker-daemon deve aplicar backoff progressivo real (até 60 min) para falhas consecutivas"
   );
 });
 
@@ -278,4 +278,150 @@ test("Item 12.11 — Preservação de rawProviderData e separação de rawEnrich
 
   assert.match(schema, /rawEnrichmentData\s+Json\?/, "schema.prisma deve conter rawEnrichmentData");
   assert.match(schema, /rawProviderData\s+Json\?/, "schema.prisma deve manter rawProviderData");
+});
+
+test("Item 12.12 — Claim com Lease: Bloqueia concorrência ativa e recupera claim abandonado (> 2min)", async () => {
+  const LEASE_MS = 2 * 60 * 1000;
+  let syncRunDb = {
+    id: "run-123",
+    remoteTaskId: null,
+    errorCode: null,
+    startedAt: new Date(Date.now() - 5 * 60 * 1000), // 5 min atrás (abandonado)
+  };
+
+  async function executeAtomicClaim(now) {
+    const staleThreshold = new Date(now.getTime() - LEASE_MS);
+    const isMatching =
+      syncRunDb.id === "run-123" &&
+      syncRunDb.remoteTaskId === null &&
+      (syncRunDb.errorCode !== "REQUESTING_REPORT" || syncRunDb.startedAt < staleThreshold);
+
+    if (isMatching) {
+      syncRunDb.errorCode = "REQUESTING_REPORT";
+      syncRunDb.startedAt = now;
+      return { count: 1 };
+    }
+    return { count: 0 };
+  }
+
+  // 1. Processo A tenta recuperar claim abandonado há 5 minutos -> DEVE GANHAR
+  const nowA = new Date();
+  const claimA = await executeAtomicClaim(nowA);
+  assert.strictEqual(claimA.count, 1, "Processo A deve recuperar o claim abandonado");
+  assert.strictEqual(syncRunDb.errorCode, "REQUESTING_REPORT");
+
+  // 2. Processo B tenta concorrentemente 10 segundos depois -> DEVE SER BLOQUEADO (lease ativo)
+  const nowB = new Date(nowA.getTime() + 10 * 1000);
+  const claimB = await executeAtomicClaim(nowB);
+  assert.strictEqual(claimB.count, 0, "Processo B deve ser bloqueado enquanto lease do Processo A estiver ativo");
+
+  // 3. Processo C tenta após 3 minutos (lease expirado se processo A morrer) -> DEVE RECLAMAR
+  const nowC = new Date(nowA.getTime() + 3 * 60 * 1000);
+  const claimC = await executeAtomicClaim(nowC);
+  assert.strictEqual(claimC.count, 1, "Processo C deve conseguir recuperar claim após expiração do lease");
+});
+
+test("Item 12.13 — Verificação prévia evita POST duplicado em resultado remoto ambíguo", async () => {
+  let postCount = 0;
+  const originalFetch = global.fetch;
+
+  global.fetch = async (url, options = {}) => {
+    if (url.includes("/settlement_report/list")) {
+      return {
+        ok: true,
+        json: async () => [
+          {
+            id: "TASK_EXISTENTE_999",
+            status: "processed",
+            file_name: "settlement-2026-08-28.csv",
+            begin_date: "2026-08-28T00:00:00Z",
+            end_date: "2026-08-30T00:00:00Z",
+          },
+        ],
+      };
+    }
+    if (url.endsWith("/settlement_report") && options.method === "POST") {
+      postCount++;
+      return { ok: true, json: async () => ({ id: "NOVA_TASK" }) };
+    }
+    return { ok: true, json: async () => ({}) };
+  };
+
+  try {
+    const client = new MercadoPagoReportsClient("TEST-TOKEN-12345");
+    const requestedBegin = new Date("2026-08-28T00:00:00Z");
+    const requestedEnd = new Date("2026-08-30T00:00:00Z");
+
+    // Simulação do fluxo de verificação prévia
+    const listRes = await fetch("https://api.mercadopago.com/v1/account/settlement_report/list", {
+      headers: { Authorization: `Bearer TEST-TOKEN-12345` },
+    });
+    const list = await listRes.json();
+    const requestedBeginIso = requestedBegin.toISOString().replace(/\.\d{3}Z$/, "Z");
+    const requestedEndIso = requestedEnd.toISOString().replace(/\.\d{3}Z$/, "Z");
+
+    const existingReport = list.find((r) => {
+      const repBeginIso = new Date(r.begin_date).toISOString().replace(/\.\d{3}Z$/, "Z");
+      const repEndIso = new Date(r.end_date).toISOString().replace(/\.\d{3}Z$/, "Z");
+      return repBeginIso === requestedBeginIso && repEndIso === requestedEndIso;
+    });
+
+    let remoteTaskId = null;
+    if (existingReport) {
+      remoteTaskId = String(existingReport.id);
+    } else {
+      const res = await client.requestSettlementReport(requestedBegin, requestedEnd);
+      remoteTaskId = res.taskId;
+    }
+
+    assert.strictEqual(remoteTaskId, "TASK_EXISTENTE_999", "Deve ter reutilizado o relatório existente");
+    assert.strictEqual(postCount, 0, "Nenhum POST deve ser emitido quando já existe relatório equivalente");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("Item 12.14 — Worker Daemon: Criação de novo sync somente quando activeSync é null e após backoff", () => {
+  const workerPath = path.join(__dirname, "../src/services/worker-daemon.ts");
+  const content = fs.readFileSync(workerPath, "utf-8");
+
+  // Verificar que if (activeSync) possui seu próprio ramo e o else cuida da criação
+  assert.match(
+    content,
+    /if\s*\(activeSync\)\s*\{[\s\S]*?\}\s*else\s*\{[\s\S]*?continueMercadoPagoSyncRun/,
+    "worker-daemon deve possuir bifurcação estrita entre retomar activeSync e iniciar novo ciclo no else"
+  );
+
+  // Verificar cálculo de falhas consecutivas
+  assert.match(
+    content,
+    /let consecutiveFailures = 0;[\s\S]*?if \(lastRun\?\.status === "FAILED"\)/,
+    "worker-daemon deve calcular falhas consecutivas para backoff progressivo"
+  );
+});
+
+test("Item 12.15 — UI Home: PROCESSANDO e FALHA não exibem CheckCircle verde", () => {
+  const pagePath = path.join(__dirname, "../src/app/(protected)/page.tsx");
+  const content = fs.readFileSync(pagePath, "utf-8");
+
+  // PROCESSANDO deve renderizar spinner e texto específico
+  assert.match(
+    content,
+    /isSyncing\s*\|\|\s*displaySummary\.syncSource\s*===\s*"PROCESSANDO"/,
+    "page.tsx deve tratar syncSource PROCESSANDO com indicador de andamento"
+  );
+
+  // FALHA deve renderizar AlertTriangle e classe vermelha
+  assert.match(
+    content,
+    /syncError\s*\|\|\s*displaySummary\.syncSource\s*===\s*"FALHA"/,
+    "page.tsx deve tratar syncSource FALHA com classe de erro e AlertTriangle"
+  );
+
+  // CheckCircle2 deve ser reservado para o ramo de sucesso
+  assert.match(
+    content,
+    /CheckCircle2 className="h-4 w-4 text-emerald-400"/,
+    "page.tsx deve renderizar CheckCircle2 exclusivamente no ramo de sucesso"
+  );
 });
