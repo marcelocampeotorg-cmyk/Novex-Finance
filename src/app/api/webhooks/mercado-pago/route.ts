@@ -184,7 +184,7 @@ export async function POST(req: NextRequest) {
         await db.webhookEvent.update({ where: { id: webhookEvent.id }, data: { status: "FAILED", lastErrorCode: "INCOMPLETE_PAYMENT_EVIDENCE" } });
         return NextResponse.json({ received: true, processed: false, reason: "Evidência oficial incompleta ou divergente" }, { status: 202 });
       }
-      const paidAt = remoteOrder.providerUpdatedAt ? new Date(remoteOrder.providerUpdatedAt) : new Date();
+      const paidAt = new Date(remoteOrder.paidAt);
 
       // BAIXA ATÔMICA DA PARCELA COM CLAIM EXCLUSIVO VIA SERVIÇO UNIFICADO (Correção L)
       await settlePixChargeAtomic({

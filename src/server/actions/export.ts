@@ -28,7 +28,7 @@ export async function generateTransactionsCsv(): Promise<{ success: boolean; csv
     const { workspaceId } = await requireAuthenticatedWorkspace();
 
     const transactions = await db.externalTransaction.findMany({
-      where: { workspaceId },
+      where: { workspaceId, quarantinedAt: null },
       orderBy: { occurredAt: "desc" },
     });
 

@@ -12,6 +12,7 @@ import {
 } from "@/lib/server/credentials-crypto";
 import { validateAccessToken } from "@/integrations/mercado-pago/credentials-validator";
 import { getActiveMercadoPagoIntegrationForWorkspace } from "@/server/services/mercado-pago-integration";
+import { evolutionAPIClient } from "@/integrations/evolution-api/client";
 
 const saveCredentialsSchema = z.object({
   accessToken: z.string().min(10).max(512),
@@ -162,6 +163,18 @@ export async function saveMercadoPagoCredentials(input: {
 
     // 4. Salvar de forma atômica no banco de dados
     const result = await db.$transaction(async (tx) => {
+      const financialAccount = await tx.financialAccount.upsert({
+        where: { workspaceId_type: { workspaceId: context.workspaceId, type: "MERCADO_PAGO" } },
+        update: { isActive: true },
+        create: { workspaceId: context.workspaceId, type: "MERCADO_PAGO", name: "Mercado Pago" },
+      });
+      await tx.financialAccount.upsert({
+        where: { workspaceId_type: { workspaceId: context.workspaceId, type: "MANUAL" } },
+        update: { isActive: true },
+        create: { workspaceId: context.workspaceId, type: "MANUAL", name: "Conta geral" },
+      });
+      await tx.workspace.update({ where: { id: context.workspaceId }, data: { financeMode: "HYBRID" } });
+
       // Desativar integrações prévias do mesmo provedor
       await tx.integrationAccount.updateMany({
         where: { workspaceId: context.workspaceId, provider: "MERCADO_PAGO" },
@@ -180,6 +193,9 @@ export async function saveMercadoPagoCredentials(input: {
           encryptedCredentials,
           externalAccountId: validation.externalAccountId || null,
           externalApplicationId: validation.externalApplicationId || null,
+          providerAccountCreatedAt: validation.accountCreatedAt ? new Date(validation.accountCreatedAt) : null,
+          financialAccountId: financialAccount.id,
+          historyBackfillStatus: "NOT_STARTED",
           status: "CONNECTED",
           isActive: true,
           lastValidatedAt: new Date(),
@@ -193,6 +209,9 @@ export async function saveMercadoPagoCredentials(input: {
           encryptedCredentials,
           externalAccountId: validation.externalAccountId || null,
           externalApplicationId: validation.externalApplicationId || null,
+          providerAccountCreatedAt: validation.accountCreatedAt ? new Date(validation.accountCreatedAt) : null,
+          financialAccountId: financialAccount.id,
+          historyBackfillStatus: "NOT_STARTED",
           status: "CONNECTED",
           isActive: true,
           lastValidatedAt: new Date(),
@@ -275,6 +294,7 @@ export async function validateMercadoPagoConnection() {
       status: validation.valid ? "CONNECTED" : "ERROR",
       lastValidatedAt: new Date(),
       lastValidationErrorCode: validation.valid ? null : validation.errorCode,
+      providerAccountCreatedAt: validation.valid && validation.accountCreatedAt ? new Date(validation.accountCreatedAt) : integration.providerAccountCreatedAt,
     },
   });
 
@@ -366,11 +386,13 @@ export async function getEvolutionApiStatus() {
   });
 
   if (!integration || !integration.encryptedCredentials) {
+    const envKey = process.env.EVOLUTION_API_KEY || "";
     return {
       isConnected: false,
-      baseUrl: "",
-      instanceName: "",
-      maskedApiKey: "",
+      baseUrl: process.env.EVOLUTION_PUBLIC_URL || (process.env.NODE_ENV !== "production" ? "http://localhost:8081" : ""),
+      instanceName: process.env.EVOLUTION_INSTANCE_NAME || "novex-finance",
+      maskedApiKey: envKey ? `${envKey.slice(0, 3)}•••••${envKey.slice(-3)}` : "",
+      managedLocally: true,
     };
   }
 
@@ -397,6 +419,7 @@ export async function getEvolutionApiStatus() {
     baseUrl,
     instanceName,
     maskedApiKey,
+    managedLocally: baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1") || baseUrl.includes("evolution"),
   };
 }
 
@@ -438,6 +461,9 @@ export async function saveEvolutionApiCredentials(input: {
     });
 
     const encryptedCredentials = encryptCredentials(credentialsPayload);
+    const remoteState = await evolutionAPIClient.checkConnectionState(
+      parsedBaseUrl.toString().replace(/\/$/, ""), apiKey, input.instanceName.trim()
+    );
 
     await db.$transaction(async (tx) => {
       const account = await tx.integrationAccount.upsert({
@@ -450,7 +476,7 @@ export async function saveEvolutionApiCredentials(input: {
         },
         update: {
           encryptedCredentials,
-          status: "CONNECTED",
+          status: remoteState.success && remoteState.state === "open" ? "CONNECTED" : "CONNECTING",
           isActive: true,
           lastValidatedAt: new Date(),
         },
@@ -460,7 +486,7 @@ export async function saveEvolutionApiCredentials(input: {
           environment: "PRODUCTION",
           displayName: "Evolution API WhatsApp",
           encryptedCredentials,
-          status: "CONNECTED",
+          status: remoteState.success && remoteState.state === "open" ? "CONNECTED" : "CONNECTING",
           isActive: true,
           lastValidatedAt: new Date(),
         },
@@ -480,7 +506,7 @@ export async function saveEvolutionApiCredentials(input: {
 
     revalidatePath("/configuracoes");
 
-    return { success: true };
+    return { success: true, status: remoteState.state, warning: remoteState.success ? undefined : remoteState.error };
   } catch (error: any) {
     console.error("Erro ao salvar Evolution API credentials:", error);
     return { success: false, error: error.message || "Erro interno ao salvar." };

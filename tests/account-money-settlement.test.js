@@ -118,6 +118,29 @@ test("Account Money: criação retorna task id e task pending/processed usa endp
   } finally { global.fetch = originalFetch; }
 });
 
+test("Account Money: configuração legada é atualizada com colunas oficiais e datas sem milissegundos", async () => {
+  const originalFetch = global.fetch;
+  const calls = [];
+  global.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (!options.method) return { ok: true, status: 200, json: async () => ({ columns: [{ key: "RECORD_TYPE" }] }) };
+    if (options.method === "PUT") return { ok: true, status: 200, json: async () => ({}) };
+    return { ok: true, status: 202, json: async () => ({ id: 742, status: "pending" }) };
+  };
+  try {
+    const client = new MercadoPagoReportsClient("APP_USR-VALID-TEST-TOKEN");
+    await client.requestSettlementReport(new Date("2026-08-01T00:00:00.123Z"), new Date("2026-08-02T23:59:59.987Z"));
+    const update = calls.find((call) => call.options.method === "PUT");
+    const creation = calls.find((call) => call.options.method === "POST" && call.url.endsWith("/settlement_report"));
+    const configBody = JSON.parse(update.options.body);
+    const creationBody = JSON.parse(creation.options.body);
+    assert.ok(configBody.columns.some((column) => column.key === "TRANSACTION_TYPE"));
+    assert.ok(configBody.columns.some((column) => column.key === "SETTLEMENT_NET_AMOUNT"));
+    assert.strictEqual(configBody.columns.some((column) => column.key === "RECORD_TYPE"), false);
+    assert.deepStrictEqual(creationBody, { begin_date: "2026-08-01T00:00:00Z", end_date: "2026-08-02T23:59:59Z" });
+  } finally { global.fetch = originalFetch; }
+});
+
 test("Account Money: search exige filtro e envia filtro oficial, sem catálogo global", async () => {
   const originalFetch = global.fetch;
   let requestedUrl = "";
@@ -129,4 +152,37 @@ test("Account Money: search exige filtro e envia filtro oficial, sem catálogo g
     assert.match(requestedUrl, /id=9001/);
     assert.match(requestedUrl, /file_name=settlement-9001.csv/);
   } finally { global.fetch = originalFetch; }
+});
+
+test("Account Money: task available preserva task id e extrai report/file CSV da resposta real v2", async (t) => {
+  t.mock.method(global, "fetch", async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      id: "report-uuid",
+      status: "available",
+      report: { id: "settlement_v2" },
+      files: [
+        { type: "json", name: "report.json" },
+        { type: "csv", name: "report.csv" },
+      ],
+    }),
+  }));
+  const client = new MercadoPagoReportsClient("APP_USR-VALID-TEST-TOKEN");
+  assert.deepStrictEqual(await client.getSettlementReportTask("102939649"), {
+    taskId: "102939649", status: "READY", reportId: "report-uuid", fileName: "report.csv",
+  });
+});
+
+test("Account Money: parser aceita o cabeçalho oficial do relatório Dinheiro em Conta", () => {
+  const csv = "EXTERNAL_REFERENCE;TRANSACTION_TYPE;SETTLEMENT_DATE;SETTLEMENT_NET_AMOUNT;TRANSACTION_AMOUNT;FEE_AMOUNT;TRANSACTION_DATE;SOURCE_ID;DESCRIPTION\nREF-1;SETTLEMENT;2026-08-26T10:00:00Z;98.00;100.00;2.00;2026-08-26T09:00:00Z;SRC-1;Venda\nREF-2;WITHDRAWAL;2026-08-26T11:00:00Z;-50.00;50.00;0.00;2026-08-26T10:30:00Z;SRC-2;Saída";
+  const result = new MercadoPagoReportsClient("APP_USR-VALID-TEST-TOKEN").parseSettlementReportCsv(csv);
+  assert.strictEqual(result.validCount, 2);
+  assert.deepStrictEqual(
+    result.transactions.map(({ direction, amountCents, netAmountCents, occurredAt }) => ({ direction, amountCents, netAmountCents, occurredAt })),
+    [
+      { direction: "CREDIT", amountCents: 10000, netAmountCents: 9800, occurredAt: "2026-08-26T10:00:00.000Z" },
+      { direction: "DEBIT", amountCents: 5000, netAmountCents: 5000, occurredAt: "2026-08-26T11:00:00.000Z" },
+    ]
+  );
 });

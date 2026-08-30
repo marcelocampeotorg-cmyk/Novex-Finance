@@ -1,0 +1,12 @@
+.git
+.next
+node_modules
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+compose.yml.bak
+docs
+coverage
+backups
+*.log

@@ -79,6 +79,16 @@ enum TransactionDirection {
   DEBIT
 }
 
+enum FinanceMode {
+  MANUAL
+  HYBRID
+}
+
+enum FinancialAccountType {
+  MANUAL
+  MERCADO_PAGO
+}
+
 enum ReconciliationStatus {
   UNMATCHED
   SUGGESTED
@@ -156,25 +166,25 @@ model Verification {
 }
 
 model SyncRun {
-  id                   String             @id @default(uuid())
-  workspaceId          String             @map("workspace_id")
-  integrationAccountId String?            @map("integration_account_id")
-  source               TransactionSource  @default(MERCADO_PAGO_API)
-  status               String             @default("PENDING")
-  beginDate            DateTime           @map("begin_date")
-  endDate              DateTime           @map("end_date")
-  remoteReportId       String?            @map("remote_report_id")
-  remoteTaskId         String?            @map("remote_task_id")
-  remoteFileName       String?            @map("remote_file_name")
-  startedAt            DateTime?          @map("started_at")
-  finishedAt           DateTime?          @map("finished_at")
-  insertedCount        Int                @default(0) @map("inserted_count")
-  updatedCount         Int                @default(0) @map("updated_count")
-  skippedCount         Int                @default(0) @map("skipped_count")
-  errorCode            String?            @map("error_code")
-  errorMessage         String?            @map("error_message")
-  createdAt            DateTime           @default(now()) @map("created_at")
-  updatedAt            DateTime           @updatedAt @map("updated_at")
+  id                   String            @id @default(uuid())
+  workspaceId          String            @map("workspace_id")
+  integrationAccountId String?           @map("integration_account_id")
+  source               TransactionSource @default(MERCADO_PAGO_API)
+  status               String            @default("PENDING")
+  beginDate            DateTime          @map("begin_date")
+  endDate              DateTime          @map("end_date")
+  remoteReportId       String?           @map("remote_report_id")
+  remoteTaskId         String?           @map("remote_task_id")
+  remoteFileName       String?           @map("remote_file_name")
+  startedAt            DateTime?         @map("started_at")
+  finishedAt           DateTime?         @map("finished_at")
+  insertedCount        Int               @default(0) @map("inserted_count")
+  updatedCount         Int               @default(0) @map("updated_count")
+  skippedCount         Int               @default(0) @map("skipped_count")
+  errorCode            String?           @map("error_code")
+  errorMessage         String?           @map("error_message")
+  createdAt            DateTime          @default(now()) @map("created_at")
+  updatedAt            DateTime          @updatedAt @map("updated_at")
 
   workspace          Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   integrationAccount IntegrationAccount? @relation(fields: [integrationAccountId], references: [id], onDelete: Cascade)
@@ -189,6 +199,7 @@ model Workspace {
   ownerUserId          String                @map("owner_user_id")
   createdAt            DateTime              @default(now()) @map("created_at")
   updatedAt            DateTime              @updatedAt @map("updated_at")
+  financeMode          FinanceMode           @default(MANUAL) @map("finance_mode")
   owner                User                  @relation("WorkspaceOwner", fields: [ownerUserId], references: [id])
   memberships          Membership[]
   contacts             Contact[]
@@ -208,8 +219,31 @@ model Workspace {
   categoryRules        CategoryRule[]
   whatsAppLogs         WhatsAppDeliveryLog[]
   notificationEvents   NotificationEvent[]
+  financialAccounts    FinancialAccount[]
 
   @@map("workspaces")
+}
+
+model FinancialAccount {
+  id                    String                @id @default(uuid())
+  workspaceId           String                @map("workspace_id")
+  type                  FinancialAccountType
+  name                  String
+  openingBalanceCents   BigInt?               @map("opening_balance_cents")
+  openingBalanceAt      DateTime?             @map("opening_balance_at")
+  officialBalanceCents  BigInt?               @map("official_balance_cents")
+  officialBalanceAt     DateTime?             @map("official_balance_at")
+  officialBalanceStatus String                @default("UNAVAILABLE") @map("official_balance_status")
+  isActive              Boolean               @default(true) @map("is_active")
+  createdAt             DateTime              @default(now()) @map("created_at")
+  updatedAt             DateTime              @updatedAt @map("updated_at")
+  workspace             Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  integrationAccount    IntegrationAccount?
+  externalTransactions  ExternalTransaction[]
+  ledgerEntries         LedgerEntry[]
+
+  @@unique([workspaceId, type])
+  @@map("financial_accounts")
 }
 
 model Membership {
@@ -285,51 +319,51 @@ model Category {
 }
 
 model FinancialItem {
-  id               String             @id @default(uuid())
-  workspaceId      String             @map("workspace_id")
-  direction        FinancialDirection
-  kind             FinancialKind
-  title            String
-  description      String?
-  contactId        String?            @map("contact_id")
-  categoryId       String?            @map("category_id")
-  totalAmountCents BigInt             @map("total_amount_cents")
-  startDate        DateTime           @map("start_date")
-  status           FinancialStatus    @default(ACTIVE)
-  recurrenceRuleId String?            @map("recurrence_rule_id")
-  scheduledOccurrenceAt DateTime?     @map("scheduled_occurrence_at")
-  source           String             @default("USER")
-  deletedAt        DateTime?          @map("deleted_at")
-  createdAt        DateTime           @default(now()) @map("created_at")
-  updatedAt        DateTime           @updatedAt @map("updated_at")
-  workspace        Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  contact          Contact?           @relation(fields: [contactId], references: [id])
-  category         Category?          @relation(fields: [categoryId], references: [id])
-  recurrenceRule   RecurrenceRule?    @relation(fields: [recurrenceRuleId], references: [id])
-  installments     Installment[]
-  reconciliations  Reconciliation[]
-  pixCharges       PixCharge[]
-  paymentIntentions PaymentIntention[]
+  id                    String             @id @default(uuid())
+  workspaceId           String             @map("workspace_id")
+  direction             FinancialDirection
+  kind                  FinancialKind
+  title                 String
+  description           String?
+  contactId             String?            @map("contact_id")
+  categoryId            String?            @map("category_id")
+  totalAmountCents      BigInt             @map("total_amount_cents")
+  startDate             DateTime           @map("start_date")
+  status                FinancialStatus    @default(ACTIVE)
+  recurrenceRuleId      String?            @map("recurrence_rule_id")
+  scheduledOccurrenceAt DateTime?          @map("scheduled_occurrence_at")
+  source                String             @default("USER")
+  deletedAt             DateTime?          @map("deleted_at")
+  createdAt             DateTime           @default(now()) @map("created_at")
+  updatedAt             DateTime           @updatedAt @map("updated_at")
+  workspace             Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contact               Contact?           @relation(fields: [contactId], references: [id])
+  category              Category?          @relation(fields: [categoryId], references: [id])
+  recurrenceRule        RecurrenceRule?    @relation(fields: [recurrenceRuleId], references: [id])
+  installments          Installment[]
+  reconciliations       Reconciliation[]
+  pixCharges            PixCharge[]
+  paymentIntentions     PaymentIntention[]
 
   @@unique([recurrenceRuleId, scheduledOccurrenceAt])
   @@map("financial_items")
 }
 
 model Installment {
-  id                 String            @id @default(uuid())
-  financialItemId    String            @map("financial_item_id")
+  id                 String                @id @default(uuid())
+  financialItemId    String                @map("financial_item_id")
   sequence           Int
-  amountCents        BigInt            @map("amount_cents")
-  dueDate            DateTime          @map("due_date")
-  settledAmountCents BigInt            @default(0) @map("settled_amount_cents")
-  status             InstallmentStatus @default(SCHEDULED)
-  selectedPixKeyId   String?           @map("selected_pix_key_id")
-  settlementDate     DateTime?         @map("settlement_date")
-  uniqueReference    String?           @unique @map("unique_reference")
-  createdAt          DateTime          @default(now()) @map("created_at")
-  updatedAt          DateTime          @updatedAt @map("updated_at")
-  financialItem      FinancialItem     @relation(fields: [financialItemId], references: [id], onDelete: Cascade)
-  selectedPixKey     PixKey?           @relation(fields: [selectedPixKeyId], references: [id])
+  amountCents        BigInt                @map("amount_cents")
+  dueDate            DateTime              @map("due_date")
+  settledAmountCents BigInt                @default(0) @map("settled_amount_cents")
+  status             InstallmentStatus     @default(SCHEDULED)
+  selectedPixKeyId   String?               @map("selected_pix_key_id")
+  settlementDate     DateTime?             @map("settlement_date")
+  uniqueReference    String?               @unique @map("unique_reference")
+  createdAt          DateTime              @default(now()) @map("created_at")
+  updatedAt          DateTime              @updatedAt @map("updated_at")
+  financialItem      FinancialItem         @relation(fields: [financialItemId], references: [id], onDelete: Cascade)
+  selectedPixKey     PixKey?               @relation(fields: [selectedPixKeyId], references: [id])
   reconciliations    Reconciliation[]
   pixCharges         PixCharge[]
   ledgerEntries      LedgerEntry[]
@@ -359,30 +393,34 @@ model RecurrenceRule {
 }
 
 model IntegrationAccount {
-  id                      String                @id @default(uuid())
-  workspaceId             String                @map("workspace_id")
-  provider                IntegrationProvider   @default(MERCADO_PAGO)
-  environment             String                @default("SANDBOX")
-  externalAccountId       String?               @map("external_account_id")
-  externalApplicationId   String?               @map("external_application_id")
-  displayName             String                @map("display_name")
-  encryptedCredentials    String?               @map("encrypted_credentials")
-  credentialKeyVersion    Int                   @default(1) @map("credential_key_version")
-  capabilities            Json?
-  status                  String                @default("DISCONNECTED")
-  isActive                Boolean               @default(true) @map("is_active")
-  lastValidatedAt         DateTime?             @map("last_validated_at")
-  lastValidationErrorCode String?               @map("last_validation_error_code")
-  lastSyncAt              DateTime?             @map("last_sync_at")
-  firstImportedAt         DateTime?             @map("first_imported_at")
-  coverageStart           DateTime?             @map("coverage_start")
-  coverageEnd             DateTime?             @map("coverage_end")
-  createdAt               DateTime              @default(now()) @map("created_at")
-  updatedAt               DateTime              @updatedAt @map("updated_at")
-  workspace               Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  externalTransactions    ExternalTransaction[]
-  pixCharges              PixCharge[]
-  syncRuns                SyncRun[]
+  id                       String                @id @default(uuid())
+  workspaceId              String                @map("workspace_id")
+  provider                 IntegrationProvider   @default(MERCADO_PAGO)
+  environment              String                @default("SANDBOX")
+  externalAccountId        String?               @map("external_account_id")
+  externalApplicationId    String?               @map("external_application_id")
+  displayName              String                @map("display_name")
+  encryptedCredentials     String?               @map("encrypted_credentials")
+  credentialKeyVersion     Int                   @default(1) @map("credential_key_version")
+  capabilities             Json?
+  status                   String                @default("DISCONNECTED")
+  isActive                 Boolean               @default(true) @map("is_active")
+  lastValidatedAt          DateTime?             @map("last_validated_at")
+  lastValidationErrorCode  String?               @map("last_validation_error_code")
+  lastSyncAt               DateTime?             @map("last_sync_at")
+  firstImportedAt          DateTime?             @map("first_imported_at")
+  coverageStart            DateTime?             @map("coverage_start")
+  coverageEnd              DateTime?             @map("coverage_end")
+  financialAccountId       String?               @unique @map("financial_account_id")
+  providerAccountCreatedAt DateTime?             @map("provider_account_created_at")
+  historyBackfillStatus    String                @default("NOT_STARTED") @map("history_backfill_status")
+  createdAt                DateTime              @default(now()) @map("created_at")
+  updatedAt                DateTime              @updatedAt @map("updated_at")
+  workspace                Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  externalTransactions     ExternalTransaction[]
+  pixCharges               PixCharge[]
+  syncRuns                 SyncRun[]
+  financialAccount         FinancialAccount?     @relation(fields: [financialAccountId], references: [id])
 
   @@unique([workspaceId, provider, environment])
   @@map("integration_accounts")
@@ -393,6 +431,7 @@ model ExternalTransaction {
   workspaceId          String               @map("workspace_id")
   source               TransactionSource    @default(MERCADO_PAGO_API)
   integrationAccountId String?              @map("integration_account_id")
+  financialAccountId   String?              @map("financial_account_id")
   provider             IntegrationProvider?
   externalId           String               @map("external_id")
   direction            TransactionDirection
@@ -409,8 +448,11 @@ model ExternalTransaction {
   rawReference         String?              @map("raw_reference")
   rawProviderData      Json?                @map("raw_provider_data")
   importedAt           DateTime             @default(now()) @map("imported_at")
+  quarantinedAt        DateTime?            @map("quarantined_at")
+  quarantineReason     String?              @map("quarantine_reason")
   workspace            Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   integrationAccount   IntegrationAccount?  @relation(fields: [integrationAccountId], references: [id], onDelete: Cascade)
+  financialAccount     FinancialAccount?    @relation(fields: [financialAccountId], references: [id])
   reconciliations      Reconciliation[]
   ledgerEntries        LedgerEntry[]
 
@@ -463,10 +505,10 @@ model PixCharge {
   createdAt            DateTime            @default(now()) @map("created_at")
   updatedAt            DateTime            @updatedAt @map("updated_at")
 
-  workspace          Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  integrationAccount IntegrationAccount @relation(fields: [integrationAccountId], references: [id], onDelete: Cascade)
-  financialItem      FinancialItem      @relation(fields: [financialItemId], references: [id], onDelete: Cascade)
-  installment        Installment        @relation(fields: [installmentId], references: [id], onDelete: Cascade)
+  workspace          Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  integrationAccount IntegrationAccount    @relation(fields: [integrationAccountId], references: [id], onDelete: Cascade)
+  financialItem      FinancialItem         @relation(fields: [financialItemId], references: [id], onDelete: Cascade)
+  installment        Installment           @relation(fields: [installmentId], references: [id], onDelete: Cascade)
   whatsAppLogs       WhatsAppDeliveryLog[]
 
   @@map("pix_charges")
@@ -477,6 +519,8 @@ model LedgerEntry {
   workspaceId           String               @map("workspace_id")
   externalTransactionId String?              @unique @map("external_transaction_id")
   installmentId         String?              @map("installment_id")
+  financialAccountId    String?              @map("financial_account_id")
+  reversesEntryId       String?              @unique @map("reverses_entry_id")
   direction             TransactionDirection
   amountCents           BigInt               @map("amount_cents")
   occurredAt            DateTime             @map("occurred_at")
@@ -488,6 +532,9 @@ model LedgerEntry {
   workspace             Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   externalTransaction   ExternalTransaction? @relation(fields: [externalTransactionId], references: [id])
   installment           Installment?         @relation(fields: [installmentId], references: [id])
+  financialAccount      FinancialAccount?    @relation(fields: [financialAccountId], references: [id])
+  reversesEntry         LedgerEntry?         @relation("LedgerReversals", fields: [reversesEntryId], references: [id])
+  reversedBy            LedgerEntry?         @relation("LedgerReversals")
   category              Category?            @relation(fields: [categoryId], references: [id])
 
   @@map("ledger_entries")
@@ -566,80 +613,80 @@ model WebhookEvent {
 }
 
 model PaymentIntention {
-  id                  String        @id @default(uuid())
-  workspaceId         String        @map("workspace_id")
-  financialItemId    String        @map("financial_item_id")
-  installmentId      String        @map("installment_id")
-  favoredName         String        @map("favored_name")
-  favoredPixKey       String        @map("favored_pix_key")
-  favoredPixKeyType   String        @map("favored_pix_key_type")
-  expectedAmountCents BigInt        @map("expected_amount_cents")
-  status              String        @default("WAITING") // WAITING, MATCHED, DIVERGENT, EXPIRED, CANCELED
+  id                  String    @id @default(uuid())
+  workspaceId         String    @map("workspace_id")
+  financialItemId     String    @map("financial_item_id")
+  installmentId       String    @map("installment_id")
+  favoredName         String    @map("favored_name")
+  favoredPixKey       String    @map("favored_pix_key")
+  favoredPixKeyType   String    @map("favored_pix_key_type")
+  expectedAmountCents BigInt    @map("expected_amount_cents")
+  status              String    @default("WAITING") // WAITING, MATCHED, DIVERGENT, EXPIRED, CANCELED
   txid                String?
-  brCodePayload       String?       @map("br_code_payload")
-  expiresAt           DateTime?     @map("expires_at")
-  createdAt           DateTime      @default(now()) @map("created_at")
-  updatedAt           DateTime      @updatedAt @map("updated_at")
+  brCodePayload       String?   @map("br_code_payload")
+  expiresAt           DateTime? @map("expires_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
 
-  workspace           Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  financialItem       FinancialItem @relation(fields: [financialItemId], references: [id], onDelete: Cascade)
-  installment         Installment   @relation(fields: [installmentId], references: [id], onDelete: Cascade)
+  workspace     Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  financialItem FinancialItem @relation(fields: [financialItemId], references: [id], onDelete: Cascade)
+  installment   Installment   @relation(fields: [installmentId], references: [id], onDelete: Cascade)
 
   @@map("payment_intentions")
 }
 
 model CategoryRule {
-  id              String    @id @default(uuid())
-  workspaceId     String    @map("workspace_id")
+  id              String   @id @default(uuid())
+  workspaceId     String   @map("workspace_id")
   pattern         String
-  categoryId      String    @map("category_id")
-  confidenceScore Int       @default(80) @map("confidence_score")
-  source          String    @default("USER") // USER, SYSTEM
-  isEnabled       Boolean   @default(true) @map("is_enabled")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  categoryId      String   @map("category_id")
+  confidenceScore Int      @default(80) @map("confidence_score")
+  source          String   @default("USER") // USER, SYSTEM
+  isEnabled       Boolean  @default(true) @map("is_enabled")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
-  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  category        Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  category  Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, pattern])
   @@map("category_rules")
 }
 
 model WhatsAppDeliveryLog {
-  id              String       @id @default(uuid())
-  workspaceId     String       @map("workspace_id")
-  recipientPhone  String       @map("recipient_phone")
-  chargeId        String?      @map("charge_id")
-  installmentId   String?      @map("installment_id")
-  messageType     String       @map("message_type")
-  remoteMessageId String?      @map("remote_message_id")
-  status          String       @default("SENT") // SENT, FAILED, DELIVERED
-  attemptCount    Int          @default(1) @map("attempt_count")
-  errorMessage    String?      @map("error_message")
-  dedupeKey       String       @unique @map("dedupe_key")
-  sentAt          DateTime     @default(now()) @map("sent_at")
-  createdAt       DateTime     @default(now()) @map("created_at")
+  id              String   @id @default(uuid())
+  workspaceId     String   @map("workspace_id")
+  recipientPhone  String   @map("recipient_phone")
+  chargeId        String?  @map("charge_id")
+  installmentId   String?  @map("installment_id")
+  messageType     String   @map("message_type")
+  remoteMessageId String?  @map("remote_message_id")
+  status          String   @default("SENT") // SENT, FAILED, DELIVERED
+  attemptCount    Int      @default(1) @map("attempt_count")
+  errorMessage    String?  @map("error_message")
+  dedupeKey       String   @unique @map("dedupe_key")
+  sentAt          DateTime @default(now()) @map("sent_at")
+  createdAt       DateTime @default(now()) @map("created_at")
 
-  workspace       Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  pixCharge       PixCharge?   @relation(fields: [chargeId], references: [id], onDelete: SetNull)
-  installment     Installment? @relation(fields: [installmentId], references: [id], onDelete: SetNull)
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  pixCharge   PixCharge?   @relation(fields: [chargeId], references: [id], onDelete: SetNull)
+  installment Installment? @relation(fields: [installmentId], references: [id], onDelete: SetNull)
 
   @@map("whatsapp_delivery_logs")
 }
 
 model NotificationEvent {
-  id          String    @id @default(uuid())
-  workspaceId String    @map("workspace_id")
-  type        String    // PAYMENT_RECEIVED, DUPLICATE_WARNING, ACTION_REQUIRED, OVERDUE_WARNING, SYNC_FAILED
+  id          String   @id @default(uuid())
+  workspaceId String   @map("workspace_id")
+  type        String // PAYMENT_RECEIVED, DUPLICATE_WARNING, ACTION_REQUIRED, OVERDUE_WARNING, SYNC_FAILED
   title       String
   message     String
-  dedupeKey   String?   @unique @map("dedupe_key")
+  dedupeKey   String?  @unique @map("dedupe_key")
   metadata    Json?
-  isRead      Boolean   @default(false) @map("is_read")
-  createdAt   DateTime  @default(now()) @map("created_at")
+  isRead      Boolean  @default(false) @map("is_read")
+  createdAt   DateTime @default(now()) @map("created_at")
 
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@map("notification_events")
 }

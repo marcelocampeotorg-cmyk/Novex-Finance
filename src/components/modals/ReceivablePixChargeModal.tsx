@@ -197,6 +197,7 @@ export function ReceivablePixChargeModal({
             <div className="flex flex-col items-center justify-center p-4 bg-white/95 rounded-xl border border-novex-border shadow-inner">
               {chargeData?.qrCodeBase64 ? (
                 <div className="p-2 bg-white rounded-lg flex flex-col items-center gap-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- QR data URL oficial não é recurso otimizável pelo next/image. */}
                   <img src={chargeData.qrCodeBase64} alt="QR Code Pix" className="w-48 h-48 object-contain" />
                   <span className="text-[10px] text-slate-600 font-mono font-bold">Escaneie no App do Banco</span>
                 </div>

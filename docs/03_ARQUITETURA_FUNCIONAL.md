@@ -7,7 +7,7 @@ Cadastro de devedor + telefone + valor + vencimento + parcelas + regras de cobra
 → Mercado Pago confirma pagamento real.
 → NOVEX valida identidade/status/valor/idempotência.
 → baixa a parcela.
-→ cria o crédito no ledger.
+→ Account Money importa posteriormente o impacto real e cria o crédito correspondente no ledger, sem duplicar o efeito da Order.
 → atualiza dashboard e notificações sem F5.
 
 ## Fluxo B — Conta a pagar

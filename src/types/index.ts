@@ -105,8 +105,19 @@ export interface NotificationRuleDTO {
 }
 
 export interface BalanceSummaryDTO {
-  currentBalanceCents: number;
-  projectedBalanceCents: number;
+  knownNetMovementCents: number;
+  manualBalanceCents: number | null;
+  manualBalanceAt: string | null;
+  mercadoPagoOfficialBalanceCents: number | null;
+  mercadoPagoOfficialBalanceAt: string | null;
+  mercadoPagoBalanceStatus: "CONFIRMED" | "UNAVAILABLE" | "RECONCILING";
+  consolidatedBalanceCents: number | null;
+  financeMode: "MANUAL" | "HYBRID";
+  quarantineCount: number;
+  coverageStart: string | null;
+  coverageEnd: string | null;
+  historyBackfillStatus: string | null;
+  projectedKnownFlowCents: number;
   totalPayableMonthCents: number;
   totalReceivableMonthCents: number;
   totalOverdueCents: number;
@@ -118,4 +129,17 @@ export interface BalanceSummaryDTO {
   uncategorizedCount: number;
   balanceDescription?: string;
   isOutdated?: boolean;
+  monthIncomeCents: number;
+  monthExpenseCents: number;
+  monthNetCents: number;
+  financialAccounts?: {
+    id: string;
+    type: "MANUAL" | "MERCADO_PAGO" | "BANK_ACCOUNT";
+    name: string;
+    openingBalanceCents: number | null;
+    openingBalanceAt: string | null;
+    officialBalanceCents: number | null;
+    officialBalanceStatus: string;
+  }[];
 }
+

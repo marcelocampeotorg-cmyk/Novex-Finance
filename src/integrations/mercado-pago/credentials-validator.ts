@@ -6,6 +6,7 @@ export interface ValidationResult {
   valid: boolean;
   externalAccountId?: string;
   externalApplicationId?: string;
+  accountCreatedAt?: string;
   errorCode?: string;
   errorMessage?: string;
 }
@@ -53,6 +54,7 @@ export async function validateAccessToken(token: string): Promise<ValidationResu
         valid: true,
         externalAccountId,
         externalApplicationId: externalApplicationId || undefined,
+        accountCreatedAt: data.date_created && !Number.isNaN(Date.parse(data.date_created)) ? new Date(data.date_created).toISOString() : undefined,
       };
     }
 

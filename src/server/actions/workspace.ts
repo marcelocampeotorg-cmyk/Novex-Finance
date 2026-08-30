@@ -1,8 +1,10 @@
 "use server";
 
 import { db } from "@/server/db";
+import { revalidatePath } from "next/cache";
 import { requireAuthenticatedWorkspace } from "@/server/auth-context";
 import { getActiveMercadoPagoIntegrationForWorkspace } from "@/server/services/mercado-pago-integration";
+import { calculateAnchoredBalance, calculateConsolidatedBalance } from "@/domain/financial-balance";
 
 export type IntegrationAccountDTO = {
   id: string;
@@ -23,6 +25,13 @@ export async function getWorkspaceSummary() {
   try {
     const context = await requireAuthenticatedWorkspace();
     const workspaceId = context.workspaceId;
+    const workspace = await db.workspace.findUnique({
+      where: { id: workspaceId },
+      select: { financeMode: true, financialAccounts: true },
+    });
+    const financeMode = workspace?.financeMode || "MANUAL";
+    const manualAccount = workspace?.financialAccounts.find((account) => account.type === "MANUAL") || null;
+    const mercadoPagoAccount = workspace?.financialAccounts.find((account) => account.type === "MERCADO_PAGO") || null;
 
     const now = new Date();
     const installments = await db.installment.findMany({
@@ -54,22 +63,39 @@ export async function getWorkspaceSummary() {
 
     // Correção I: IGNORED é decisão encerrada, não é unresolved
     const unmatchesCount = await db.externalTransaction.count({
-      where: { workspaceId, reconciliations: { none: { status: { in: ["MATCHED", "IGNORED"] } } } },
+      where: { workspaceId, quarantinedAt: null, reconciliations: { none: { status: { in: ["MATCHED", "IGNORED"] } } } },
     });
     const uncategorizedCount = await db.externalTransaction.count({
-      where: { workspaceId, ledgerEntries: { some: { categoryId: null } } },
+      where: { workspaceId, quarantinedAt: null, ledgerEntries: { some: { categoryId: null } } },
     });
+    const quarantineCount = await db.externalTransaction.count({ where: { workspaceId, quarantinedAt: { not: null } } });
+
+    let manualBalanceCents: number | null = null;
+    if (manualAccount?.openingBalanceCents !== null && manualAccount?.openingBalanceAt) {
+      const entries = await db.ledgerEntry.findMany({
+        where: {
+          workspaceId,
+          financialAccountId: manualAccount.id,
+          occurredAt: { gte: manualAccount.openingBalanceAt },
+          OR: [{ externalTransaction: null }, { externalTransaction: { quarantinedAt: null } }],
+        },
+        select: { direction: true, amountCents: true },
+      });
+      manualBalanceCents = calculateAnchoredBalance(Number(manualAccount.openingBalanceCents), entries.map((entry) => ({ direction: entry.direction, amountCents: Number(entry.amountCents) })));
+    }
 
     let mpIntegration = null;
-    try {
-      mpIntegration = await getActiveMercadoPagoIntegrationForWorkspace(workspaceId);
-    } catch (e: any) {
-      if (!e.message?.includes("Nenhuma integração") && !e.message?.includes("Configuração inválida")) {
-        throw e;
+    if (financeMode === "HYBRID") {
+      try {
+        mpIntegration = await getActiveMercadoPagoIntegrationForWorkspace(workspaceId);
+      } catch (e: any) {
+        if (!e.message?.includes("Nenhuma integração") && !e.message?.includes("Configuração inválida")) {
+          throw e;
+        }
       }
     }
 
-    let currentBalanceCents = 0;
+    let knownNetMovementCents = 0;
     let syncSource: "SINCRONIZADO" | "PENDENTE" | "DESCONECTADO" | "CALCULADO" = "CALCULADO";
     let accountDisplayName = "Conta Local";
     let lastSyncAt: string | null = null;
@@ -104,7 +130,7 @@ export async function getWorkspaceSummary() {
       }
 
       const txs = await db.externalTransaction.findMany({
-        where: { workspaceId, integrationAccountId: mpIntegration.id },
+        where: { workspaceId, integrationAccountId: mpIntegration.id, quarantinedAt: null },
       });
       let balance = 0;
       for (const tx of txs) {
@@ -112,7 +138,7 @@ export async function getWorkspaceSummary() {
         if (tx.direction === "CREDIT") balance += netVal;
         if (tx.direction === "DEBIT") balance -= netVal;
       }
-      currentBalanceCents = balance;
+      knownNetMovementCents = balance;
       // Correção D/E: Coverage usa SOMENTE SUCCESS, não PARTIAL
       const coveredRuns = await db.syncRun.findMany({
         where: { workspaceId, integrationAccountId: mpIntegration.id, status: "SUCCESS" },
@@ -156,13 +182,86 @@ export async function getWorkspaceSummary() {
       }
     }
 
+    // Métricas Reais do Mês Atual
+    const monthTxs = await db.externalTransaction.findMany({
+      where: {
+        workspaceId,
+        quarantinedAt: null,
+        occurredAt: { gte: monthStart, lte: monthEnd },
+      },
+      select: { direction: true, netAmountCents: true },
+    });
+
+    let monthIncomeCents = 0;
+    let monthExpenseCents = 0;
+    for (const t of monthTxs) {
+      const val = Number(t.netAmountCents);
+      if (t.direction === "CREDIT") monthIncomeCents += val;
+      if (t.direction === "DEBIT") monthExpenseCents += val;
+    }
+    const monthNetCents = monthIncomeCents - monthExpenseCents;
+
     // Correção F: Projeção é fluxo projetado, não saldo absoluto
-    const projectedFlowCents = currentBalanceCents + totalReceivablePendingCents - totalPayablePendingCents;
+    const projectedFlowCents = knownNetMovementCents + totalReceivablePendingCents - totalPayablePendingCents;
+    const mercadoPagoBalanceStatus: "CONFIRMED" | "RECONCILING" | "UNAVAILABLE" =
+      mercadoPagoAccount?.officialBalanceStatus === "CONFIRMED" || (mpIntegration && mpIntegration.status === "CONNECTED")
+        ? "CONFIRMED"
+        : "UNAVAILABLE";
+
+    let mercadoPagoOfficialBalanceCents: number | null = null;
+    if (mercadoPagoBalanceStatus === "CONFIRMED") {
+      if (mercadoPagoAccount?.openingBalanceCents !== null && mercadoPagoAccount?.openingBalanceCents !== undefined && mercadoPagoAccount?.openingBalanceAt) {
+        const entries = await db.ledgerEntry.findMany({
+          where: {
+            workspaceId,
+            financialAccountId: mercadoPagoAccount.id,
+            occurredAt: { gte: mercadoPagoAccount.openingBalanceAt },
+            OR: [{ externalTransaction: null }, { externalTransaction: { quarantinedAt: null } }],
+          },
+          select: { direction: true, amountCents: true },
+        });
+        mercadoPagoOfficialBalanceCents = calculateAnchoredBalance(
+          Number(mercadoPagoAccount.openingBalanceCents),
+          entries.map((entry) => ({ direction: entry.direction, amountCents: Number(entry.amountCents) }))
+        );
+      } else if (mercadoPagoAccount?.officialBalanceCents !== null && mercadoPagoAccount?.officialBalanceCents !== undefined) {
+        mercadoPagoOfficialBalanceCents = Number(mercadoPagoAccount.officialBalanceCents);
+      } else {
+        mercadoPagoOfficialBalanceCents = monthNetCents;
+      }
+    }
+
+    const consolidatedBalanceCents = calculateConsolidatedBalance({ mode: financeMode, manualBalanceCents, mercadoPagoOfficialBalanceCents });
+
+    const formattedAccounts = (workspace?.financialAccounts || []).map((acc) => ({
+      id: acc.id,
+      type: acc.type as "MANUAL" | "MERCADO_PAGO" | "BANK_ACCOUNT",
+      name: acc.name,
+      openingBalanceCents: acc.openingBalanceCents !== null ? Number(acc.openingBalanceCents) : null,
+      openingBalanceAt: acc.openingBalanceAt ? acc.openingBalanceAt.toISOString() : null,
+      officialBalanceCents: acc.officialBalanceCents !== null ? Number(acc.officialBalanceCents) : null,
+      officialBalanceStatus: acc.officialBalanceStatus,
+    }));
 
     return {
       success: true as const,
-      currentBalanceCents,
-      projectedBalanceCents: projectedFlowCents,
+      knownNetMovementCents,
+      manualBalanceCents,
+      manualBalanceAt: manualAccount?.openingBalanceAt?.toISOString() || null,
+      mercadoPagoOfficialBalanceCents,
+      mercadoPagoOfficialBalanceAt: mercadoPagoAccount?.openingBalanceAt?.toISOString() || mercadoPagoAccount?.officialBalanceAt?.toISOString() || null,
+      mercadoPagoBalanceStatus,
+      consolidatedBalanceCents,
+      financeMode,
+      monthIncomeCents,
+      monthExpenseCents,
+      monthNetCents,
+      financialAccounts: formattedAccounts,
+      quarantineCount,
+      coverageStart: mpIntegration?.coverageStart?.toISOString() || null,
+      coverageEnd: mpIntegration?.coverageEnd?.toISOString() || null,
+      historyBackfillStatus: mpIntegration?.historyBackfillStatus || null,
+      projectedKnownFlowCents: projectedFlowCents,
       totalPayableMonthCents: totalPayablePendingCents,
       totalReceivableMonthCents: totalReceivablePendingCents,
       totalOverdueCents,
@@ -185,6 +284,43 @@ export async function getWorkspaceSummary() {
       success: false as const,
       error: String(error.message || error),
     };
+  }
+}
+
+export async function setAccountBalanceAnchor(data: {
+  financialAccountId: string;
+  openingBalanceCents: number;
+  openingBalanceAt: string;
+}) {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+    const account = await db.financialAccount.findFirst({
+      where: { id: data.financialAccountId, workspaceId },
+    });
+    if (!account) return { success: false, error: "Conta financeira não encontrada." };
+
+    const anchorDate = new Date(data.openingBalanceAt);
+    if (isNaN(anchorDate.getTime())) return { success: false, error: "Data de âncora inválida." };
+
+    await db.financialAccount.update({
+      where: { id: account.id },
+      data: {
+        openingBalanceCents: BigInt(data.openingBalanceCents),
+        openingBalanceAt: anchorDate,
+        officialBalanceStatus: "CONFIRMED",
+        officialBalanceAt: new Date(),
+      },
+    });
+
+    revalidatePath("/");
+    revalidatePath("/configuracoes");
+    revalidatePath("/movimentacoes");
+    revalidatePath("/relatorios");
+
+    return { success: true };
+  } catch (err: any) {
+    console.error("Erro ao definir âncora de saldo:", err);
+    return { success: false, error: err.message || String(err) };
   }
 }
 
@@ -217,7 +353,7 @@ export async function getDashboardData() {
     const { workspaceId } = await requireAuthenticatedWorkspace();
 
     const txs = await db.externalTransaction.findMany({
-      where: { workspaceId },
+      where: { workspaceId, quarantinedAt: null, source: summary.financeMode === "MANUAL" ? "MANUAL_ADJUSTMENT" : undefined },
       orderBy: { occurredAt: "desc" },
       take: 10,
       include: { reconciliations: { orderBy: { createdAt: "desc" }, take: 1 } },
@@ -274,6 +410,8 @@ export async function getDashboardData() {
       const monthTxs = await db.externalTransaction.findMany({
         where: {
           workspaceId,
+          quarantinedAt: null,
+          source: summary.financeMode === "MANUAL" ? "MANUAL_ADJUSTMENT" : undefined,
           occurredAt: {
             gte: new Date(d.getFullYear(), d.getMonth(), 1),
             lt: new Date(d.getFullYear(), d.getMonth() + 1, 1),
@@ -284,11 +422,9 @@ export async function getDashboardData() {
       let entradas = 0;
       let saidas = 0;
       monthTxs.forEach((t: any) => {
-        if (t.type !== "TRANSFER") {
-          const val = Number(t.netAmountCents) / 100;
-          if (t.direction === "CREDIT") entradas += val;
-          if (t.direction === "DEBIT") saidas += val;
-        }
+        const val = Number(t.netAmountCents) / 100;
+        if (t.direction === "CREDIT") entradas += val;
+        if (t.direction === "DEBIT") saidas += val;
       });
 
       chartData.push({

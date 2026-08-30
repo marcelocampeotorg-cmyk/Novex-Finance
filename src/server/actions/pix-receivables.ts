@@ -167,10 +167,10 @@ export async function generateReceivablePixCharge(input: {
   }
 
   // 8. Chave de Idempotência e Referência (Reutilizar se CREATING, ou Nova Chave para FAILED/EXPIRED)
-  const attemptTag = Date.now();
+  const failedAttempts = installment.pixCharges.filter((charge) => charge.status === "FAILED" || charge.status === "EXPIRED").length;
   const idempotencyKey = existingCreating
     ? existingCreating.idempotencyKey
-    : `pix_${context.workspaceId}_${installment.id}_${chargeAmountCents}_${attemptTag}`;
+    : getPixChargeIdempotencyKey(context.workspaceId, installment.id, chargeAmountCents, failedAttempts + 1);
   const externalReference = existingCreating
     ? existingCreating.externalReference
     : `NVX-REC-${installment.id.slice(0, 8)}-${idempotencyKey.slice(-12)}`;
@@ -342,7 +342,10 @@ export async function getReceivablePixChargeStatus(input: { pixChargeId: string 
           return { success: false, status: "INCOMPLETE", isPaid: false, error: "Order processada sem evidências oficiais completas ou com valor/referência divergente." };
         }
         // LIQUIDAÇÃO ATÔMICA DA PARCELA VIA CLAIM UNIFICADO (Correção L — polling)
-        const paidAt = remoteOrder.providerUpdatedAt ? new Date(remoteOrder.providerUpdatedAt) : new Date();
+        if (!remoteOrder.paidAt) {
+          return { success: false, status: "INCOMPLETE", isPaid: false, error: "Order processada sem timestamp oficial de pagamento." };
+        }
+        const paidAt = new Date(remoteOrder.paidAt);
 
         await settlePixChargeAtomic({
           pixChargeId: pixCharge.id,

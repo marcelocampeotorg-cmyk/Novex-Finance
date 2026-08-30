@@ -3,6 +3,12 @@
 ## Função
 WhatsApp é canal de cobrança para devedores, não canal principal de notificações do proprietário.
 
+## Operação local
+
+Nesta fase, a Evolution API faz parte do ambiente local administrado pelo NOVEX. O bootstrap local preserva ou gera os segredos necessários, sobe banco, Redis, Evolution, aplicação e worker, cria/recupera a instância de forma idempotente e apresenta o QR real. O usuário precisa apenas escanear o QR; conexão só existe quando a Evolution informar estado `open`.
+
+A interface deve distinguir as etapas: serviço acessível, autenticação aceita, instância existente, QR disponível, pareamento pendente e conexão aberta.
+
 ## Fluxo
 - cobrança elegível;
 - regra/cadência existente decide quando enviar;

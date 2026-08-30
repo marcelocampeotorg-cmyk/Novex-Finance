@@ -10,8 +10,8 @@ export function getFixedChargeAmount(totalCents: number, settledCents: number): 
   return remaining;
 }
 
-export function getPixChargeIdempotencyKey(workspaceId: string, installmentId: string, amountCents: number): string {
-  const hash = crypto.createHash("sha256").update(`${workspaceId}:${installmentId}:${amountCents}`).digest("hex").slice(0, 12);
+export function getPixChargeIdempotencyKey(workspaceId: string, installmentId: string, amountCents: number, attempt = 1): string {
+  const hash = crypto.createHash("sha256").update(`${workspaceId}:${installmentId}:${amountCents}:${attempt}`).digest("hex").slice(0, 12);
   return `nvx_idemp_${installmentId}_${hash}`;
 }
 

@@ -2,18 +2,21 @@
 
 ## Dashboard
 O dashboard responde rapidamente:
-1. quanto há disponível/calculado;
-2. quanto entrou e saiu;
-3. quanto vence em breve;
-4. quanto há a receber;
-5. o que mudou;
-6. o que exige atenção.
+1. qual é o saldo da conta manual;
+2. qual é o saldo oficial do Mercado Pago, quando comprovado;
+3. se existe total consolidado comprovado;
+4. quanto entrou e saiu;
+5. qual período possui cobertura comprovada;
+6. quanto vence em breve;
+7. quanto há a receber;
+8. o que mudou;
+9. o que exige atenção.
 
 ## Períodos
 Hoje, semana, mês e intervalos úteis. Não inventar dados quando não houver histórico.
 
 ## Indicadores
-- saldo;
+- movimentação líquida conhecida ou saldo absoluto, quando oficialmente comprovado;
 - entradas;
 - saídas;
 - resultado do período;
@@ -24,6 +27,9 @@ Hoje, semana, mês e intervalos úteis. Não inventar dados quando não houver h
 - categorias principais;
 - taxa de conciliação automática;
 - movimentações não identificadas.
+- progresso da sincronização histórica e quantidade de itens em quarentena.
+
+Se o saldo Mercado Pago não estiver comprovado, o dashboard omite o total consolidado e mostra “Saldo do Mercado Pago indisponível/em reconciliação”. A movimentação líquida continua visível, com período e fonte, sem aparência de saldo.
 
 ## Gráficos
 - evolução do saldo em linha/área;

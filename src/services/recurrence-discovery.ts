@@ -6,7 +6,7 @@ export async function discoverWorkspaceRecurrences(workspaceId: string) {
   const since = new Date();
   since.setDate(since.getDate() - 180);
   const transactions = await db.externalTransaction.findMany({
-    where: { workspaceId, occurredAt: { gte: since }, direction: "DEBIT" },
+    where: { workspaceId, quarantinedAt: null, occurredAt: { gte: since }, direction: "DEBIT" },
     select: { id: true, description: true, occurredAt: true, amountCents: true },
   });
   const suggestions = detectMonthlyRecurrences(transactions.map((tx) => ({ ...tx, amountCents: Number(tx.amountCents) })));

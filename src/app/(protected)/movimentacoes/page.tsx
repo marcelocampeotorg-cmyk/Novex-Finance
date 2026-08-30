@@ -3,12 +3,13 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { Search, Filter, RefreshCw, CheckCircle2, Link2, Tag, Upload, ArrowUpRight, ArrowDownLeft, XCircle, ShieldCheck } from "lucide-react";
+import { Search, Filter, RefreshCw, CheckCircle2, Link2, Tag, Upload, ArrowUpRight, ArrowDownLeft, XCircle, ShieldCheck, Plus } from "lucide-react";
 import { formatCurrency, formatDateTime } from "@/lib/formatters";
 import { getExternalTransactions, getReconciliationSummary, ignoreExternalTransaction } from "@/server/actions/transactions";
 import { runAutomaticReconciliationEngine, confirmSuggestedMatch, unmatchTransaction } from "@/server/actions/reconciliation";
 import { ImportStatementModal } from "@/components/modals/ImportStatementModal";
 import { ManualMatchModal } from "@/components/modals/ManualMatchModal";
+import { createManualTransaction, quarantineTransaction } from "@/server/actions/financial-accounts";
 
 export default function MovimentacoesPage() {
   const [searchTerm, setSearchTerm] = useState("");
@@ -31,6 +32,11 @@ export default function MovimentacoesPage() {
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [selectedTxForMatch, setSelectedTxForMatch] = useState<any | null>(null);
   const [syncMessage, setSyncMessage] = useState<{type: "success" | "error", text: string} | null>(null);
+  const [showManualEntry, setShowManualEntry] = useState(false);
+  const [manualDirection, setManualDirection] = useState<"CREDIT" | "DEBIT">("DEBIT");
+  const [manualAmount, setManualAmount] = useState("");
+  const [manualDescription, setManualDescription] = useState("");
+  const [manualDate, setManualDate] = useState(new Date().toISOString().slice(0, 10));
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -64,6 +70,25 @@ export default function MovimentacoesPage() {
     } finally {
       setRunningEngine(false);
     }
+  };
+
+  const handleManualEntry = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const amount = Number(manualAmount.replace(/\./g, "").replace(",", "."));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setSyncMessage({ type: "error", text: "Informe um valor manual válido." });
+      return;
+    }
+    const result = await createManualTransaction({ direction: manualDirection, amountCents: Math.round(amount * 100), occurredAt: manualDate, description: manualDescription });
+    if (!result.success) {
+      setSyncMessage({ type: "error", text: result.error });
+      return;
+    }
+    setManualAmount("");
+    setManualDescription("");
+    setShowManualEntry(false);
+    setSyncMessage({ type: "success", text: "Lançamento manual registrado com trilha de auditoria." });
+    await loadData();
   };
 
   const handleConfirmSuggestion = async (reconciliationId: string) => {
@@ -100,6 +125,17 @@ export default function MovimentacoesPage() {
     }
   };
 
+  const handleQuarantine = async (txId: string) => {
+    const reason = window.prompt("Motivo da quarentena (o registro deixará de afetar os totais, mas não será apagado):");
+    if (!reason) return;
+    const result = await quarantineTransaction(txId, reason);
+    if (!result.success) setSyncMessage({ type: "error", text: result.error });
+    else {
+      setSyncMessage({ type: "success", text: "Movimentação colocada em quarentena." });
+      await loadData();
+    }
+  };
+
   const filteredTxs = txs.filter((tx) => {
     const matchesSearch =
       tx.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -117,11 +153,14 @@ export default function MovimentacoesPage() {
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <PageHeader
-        title="Extrato de Movimentações (Mercado Pago)"
-        description="Sincronização automática de entradas, saídas e compras com motor de conciliação por score."
+        title="Extrato de Movimentações"
+        description="Movimentações manuais e do Mercado Pago, separadas por fonte e com trilha de auditoria."
         actions={
           <div className="flex flex-col items-end gap-2">
             <div className="flex items-center gap-3">
+              <button onClick={() => setShowManualEntry((current) => !current)} className="flex items-center gap-2 rounded-xl border border-novex-border bg-novex-surface1 px-4 py-2 text-xs font-bold text-novex-text-primary hover:border-novex-cyan">
+                <Plus className="h-4 w-4" /><span>Lançamento manual</span>
+              </button>
               <button
                 onClick={async () => {
                   setLoading(true);
@@ -133,8 +172,10 @@ export default function MovimentacoesPage() {
                       setSyncMessage({ type: "error", text: "Erro ao sincronizar: " + res.error });
                     } else if (res && "error" in res && res.error) {
                       setSyncMessage({ type: "error", text: "Erro ao sincronizar: " + res.error });
+                    } else if (res && "status" in res && res.status === "PROCESSING") {
+                      setSyncMessage({ type: "success", text: "Relatório solicitado ao Mercado Pago. O worker continuará o processamento." });
                     } else {
-                      setSyncMessage({ type: "success", text: "Sincronização concluída com sucesso!" });
+                      setSyncMessage({ type: "success", text: "Janela do extrato sincronizada com sucesso." });
                       await loadData();
                     }
                   } catch (err: any) {
@@ -174,6 +215,16 @@ export default function MovimentacoesPage() {
           </div>
         }
       />
+
+      {showManualEntry && (
+        <form onSubmit={handleManualEntry} className="rounded-xl border border-novex-cyan/30 bg-novex-surface1 p-4 grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+          <div><label className="block text-[11px] text-novex-text-muted mb-1">Tipo</label><select value={manualDirection} onChange={(event) => setManualDirection(event.target.value as "CREDIT" | "DEBIT")} className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-xs"><option value="CREDIT">Entrada</option><option value="DEBIT">Saída</option></select></div>
+          <div><label className="block text-[11px] text-novex-text-muted mb-1">Valor</label><input required value={manualAmount} onChange={(event) => setManualAmount(event.target.value)} placeholder="0,00" inputMode="decimal" className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-xs" /></div>
+          <div className="md:col-span-2"><label className="block text-[11px] text-novex-text-muted mb-1">Descrição</label><input required minLength={2} value={manualDescription} onChange={(event) => setManualDescription(event.target.value)} placeholder="Ex.: aluguel, salário, compra" className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-xs" /></div>
+          <div><label className="block text-[11px] text-novex-text-muted mb-1">Data</label><input required type="date" value={manualDate} onChange={(event) => setManualDate(event.target.value)} className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-xs" /></div>
+          <button type="submit" className="md:col-start-5 rounded-lg bg-novex-cyan px-4 py-2.5 text-xs font-bold text-novex-bg">Registrar</button>
+        </form>
+      )}
 
       {/* Cards de Métricas Consolidadas */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -238,6 +289,7 @@ export default function MovimentacoesPage() {
             <option value="BIWEEKLY">Quinzenal (Últimos 15 dias)</option>
             <option value="MONTHLY">Mensal (Mês Atual)</option>
             <option value="YEARLY">Anual (Ano Atual)</option>
+            <option value="ALL">Todo o Histórico (Completo)</option>
           </select>
 
           <select
@@ -306,7 +358,7 @@ export default function MovimentacoesPage() {
                       <div className="text-[10px] text-novex-text-muted font-mono">{tx.externalId}</div>
                     </td>
                     <td className="py-4 px-4 text-novex-text-secondary">
-                      {tx.counterpartName || "Origem bancária"}
+                      {tx.counterpartName || (tx.source === "MANUAL_ADJUSTMENT" ? "Conta geral manual" : "Não informado pelo provedor")}
                     </td>
                     <td className="py-4 px-4">
                       <span
@@ -371,6 +423,7 @@ export default function MovimentacoesPage() {
                             <span>100% Vinculado</span>
                           </button>
                         )}
+                        <button onClick={() => handleQuarantine(tx.id)} className="rounded px-2 py-1 text-[10px] text-amber-300 hover:bg-amber-500/10" title="Excluir dos totais sem apagar">Quarentena</button>
                       </div>
                     </td>
                   </tr>

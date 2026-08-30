@@ -6,8 +6,10 @@ if (!process.env.AUTH_SECRET) {
   throw new Error("FATAL: Variável de ambiente AUTH_SECRET obrigatória ausente.");
 }
 
-if (!process.env.NEXT_PUBLIC_APP_URL) {
-  throw new Error("FATAL: Variável de ambiente NEXT_PUBLIC_APP_URL obrigatória ausente.");
+const serverAuthUrl = process.env.BETTER_AUTH_URL || process.env.NEXT_PUBLIC_APP_URL;
+
+if (!serverAuthUrl) {
+  throw new Error("FATAL: Variável de ambiente BETTER_AUTH_URL ou NEXT_PUBLIC_APP_URL obrigatória ausente.");
 }
 
 export const auth = betterAuth({
@@ -47,5 +49,6 @@ export const auth = betterAuth({
     updateAge: 24 * 60 * 60, // 1 dia
   },
   secret: process.env.AUTH_SECRET,
-  baseURL: process.env.NEXT_PUBLIC_APP_URL,
+  baseURL: serverAuthUrl,
+  trustedOrigins: [serverAuthUrl],
 });

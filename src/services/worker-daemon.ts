@@ -2,7 +2,7 @@ import { db } from "@/server/db";
 import { processActiveRecurrencesForWorkspace } from "@/server/services/recurrence-service";
 import { processNotificationAlertsForWorkspace } from "@/server/services/notification-service";
 import { reconcileWorkspace } from "@/server/services/reconciliation-service";
-import { continueMercadoPagoSyncRun } from "@/server/services/transactions-service";
+import { continueMercadoPagoSyncRun, enrichAllMercadoPagoTransactions } from "@/server/services/transactions-service";
 import { INTERNAL_WORKER_CONTEXT } from "@/server/internal-context";
 import { discoverWorkspaceRecurrences } from "@/services/recurrence-discovery";
 
@@ -32,7 +32,7 @@ export class WorkerDaemonService {
 
       // Buscar todos os workspaces cadastrados no sistema
       const workspaces = await db.workspace.findMany({
-        select: { id: true, name: true },
+        select: { id: true, name: true, financeMode: true },
       });
 
       let totalRecurrences = 0;
@@ -87,14 +87,24 @@ export class WorkerDaemonService {
 
         // 4. Continuar SyncRuns pendentes ou interrompidos (PROCESSING) do workspace (Regra 33)
         try {
-          const pendingSyncs = await db.syncRun.findMany({
+          if (ws.financeMode === "HYBRID") {
+            try {
+              await continueMercadoPagoSyncRun({ force: false, internalContext: INTERNAL_WORKER_CONTEXT, workspaceId: ws.id });
+              await enrichAllMercadoPagoTransactions(INTERNAL_WORKER_CONTEXT, ws.id);
+              resumedSyncs++;
+            } catch (syncErr: any) {
+              console.warn(`[WorkerDaemon] Live sync Mercado Pago para workspace ${ws.id}:`, syncErr.message);
+            }
+          }
+
+          const pendingSyncs = ws.financeMode === "HYBRID" ? await db.syncRun.findMany({
             where: {
               workspaceId: ws.id,
               status: "PROCESSING",
               source: "MERCADO_PAGO_API",
             },
             take: 5,
-          });
+          }) : [];
 
           for (const syncRun of pendingSyncs) {
             try {
@@ -103,6 +113,7 @@ export class WorkerDaemonService {
                 syncRunId: syncRun.id,
                 integrationAccountId: syncRun.integrationAccountId,
                 internalContext: INTERNAL_WORKER_CONTEXT,
+                workspaceId: ws.id,
               });
               if (syncResult && 'status' in syncResult && syncResult.status === 'PARTIAL') {
                 partialCount++;
@@ -111,6 +122,28 @@ export class WorkerDaemonService {
             } catch (syncErr: any) {
               failedCount++;
               console.error(`[WorkerDaemon] SyncRun ${syncRun.id} falhou:`, syncErr.message);
+            }
+          }
+
+          if (pendingSyncs.length === 0 && ws.financeMode === "HYBRID") {
+            const integrations = await db.integrationAccount.findMany({
+              where: { workspaceId: ws.id, provider: "MERCADO_PAGO", status: "CONNECTED", isActive: true },
+              select: { id: true, historyBackfillStatus: true },
+            });
+            for (const integration of integrations) {
+              if (["NOT_STARTED", "IN_PROGRESS"].includes(integration.historyBackfillStatus)) {
+                try {
+                  await continueMercadoPagoSyncRun({
+                    integrationAccountId: integration.id,
+                    internalContext: INTERNAL_WORKER_CONTEXT,
+                    workspaceId: ws.id,
+                  });
+                  resumedSyncs++;
+                } catch (syncErr: any) {
+                  failedCount++;
+                  console.error(`[WorkerDaemon] Backfill da integração ${integration.id} falhou:`, syncErr.message);
+                }
+              }
             }
           }
         } catch (e: any) {

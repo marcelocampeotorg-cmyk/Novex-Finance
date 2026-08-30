@@ -11,7 +11,9 @@ export function middleware(request: NextRequest) {
     path.startsWith("/api/webhooks") ||
     path.startsWith("/api/worker") ||
     path.startsWith("/api/health") ||
-    path.startsWith("/brand");
+    path.startsWith("/brand") ||
+    path === "/sw.js" ||
+    path === "/manifest.json";
 
   if (isPublic) {
     return NextResponse.next();
@@ -20,7 +22,9 @@ export function middleware(request: NextRequest) {
   // Verificar cookie de sessão do Better Auth
   const sessionCookie =
     request.cookies.get("better-auth.session_token") ||
-    request.cookies.get("__Secure-better-auth.session_token");
+    request.cookies.get("better_auth.session_token") ||
+    request.cookies.get("__Secure-better-auth.session_token") ||
+    request.cookies.get("__Secure-better_auth.session_token");
 
   if (!sessionCookie || !sessionCookie.value) {
     const loginUrl = new URL("/login", request.url);
@@ -31,5 +35,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|sw.js|manifest.json).*)"],
 };

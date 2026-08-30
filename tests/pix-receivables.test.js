@@ -47,6 +47,7 @@ test("Orders API: somente processed/accredited com evidências oficiais é pago"
             id: "PAY-1",
             status: "processed",
             status_detail: "accredited",
+            date_approved: "2026-08-24T10:05:00Z",
             amount: "100.00",
             paid_amount: "100.00",
           },
@@ -60,6 +61,18 @@ test("Orders API: somente processed/accredited com evidências oficiais é pago"
   assert.strictEqual(result.paidAmountCents, 10000);
   assert.strictEqual(result.paymentId, "PAY-1");
   assert.strictEqual(result.externalReference, "REF-1");
+  assert.strictEqual(result.providerUpdatedAt, "2026-08-24T10:00:00Z");
+  assert.strictEqual(result.paidAt, "2026-08-24T10:05:00Z");
+});
+
+test("Orders API: created_date não é inventado como data do pagamento", async (t) => {
+  t.mock.method(global, "fetch", async () => ({
+    status: 200,
+    json: async () => ({ id: "ORD-3", status: "processed", created_date: "2026-08-24T10:00:00Z", transactions: { payments: [{ id: "PAY-3", status: "processed", status_detail: "accredited", amount: "10.00" }] } }),
+  }));
+  const result = await getOrderById({ accessToken: "TOKEN", orderId: "ORD-3" });
+  assert.strictEqual(result.isPaid, true);
+  assert.strictEqual(result.paidAt, undefined);
   assert.strictEqual(result.providerUpdatedAt, "2026-08-24T10:00:00Z");
 });
 

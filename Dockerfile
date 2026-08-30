@@ -3,13 +3,14 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Instalar pnpm e dependências do sistema
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# Fixar uma versão compatível com Node 20 e com o lockfile v9.
+RUN apk add --no-cache openssl
+RUN corepack enable && corepack prepare pnpm@10.15.1 --activate
 
 COPY package.json pnpm-lock.yaml* ./
 COPY prisma ./prisma/
 
-RUN pnpm install --frozen-lockfile || pnpm install
+RUN pnpm install --frozen-lockfile
 
 COPY . .
 
@@ -17,12 +18,16 @@ ENV DOCKER_BUILD=true
 
 # Gerar Prisma Client e compilar Next.js em standalone
 RUN npx prisma generate
-RUN pnpm build
+RUN AUTH_SECRET=build-only-not-used-at-runtime-32-characters-minimum \
+    NEXT_PUBLIC_APP_URL=http://localhost:3000 \
+    pnpm build
 
 # Production Stage
 FROM node:20-alpine AS runner
 
 WORKDIR /app
+
+RUN apk add --no-cache openssl
 
 ENV NODE_ENV=production
 ENV PORT=3000

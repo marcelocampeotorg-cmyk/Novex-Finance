@@ -205,27 +205,34 @@ export async function processNotificationAlertsForWorkspace(targetWorkspaceId?: 
  * Resolver de credenciais server-side da Evolution API
  */
 async function resolveEvolutionCredentials(workspaceId: string) {
-  // Correção N: Usar apenas integração CONNECTED + isActive=true
   const integration = await db.integrationAccount.findFirst({
-    where: { workspaceId, provider: "EVOLUTION_API", status: "CONNECTED", isActive: true },
+    where: { workspaceId, provider: "EVOLUTION_API", isActive: true },
   });
 
-  if (!integration || !integration.encryptedCredentials) {
-    throw new Error("Integração do WhatsApp (Evolution API) não configurada ou desconectada.");
+  if (integration && integration.encryptedCredentials) {
+    try {
+      const rawData = decryptCredentials(integration.encryptedCredentials);
+      const parsed = JSON.parse(rawData);
+      if (parsed.baseUrl && parsed.apiKey && parsed.instanceName) {
+        return {
+          baseUrl: parsed.baseUrl as string,
+          apiKey: parsed.apiKey as string,
+          instanceName: parsed.instanceName as string,
+        };
+      }
+    } catch (e) {
+      // Fallback para variáveis de ambiente se a descriptografia falhar
+    }
   }
 
-  const rawData = decryptCredentials(integration.encryptedCredentials);
-  const parsed = JSON.parse(rawData);
-
-  if (!parsed.baseUrl || !parsed.apiKey || !parsed.instanceName) {
-    throw new Error("Configuração da Evolution API incompleta.");
+  const baseUrl = process.env.EVOLUTION_API_URL || (process.env.NODE_ENV !== "production" ? "http://127.0.0.1:8081" : "");
+  const apiKey = process.env.EVOLUTION_API_KEY || "";
+  const instanceName = process.env.EVOLUTION_INSTANCE_NAME || (process.env.NODE_ENV !== "production" ? "novex-finance" : "");
+  if (!baseUrl || !apiKey || !instanceName) {
+    throw new Error("Configuração da Evolution API incompleta: informe base URL, API key e instância.");
   }
 
-  return {
-    baseUrl: parsed.baseUrl,
-    apiKey: parsed.apiKey,
-    instanceName: parsed.instanceName,
-  };
+  return { baseUrl, apiKey, instanceName };
 }
 
 /**
@@ -236,7 +243,9 @@ export async function checkEvolutionConnectionState() {
     const { workspaceId } = await requireAuthenticatedWorkspace();
     const creds = await resolveEvolutionCredentials(workspaceId);
     const { evolutionAPIClient } = await import("@/integrations/evolution-api/client");
-    return await evolutionAPIClient.checkConnectionState(creds.baseUrl, creds.apiKey, creds.instanceName);
+    const result = await evolutionAPIClient.checkConnectionState(creds.baseUrl, creds.apiKey, creds.instanceName);
+
+    return result;
   } catch (error: any) {
     return { success: false, state: "disconnected" as const, error: error.message };
   }

@@ -12,7 +12,7 @@ Este documento não obriga uma ordem técnica cega. O agente deve auditar depend
 - Account Money real;
 - pipeline assíncrono persistente;
 - ledger;
-- saldo sem valor manual;
+- saldo manual legítimo separado da conta Mercado Pago e sem sobrescrita do provedor;
 - fonte/timestamp;
 - source separation.
 

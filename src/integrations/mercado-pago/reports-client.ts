@@ -121,16 +121,87 @@ export class MercadoPagoReportsClient {
   }
 
   /**
+   * Garante que a configuração do relatório de liquidação exista na conta do Mercado Pago.
+   * Se a conta nunca tiver configurado o relatório, cria a configuração padrão automaticamente.
+   */
+  async ensureReportConfig(): Promise<void> {
+    const reportConfig = {
+      file_name_prefix: "novex-settlement",
+      display_timezone: "GMT-03",
+      frequency: { type: "daily", value: 1, hour: 0 },
+      separator: ";",
+      scheduled: false,
+      include_withdraw: false,
+      columns: [
+        { key: "SOURCE_ID" },
+        { key: "EXTERNAL_REFERENCE" },
+        { key: "TRANSACTION_TYPE" },
+        { key: "DESCRIPTION" },
+        { key: "TRANSACTION_AMOUNT" },
+        { key: "TRANSACTION_CURRENCY" },
+        { key: "FEE_AMOUNT" },
+        { key: "SETTLEMENT_NET_AMOUNT" },
+        { key: "SETTLEMENT_CURRENCY" },
+        { key: "TRANSACTION_DATE" },
+        { key: "SETTLEMENT_DATE" },
+        { key: "PAYMENT_METHOD" },
+      ],
+    };
+    const configRes = await fetch("https://api.mercadopago.com/v1/account/settlement_report/config", {
+      headers: { Authorization: `Bearer ${this.accessToken}` },
+    });
+    if (configRes.ok) {
+      const currentConfig = await configRes.json();
+      const currentColumns = new Set(
+        Array.isArray(currentConfig.columns) ? currentConfig.columns.map((column: any) => String(column?.key || "")) : []
+      );
+      const requiredColumns = reportConfig.columns.map((column) => column.key);
+      if (requiredColumns.every((column) => currentColumns.has(column))) return;
+
+      const updateRes = await fetch("https://api.mercadopago.com/v1/account/settlement_report/config", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(reportConfig),
+      });
+      if (!updateRes.ok) {
+        const errorData = await updateRes.json().catch(() => ({}));
+        throw new Error(errorData.message || errorData.error || `HTTP ${updateRes.status} ao atualizar configuração do settlement_report`);
+      }
+      return;
+    }
+    if (configRes.status !== 404) {
+      throw new Error(`HTTP ${configRes.status} ao consultar configuração do settlement_report`);
+    }
+    const createRes = await fetch("https://api.mercadopago.com/v1/account/settlement_report/config", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(reportConfig),
+        });
+    if (!createRes.ok && createRes.status !== 409) {
+      throw new Error(`HTTP ${createRes.status} ao criar configuração do settlement_report`);
+    }
+  }
+
+  /**
    * Solicita a geração assíncrona do Relatório Dinheiro em Conta (Settlement Report)
    * POST https://api.mercadopago.com/v1/account/settlement_report
    */
   async requestSettlementReport(
     beginDate?: Date,
     endDate?: Date
-  ): Promise<{ success: boolean; taskId?: string; status?: string; error?: string }> {
+  ): Promise<{ success: boolean; taskId?: string; status?: string; fileName?: string; error?: string }> {
     try {
-      const begin = (beginDate || new Date(Date.now() - 30 * 24 * 3600 * 1000)).toISOString();
-      const end = (endDate || new Date()).toISOString();
+      await this.ensureReportConfig();
+
+      const toMercadoPagoUtc = (date: Date) => date.toISOString().replace(/\.\d{3}Z$/, "Z");
+      const begin = toMercadoPagoUtc(beginDate || new Date(Date.now() - 30 * 24 * 3600 * 1000));
+      const end = toMercadoPagoUtc(endDate || new Date());
 
       const response = await fetch("https://api.mercadopago.com/v1/account/settlement_report", {
         method: "POST",
@@ -156,9 +227,34 @@ export class MercadoPagoReportsClient {
       }
 
       const errData = await response.json().catch(() => ({}));
+      const errMsg = String(errData.message || errData.error || "");
+
+      // Resiliência: se o Mercado Pago atingiu o limite de relatórios gerados simultâneos (HTTP 400 Max number of reports)
+      if (response.status === 400 || errMsg.toLowerCase().includes("max number of reports")) {
+        try {
+          const listRes = await fetch("https://api.mercadopago.com/v1/account/settlement_report/list", {
+            headers: { Authorization: `Bearer ${this.accessToken}` },
+          });
+          if (listRes.ok) {
+            const list = await listRes.json();
+            const readyReport = Array.isArray(list) ? list.find((r: any) => r.status === "processed" && r.file_name) : null;
+            if (readyReport) {
+              return {
+                success: true,
+                taskId: String(readyReport.id),
+                status: "READY",
+                fileName: readyReport.file_name,
+              };
+            }
+          }
+        } catch (recoveryErr) {
+          console.warn("[ReportsClient] Falha ao recuperar relatórios existentes:", recoveryErr);
+        }
+      }
+
       return {
         success: false,
-        error: errData.message || errData.error || `HTTP ${response.status} ao solicitar settlement_report`,
+        error: errMsg || `HTTP ${response.status} ao solicitar settlement_report`,
       };
     } catch (err: any) {
       console.error("Erro ao solicitar settlement_report:", err);
@@ -174,12 +270,13 @@ export class MercadoPagoReportsClient {
     if (!response.ok) throw new Error(`HTTP ${response.status} ao consultar task de settlement_report`);
     const data = await response.json();
     const rawStatus = String(data.status || "").toLowerCase();
-    const status = rawStatus === "processed" ? "READY" :
+    const status = ["processed", "available", "ready"].includes(rawStatus) ? "READY" :
       ["failed", "error", "cancelled"].includes(rawStatus) ? "FAILED" : "PROCESSING";
+    const csvFile = Array.isArray(data.files) ? data.files.find((file: any) => file?.type === "csv") : undefined;
     return {
-      taskId: String(data.id ?? taskId), status,
-      reportId: data.report_id != null ? String(data.report_id) : undefined,
-      fileName: data.file_name || undefined,
+      taskId, status,
+      reportId: data.report_id != null ? String(data.report_id) : data.id != null ? String(data.id) : undefined,
+      fileName: data.file_name || csvFile?.name || undefined,
     };
   }
 
@@ -267,15 +364,18 @@ export class MercadoPagoReportsClient {
     };
 
     const sourceIdIdx = findExactHeaderIndex(["SOURCE_ID", "EXTERNAL_ID"]);
-    const typeIdx = findExactHeaderIndex(["TRANSACTION_TYPE", "TYPE"]);
+    const typeIdx = findExactHeaderIndex(["TRANSACTION_TYPE", "RECORD_TYPE", "TYPE"]);
     const netAmountIdx = findExactHeaderIndex(["SETTLEMENT_NET_AMOUNT", "NET_AMOUNT"]);
-    const amountIdx = findExactHeaderIndex(["TRANSACTION_AMOUNT", "AMOUNT"]);
-    const feeIdx = findExactHeaderIndex(["FEE_AMOUNT", "FEE"]);
-    const dateIdx = findExactHeaderIndex(["SETTLEMENT_DATE", "TRANSACTION_DATE"]);
+    const netCreditIdx = findExactHeaderIndex(["NET_CREDIT_AMOUNT"]);
+    const netDebitIdx = findExactHeaderIndex(["NET_DEBIT_AMOUNT"]);
+    const amountIdx = findExactHeaderIndex(["TRANSACTION_AMOUNT", "GROSS_AMOUNT", "AMOUNT"]);
+    const feeIdx = findExactHeaderIndex(["FEE_AMOUNT", "MP_FEE_AMOUNT", "FEE"]);
+    const settlementDateIdx = findExactHeaderIndex(["SETTLEMENT_DATE", "SETTLEMENT_DATE_TIME"]);
+    const transactionDateIdx = findExactHeaderIndex(["TRANSACTION_DATE", "CREATED_DATE_TIME"]);
     const descIdx = findExactHeaderIndex(["DESCRIPTION"]);
     const refIdx = findExactHeaderIndex(["EXTERNAL_REFERENCE"]);
 
-    if (sourceIdIdx === -1 || typeIdx === -1 || dateIdx === -1 || netAmountIdx === -1) {
+    if (sourceIdIdx === -1 || typeIdx === -1 || (settlementDateIdx === -1 && transactionDateIdx === -1) || (netAmountIdx === -1 && netCreditIdx === -1 && netDebitIdx === -1)) {
       return {
         transactions: [],
         validCount: 0,
@@ -307,7 +407,9 @@ export class MercadoPagoReportsClient {
         continue;
       }
 
-      const rawDateStr = dateIdx >= 0 ? cols[dateIdx] : undefined;
+      const rawSettlementDate = settlementDateIdx >= 0 ? cols[settlementDateIdx]?.trim() : "";
+      const rawTransactionDate = transactionDateIdx >= 0 ? cols[transactionDateIdx]?.trim() : "";
+      const rawDateStr = rawSettlementDate || rawTransactionDate || undefined;
       if (!rawDateStr || rawDateStr.trim() === "") {
         rejectedCount++;
         errors.push(`Linha ${rowLineNum}: Rejeitada por ausência de data de liquidação.`);
@@ -325,14 +427,18 @@ export class MercadoPagoReportsClient {
       const rawNetAmountStr = netAmountIdx >= 0 ? cols[netAmountIdx] : undefined;
       const rawAmountStr = amountIdx >= 0 ? cols[amountIdx] : undefined;
 
-      const parsedNetVal = parseMonetaryValue(rawNetAmountStr);
+      const parsedCreditVal = netCreditIdx >= 0 ? parseMonetaryValue(cols[netCreditIdx] || "0") : 0;
+      const parsedDebitVal = netDebitIdx >= 0 ? parseMonetaryValue(cols[netDebitIdx] || "0") : 0;
+      const parsedNetVal = netAmountIdx >= 0
+        ? parseMonetaryValue(rawNetAmountStr)
+        : parsedCreditVal === null || parsedDebitVal === null ? null : parsedCreditVal - Math.abs(parsedDebitVal);
       if (parsedNetVal === null) {
         rejectedCount++;
         errors.push(`Linha ${rowLineNum}: Rejeitada por formato numérico de valor líquido inválido.`);
         continue;
       }
 
-      const parsedAmountVal = parseMonetaryValue(rawAmountStr || rawNetAmountStr);
+      const parsedAmountVal = parseMonetaryValue(rawAmountStr || rawNetAmountStr || String(parsedNetVal));
       const parsedFeeVal = parseMonetaryValue(feeIdx >= 0 ? cols[feeIdx] : "0");
 
       if (parsedFeeVal === null) {
@@ -379,3 +485,4 @@ export class MercadoPagoReportsClient {
     };
   }
 }
+

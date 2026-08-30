@@ -34,6 +34,8 @@ CSV criava/consultava IntegrationAccount incoerente e source podia cair como Mer
 ### Saldo manual
 Havia fluxo de “saldo inicial manual” e até cast inválido de provider. Remover como mecanismo normal.
 
+> **Decisão posterior de 2026-08-27:** este achado permanece válido para o mecanismo antigo, que tentava fazer a conta Mercado Pago “bater”. A Fonte da Verdade atual autoriza uma conta geral manual independente, com saldo inicial datado, ledger auditável e sem sobrescrita da conta integrada.
+
 ### Refund
 Foi introduzida função “Devolver Pix”, inclusive com simulação de sucesso no Sandbox. Isso contradiz a fonte de verdade. Remover do escopo ativo.
 

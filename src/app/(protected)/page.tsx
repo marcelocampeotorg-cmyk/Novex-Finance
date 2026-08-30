@@ -47,6 +47,44 @@ export default function DashboardPage() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [dashboardState, setDashboardState] = useState<"loading" | "error" | "success">("loading");
 
+  const [showAnchorModal, setShowAnchorModal] = useState(false);
+  const [anchorAccountId, setAnchorAccountId] = useState("");
+  const [anchorAmount, setAnchorAmount] = useState("");
+  const [anchorDate, setAnchorDate] = useState(new Date().toISOString().slice(0, 10));
+  const [savingAnchor, setSavingAnchor] = useState(false);
+  const [anchorMessage, setAnchorMessage] = useState<string | null>(null);
+
+  const handleSaveAnchor = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!anchorAccountId) return;
+    const num = Number(anchorAmount.replace(/\./g, "").replace(",", "."));
+    if (isNaN(num)) {
+      setAnchorMessage("Informe um valor numérico válido.");
+      return;
+    }
+    setSavingAnchor(true);
+    setAnchorMessage(null);
+    try {
+      const { setAccountBalanceAnchor } = await import("@/server/actions/workspace");
+      const res = await setAccountBalanceAnchor({
+        financialAccountId: anchorAccountId,
+        openingBalanceCents: Math.round(num * 100),
+        openingBalanceAt: anchorDate,
+      });
+      if (!res.success) {
+        setAnchorMessage(res.error || "Erro ao salvar âncora.");
+      } else {
+        setShowAnchorModal(false);
+        setAnchorAmount("");
+        await loadDashboard();
+      }
+    } catch (err: any) {
+      setAnchorMessage(err.message || "Erro inesperado.");
+    } finally {
+      setSavingAnchor(false);
+    }
+  };
+
   const isSyncingRef = React.useRef(false);
 
   const loadDashboard = async () => {
@@ -123,12 +161,13 @@ export default function DashboardPage() {
         actions={
           <button
             onClick={async () => {
+              if (displaySummary.financeMode !== "HYBRID") return;
               setIsSyncing(true); setSyncError(null);
               try { const { triggerMercadoPagoSync } = await import("@/server/actions/workspace"); const result = await triggerMercadoPagoSync(true); if (!result.success) throw new Error(("error" in result ? String(result.error) : "") || ("message" in result ? String(result.message) : "Falha ao solicitar atualização.")); await loadDashboard(); }
               catch (error: any) { setSyncError(error.message || "Falha ao solicitar atualização."); }
               finally { setIsSyncing(false); }
             }}
-            disabled={isSyncing}
+            disabled={isSyncing || displaySummary.financeMode !== "HYBRID"}
             className={`flex items-center gap-2 text-xs px-3.5 py-2 rounded-lg border transition-all ${
               isSyncing
                 ? "bg-novex-surface1 text-novex-cyan border-novex-cyan/40 cursor-wait shadow-sm"
@@ -136,9 +175,11 @@ export default function DashboardPage() {
                 ? "bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20"
                 : "bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20"
             }`}
-            title="Clique para sincronizar com Mercado Pago agora"
+            title={displaySummary.financeMode === "HYBRID" ? "Clique para sincronizar com Mercado Pago agora" : "Ative o modo Híbrido para conectar o Mercado Pago"}
           >
-            {isSyncing ? (
+            {displaySummary.financeMode !== "HYBRID" ? (
+              <><Wallet className="h-4 w-4" /><span className="font-semibold">Modo Manual</span></>
+            ) : isSyncing ? (
               <>
                 <RefreshCw className="h-4 w-4 animate-spin text-novex-cyan" />
                 <span className="font-semibold text-novex-cyan">Sincronizando...</span>
@@ -171,49 +212,43 @@ export default function DashboardPage() {
       {/* Grid de Cards Métricos Principais */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         <MetricCard
-          title="Movimentação Líquida Conhecida"
-          amountCents={displaySummary.currentBalanceCents}
-          overrideText={
-            displaySummary.syncSource === "DESCONECTADO" || !displaySummary.lastSyncAt
-              ? "Aguardando sincronização"
-              : undefined
-          }
-          subtitle={
-            displaySummary.syncSource === "SINCRONIZADO"
-              ? displaySummary.balanceDescription || "Movimentação líquida confirmada"
-              : "Atualização pendente"
-          }
+          title={displaySummary.financeMode === "HYBRID" ? "Saldo Mercado Pago" : "Saldo Consolidado"}
+          amountCents={displaySummary.monthNetCents ?? 0}
+          subtitle="Saldo atual disponível hoje"
           icon={Wallet}
           variant="cyan"
-          badgeText={displaySummary.syncSource === "SINCRONIZADO" ? "Sincronizado" : "Pendente"}
+          badgeText="Hoje"
           valueColor="white"
         />
 
         <MetricCard
-          title="Fluxo Projetado do Mês"
-          amountCents={displaySummary.projectedBalanceCents}
-          subtitle="Movimentação + Recebimentos - Pagamentos no mês"
-          icon={TrendingUp}
-          variant="default"
-          valueColor="auto"
+          title="Ganhos do Mês (Entradas)"
+          amountCents={displaySummary.monthIncomeCents ?? 0}
+          subtitle="Entradas de 01/08 a 31/08"
+          icon={ArrowDownLeft}
+          variant="success"
+          badgeText="Mês Atual"
+          valueColor="green"
         />
 
         <MetricCard
-          title="A Pagar neste Mês"
-          amountCents={displaySummary.totalPayableMonthCents}
-          subtitle="Pendente no mês vigente"
+          title="Gastos do Mês (Saídas)"
+          amountCents={displaySummary.monthExpenseCents ?? 0}
+          subtitle="Saídas de 01/08 a 31/08"
           icon={ArrowUpRight}
           variant="default"
+          badgeText="Mês Atual"
           valueColor="red"
         />
 
         <MetricCard
-          title="A Receber neste Mês"
-          amountCents={displaySummary.totalReceivableMonthCents}
-          subtitle="Previsto no mês vigente"
-          icon={ArrowDownLeft}
-          variant="success"
-          valueColor="green"
+          title="Resultado Líquido do Mês"
+          amountCents={displaySummary.monthNetCents ?? 0}
+          subtitle={(displaySummary.monthNetCents ?? 0) >= 0 ? "Superávit do mês atual" : "Déficit do mês atual"}
+          icon={TrendingUp}
+          variant={(displaySummary.monthNetCents ?? 0) >= 0 ? "success" : "default"}
+          badgeText={(displaySummary.monthNetCents ?? 0) >= 0 ? "Positivo" : "Atenção"}
+          valueColor={(displaySummary.monthNetCents ?? 0) >= 0 ? "green" : "red"}
         />
       </div>
 
@@ -228,7 +263,7 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-novex-text-primary">Seus próximos pagamentos</h3>
               <span className="text-xs font-bold text-emerald-400">
-                {formatCurrency(displaySummary.currentBalanceCents)}
+                {formatCurrency(displaySummary.totalPayableMonthCents || 0)}
               </span>
             </div>
             <p className="text-xs text-novex-text-secondary mt-1">
@@ -422,6 +457,83 @@ export default function DashboardPage() {
           setPaymentInstallment(inst);
         }}
       />
+
+      {/* Modal de Ajuste de Saldo Real / Âncora */}
+      {showAnchorModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl border border-novex-border bg-novex-surface1 p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            <h3 className="text-base font-bold text-novex-text-primary mb-1">Ajustar Saldo Real da Conta</h3>
+            <p className="text-xs text-novex-text-secondary mb-4">
+              Defina o saldo exato em uma data específica. O sistema calculará o saldo atual com base neste valor inicial mais as movimentações a partir desta data.
+            </p>
+
+            <form onSubmit={handleSaveAnchor} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-novex-text-secondary mb-1">Conta Financeira</label>
+                <select
+                  value={anchorAccountId}
+                  onChange={(e) => setAnchorAccountId(e.target.value)}
+                  className="w-full rounded-lg border border-novex-border bg-novex-bg px-3 py-2 text-xs text-novex-text-primary focus:border-novex-cyan focus:outline-none"
+                  required
+                >
+                  {(displaySummary.financialAccounts || []).map((acc) => (
+                    <option key={acc.id} value={acc.id}>
+                      {acc.name} ({acc.type === "MERCADO_PAGO" ? "Mercado Pago" : "Conta Geral"})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-novex-text-secondary mb-1">Saldo Real (R$)</label>
+                <input
+                  type="text"
+                  value={anchorAmount}
+                  onChange={(e) => setAnchorAmount(e.target.value)}
+                  placeholder="Ex.: 1500,00 ou 0,00"
+                  inputMode="decimal"
+                  className="w-full rounded-lg border border-novex-border bg-novex-bg px-3 py-2 text-xs text-novex-text-primary focus:border-novex-cyan focus:outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-novex-text-secondary mb-1">Data do Saldo</label>
+                <input
+                  type="date"
+                  value={anchorDate}
+                  onChange={(e) => setAnchorDate(e.target.value)}
+                  className="w-full rounded-lg border border-novex-border bg-novex-bg px-3 py-2 text-xs text-novex-text-primary focus:border-novex-cyan focus:outline-none"
+                  required
+                />
+              </div>
+
+              {anchorMessage && (
+                <div className="text-xs font-semibold text-red-400 bg-red-500/10 p-2.5 rounded-lg border border-red-500/20">
+                  {anchorMessage}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAnchorModal(false)}
+                  className="px-3.5 py-2 text-xs font-semibold text-novex-text-secondary hover:text-white transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingAnchor}
+                  className="rounded-lg bg-novex-cyan hover:bg-novex-cyan/90 text-novex-bg font-bold px-4 py-2 text-xs transition-colors disabled:opacity-50"
+                >
+                  {savingAnchor ? "Salvando..." : "Salvar Saldo"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

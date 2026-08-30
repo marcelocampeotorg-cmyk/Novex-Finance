@@ -150,10 +150,10 @@ Correção: O schema foi alinhado via aplicação da cadeia canônica forward-on
 Teste de regressão: `npx prisma migrate status` confirma alinhamento canônico em banco limpo.
 
 ### ERR-031 — Account Money continuava run arbitrário e aceitava fallbacks do provedor
-Status: BLOQUEADO (Requer token de Sandbox/Produção real do Mercado Pago)
+Status: RESOLVIDO
 Resumo: `syncRunId` era ignorado; status `processed`, tipo obrigatório, zero líquido e payload bruto não eram tratados corretamente.
 Correção: `SyncRun` distingue task/report/file, acompanha exatamente `/task/{task-id}`, baixa somente `file_name`, usa search filtrado e parser fail-closed com zero legítimo distinto de campo ausente.
-Teste de regressão: `tests/account-money-settlement.test.js`; falta credencial real Mercado Pago.
+Teste de regressão: `tests/account-money-settlement.test.js`; em 2026-08-26 a task real `102939740` terminou em `SUCCESS`, com 54 inserções, 23 atualizações, zero rejeições e 54 fatos correspondentes no ledger.
 
 ### ERR-032 — Orders/webhook usavam status legado e criavam segundo ledger
 Status: BLOQUEADO (Requer token de Sandbox/Produção real do Mercado Pago)
@@ -162,10 +162,10 @@ Correção: somente `processed/accredited`, com payment ID, referência, valor e
 Teste de regressão: `tests/pix-receivables.test.js`; falta sandbox oficial.
 
 ### ERR-033 — Evolution com segredo fixo, máscara sobrescrevível e teste financeiro falso
-Status: BLOQUEADO (Requer scan de QR Code com celular real na Evolution API)
+Status: EM VALIDAÇÃO (Requer scan de QR Code com celular real)
 Resumo: API key hardcoded, máscara regravável e teste com cliente/valor/Pix fictícios.
 Correção: configuração fail-closed, base URL validada, máscara rejeitada, campo vazio preserva segredo; cobrança pública recebe somente `pixChargeId`/estágio, recarrega os dados financeiros no servidor e usa chave de dedupe persistida. Teste manual permanece neutro.
-Teste de regressão: `tests/audit-hardening.test.js`; falta instância Evolution real.
+Teste de regressão: `tests/audit-hardening.test.js`; a instância local real em Evolution v2.3.7 respondeu com QR base64 e código de pareamento em 2026-08-26. Falta somente o usuário escanear o QR no celular e comprovar estado `open`.
 
 ### ERR-034 — Store financeiro paralelo e tipos Mock no runtime
 Status: RESOLVIDO
@@ -174,10 +174,10 @@ Correção: store reduzido a barramento de invalidação, exclusão usa Server A
 Teste: typecheck e build.
 
 ### ERR-035 — Segredos e banco Evolution na infraestrutura Docker
-Status: PENDENTE DE VALIDAÇÃO EXTERNA
+Status: VALIDADO LOCALMENTE / PENDENTE EM PRODUÇÃO
 Resumo: compose continha senhas/chaves fixas e não criava `evolution_db`.
 Correção: variáveis obrigatórias sem defaults secretos em código, placeholders seguros em `.env.example` e init SQL idempotente do banco Evolution no Compose.
-Evidência pendente: Estrutura Docker Compose validada localmente. PENDENTE DE VALIDAÇÃO EXTERNA / PRODUÇÃO até que credenciais reais da Evolution API e Mercado Pago sejam injetadas no ambiente.
+Evidência: banco, Redis e Evolution v2.3.7 iniciados localmente, migrations da Evolution aplicadas e QR real emitido. Produção continua fora do escopo e sem autorização de deploy.
 
 ### ERR-036 — Descoberta de recorrências ausente
 Status: RESOLVIDO
@@ -192,6 +192,95 @@ Resumo: Durante execução de testes de ambiente, o comando `docker-compose down
 Impacto: O banco de dados local do container e as configurações locais de credenciais de integração foram reinicializados com valores placeholder. O impacto conhecido é limitado ao ambiente local de desenvolvimento (cuja documentação indicava ausência de dados operacionais relevantes após expurgo anterior em ERR-012, mas o conteúdo do volume removido não pode ser provado diretamente).
 Correção: O container PostgreSQL foi recriado limpo e a cadeia canônica de 6 migrations (`20240101000000_init` até `20260825000005_recurrence_idempotency`) reconstruiu o schema do zero com sucesso. O `.env` permanece com placeholders e as credenciais reais do Mercado Pago e Evolution API aguardam reconfiguração manual antes de testes remotos em produção.
 Evidência: `npx prisma migrate deploy` executado com sucesso e 69/69 testes integrados passando no ambiente limpo.
+
+### ERR-038 — Configuração Account Money usava nomes de colunas não oficiais
+Status: RESOLVIDO
+Data: 2026-08-26
+Severidade: CRÍTICA
+Área: Mercado Pago / verdade financeira
+Descrição: a configuração aceitava chaves como `RECORD_TYPE`, `NET_CREDIT_AMOUNT` e `SETTLEMENT_DATE_TIME`, mas o glossário oficial define `TRANSACTION_TYPE`, `SETTLEMENT_NET_AMOUNT`, `TRANSACTION_DATE` e `SETTLEMENT_DATE`. O arquivo resultante continha 77 identificadores, porém nenhum valor/data financeira utilizável.
+Correção aplicada: configuração migrada por `PUT` para as colunas oficiais; o parser permanece fail-closed e a geração usa UTC sem milissegundos.
+Teste de regressão: task real `102939740` importada com `SUCCESS`, 54 inserções, 23 atualizações e zero rejeições; `tests/account-money-settlement.test.js` cobre configuração, task, cabeçalho e datas.
+
+### ERR-039 — Evolution v2.2.0 não emitia QR com o WhatsApp atual
+Status: RESOLVIDO LOCALMENTE / PENDENTE DE PAREAMENTO
+Data: 2026-08-26
+Severidade: ALTA
+Área: Evolution API / WhatsApp
+Descrição: a instância permanecia em `close`/`connecting` e `/instance/connect` retornava somente `count`, sem QR. A imagem v2.2.0 usava uma versão antiga do motor Baileys.
+Correção aplicada: backup recuperável do `evolution_db`, atualização controlada para a versão estável v2.3.7, migrations oficiais aplicadas e recriação da instância local sem sessão vinculada.
+Evidência: `/instance/connect/novex-finance` passou a retornar `base64`, `pairingCode`, `code` e `count: 1`. O pareamento final depende do scan pelo usuário.
+Observação: v2.3.7 é adequada ao uso exclusivamente local atual; antes de qualquer exposição pública, reavaliar o advisory vigente do Baileys e a versão segura disponível.
+
+### ERR-040 — Worker local não tinha configuração explícita nem execução periódica no Compose
+Status: CORRIGIDO NO CÓDIGO / CONFIGURAÇÃO LOCAL PENDENTE
+Data: 2026-08-26
+Severidade: ALTA
+Área: Worker / operação local
+Descrição: `WORKER_SECRET` não estava documentado no ambiente e não existia um processo Compose para retomar SyncRuns assíncronos.
+Correção aplicada: `.env.example` documenta o segredo; `docker-compose.yml` adiciona sidecar periódico autenticado e healthcheck da aplicação.
+Evidência: execução manual autenticada de `/api/worker/run` retomou a task real do Mercado Pago e concluiu o SyncRun em `SUCCESS`.
+Pendência: definir um `WORKER_SECRET` forte no `.env` local antes de subir `app` e `worker` pelo Compose completo.
+
+### ERR-041 — Dockerfile instalava pnpm incompatível e não isolava o contexto
+Status: RESOLVIDO
+Data: 2026-08-26
+Severidade: ALTA
+Área: Build / Docker
+Descrição: `pnpm@latest` passou a exigir Node 22.13, enquanto a imagem usa Node 20, causando `ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite`. Sem `.dockerignore`, o build também enviava aproximadamente 523 MB de artefatos locais. Em seguida, a coleta de rotas falhava porque `AUTH_SECRET` é validado durante o build, antes da injeção das variáveis de runtime pelo Compose.
+Correção aplicada: pnpm fixado em 10.15.1, instalação estritamente `--frozen-lockfile`, `.dockerignore` adicionado, OpenSSL instalado nos dois estágios para o engine Prisma correto e valores neutros limitados ao estágio de build para as duas variáveis exigidas na coleta de rotas. Os segredos reais continuam exclusivamente no runtime.
+Teste de regressão: `docker compose build app`.
+
+### ERR-042 — Fonte da Verdade anterior incompatível com os modos Manual e Híbrido aprovados
+Status: RESOLVIDO
+Data: 2026-08-27
+Severidade: ALTA
+Área: Produto / Ledger / Saldo
+Descrição: A documentação anterior proibia saldo manual como arquitetura oficial, enquanto a decisão atual autoriza uma conta geral manual nos modos Manual e Híbrido. A ausência de separação formal poderia permitir que um valor manual mascarasse falha do Mercado Pago.
+Correção aplicada: Documentação canônica atualizada para autorizar saldo inicial e lançamentos somente na conta manual, proibir sobrescrita do Mercado Pago, exigir reversão/substituição auditável e omitir total consolidado sem saldo oficial comprovado.
+Teste de regressão: `tests/manual-hybrid-balance.test.js`; typecheck e build.
+
+### ERR-043 — Sincronização limitada a 30 dias e movimentação líquida confundível com saldo
+Status: CORRIGIDO NO CÓDIGO / VALIDAÇÃO REAL PENDENTE
+Data: 2026-08-27
+Severidade: CRÍTICA
+Área: Mercado Pago / Dashboard
+Descrição: `continueMercadoPagoSyncRun` inicia uma janela fixa de 30 dias e o dashboard soma `netAmountCents` do histórico importado. Esse resultado é fluxo líquido conhecido, não saldo atual, e não atende à carga do maior histórico disponível em blocos oficiais de até 60 dias.
+Evidência: `src/server/services/transactions-service.ts` e `src/server/actions/workspace.ts`.
+Impacto: Extrato incompleto e números que podem parecer saldo real sem coincidir com a conta.
+Correção aplicada: Modos Manual/Híbrido, conta geral, semântica separada de saldo e fluxo, omissão do total sem âncora MP e backfill retomável em janelas de 60 dias até a data oficial da conta.
+Teste de regressão: `tests/mercado-pago-sync-window.test.js`, `tests/manual-hybrid-balance.test.js` e `tests/account-money-settlement.test.js`.
+Pendência: Docker/PostgreSQL indisponíveis impediram aplicar a migration e executar nova sincronização real nesta sessão.
+Evidência posterior: Migration `20260827000006_manual_hybrid_accounts` aplicada em `BANCO` e `BANCO_TEST`; sincronização incremental real concluiu em `SUCCESS` com 2 inserções, 5 atualizações e zero rejeições. O provedor não retornou data oficial de criação da conta, portanto o backfill foi interrompido honestamente como `LIMIT_UNKNOWN` em vez de inventar o início da cobertura.
+
+### ERR-044 — Ambiente local não inicia integralmente sem bootstrap de segredos
+Status: RESOLVIDO LOCALMENTE
+Data: 2026-08-27
+Severidade: ALTA
+Área: Docker / Worker / Evolution
+Descrição: O Compose exige `WORKER_SECRET`, `CREDENTIALS_ENCRYPTION_KEY_BASE64`, `EVOLUTION_API_KEY` e demais valores, mas não existe bootstrap local idempotente para gerar/preservar a configuração. Sem worker, relatórios assíncronos podem não ser retomados; sem URL/instância Evolution coerentes, o QR não carrega.
+Evidência: `docker compose ps` falhou antes de iniciar os serviços porque `WORKER_SECRET` estava ausente.
+Correção aplicada: `scripts/bootstrap-local.ps1` gera apenas segredos ausentes/placeholders, preserva valores existentes e valida o Compose; scripts `local:bootstrap` e `local:start` adicionados. Diagnóstico Evolution diferencia serviço, autenticação, instância, pareamento e conexão.
+Evidência posterior: bootstrap concluiu e `docker compose config --quiet` passou. O daemon Docker permaneceu inacessível e o serviço `com.docker.service` não pôde ser iniciado pelo agente.
+Evidência final: Docker iniciado; `novexfinance-app` saudável em `localhost:3001`, banco e Redis saudáveis, worker ativo e Evolution v2.3.7 ativa com migrations concluídas. QR base64 e código de pareamento reais presentes. Pareamento `open` continua dependendo do scan pelo usuário.
+
+### ERR-045 — Saldo oficial Mercado Pago ainda sem âncora real validada
+Status: BLOQUEADO (Requer Docker/PostgreSQL e comparação com a conta Mercado Pago no mesmo corte)
+Data: 2026-08-27
+Severidade: CRÍTICA
+Área: Mercado Pago / Saldo
+Descrição: O relatório Dinheiro em Conta comprova fluxo, não saldo instantâneo. O relatório de Liberações é candidato a âncora, mas nenhum campo deve ser promovido a saldo oficial sem resposta real e comparação temporal com o aplicativo Mercado Pago.
+Correção aplicada: Dashboard mantém `officialBalanceStatus=UNAVAILABLE/RECONCILING`, omite total consolidado no modo Híbrido e não converte movimentação líquida em saldo.
+Teste de regressão: `tests/manual-hybrid-balance.test.js` comprova que o total Híbrido permanece nulo sem saldo oficial.
+
+### ERR-046 — Service Worker redirecionado para login
+Status: RESOLVIDO
+Data: 2026-08-27
+Severidade: MÉDIA
+Área: PWA / Middleware
+Descrição: O QA em navegador mostrou `SecurityError` porque `/sw.js` recebia redirect de autenticação, impedindo o registro da PWA.
+Correção aplicada: `/sw.js` e `/manifest.json` foram explicitamente liberados no middleware e excluídos do matcher protegido.
+Teste de regressão: Build, teste PWA existente e novo QA de console em navegador local.
 
 ---
 
@@ -210,3 +299,14 @@ Correção aplicada:
 Teste de regressão:  
 Commit:  
 Observações:
+
+### ERR-047 — Login local rejeitado por origem não confiável
+
+Status: RESOLVIDO
+
+- **Data:** 2026-08-28
+- **Área:** autenticação local / Better Auth
+- **Sintoma:** credenciais válidas eram aceitas em uma chamada direta sem cabeçalho `Origin`, mas o formulário no navegador exibia “Credenciais inválidas” e não criava a sessão.
+- **Causa confirmada:** o Better Auth respondia `INVALID_ORIGIN` para `Origin: http://localhost:3001`. Além da ausência inicial de `trustedOrigins`, `NEXT_PUBLIC_APP_URL` era incorporada pelo build do Next.js como `http://localhost:3000`; portanto o processo no container ignorava, para esse trecho empacotado, o valor externo `http://localhost:3001` fornecido em runtime.
+- **Correção:** a URL server-only passou a usar `BETTER_AUTH_URL`, fornecida em runtime pelo Compose, tanto em `baseURL` quanto em `trustedOrigins`. `NEXT_PUBLIC_APP_URL` permanece destinada ao cliente.
+- **Evidência:** imagem reconstruída e container reiniciado; `POST /api/auth/sign-in/email` com `Origin: http://localhost:3001` retornou HTTP 200 e `Set-Cookie`; a requisição autenticada seguinte para `/` retornou HTTP 200 com conteúdo do dashboard.

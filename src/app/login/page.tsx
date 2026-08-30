@@ -33,8 +33,7 @@ export default function LoginPage() {
       if (res.error) {
         setErrorMsg("Credenciais inválidas. Verifique seu e-mail e senha.");
       } else {
-        router.push("/");
-        router.refresh();
+        window.location.href = "/";
       }
     } catch (err: any) {
       setErrorMsg("O serviço de autenticação está temporariamente indisponível.");

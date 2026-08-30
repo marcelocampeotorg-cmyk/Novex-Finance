@@ -23,6 +23,7 @@ export async function calculateReconciliationScore(
     counterpartName?: string;
     txid?: string;
     rawReference?: string;
+    description?: string;
   },
   installment: {
     id: string;
@@ -31,6 +32,7 @@ export async function calculateReconciliationScore(
     dueDate: Date;
     contactName?: string;
     uniqueReference?: string;
+    title?: string;
   }
 ): Promise<ReconciliationScoreResult> {
   const reasons: string[] = [];
@@ -68,11 +70,21 @@ export async function calculateReconciliationScore(
     (tx.counterpartName.toLowerCase().includes(installment.contactName.toLowerCase()) ||
       installment.contactName.toLowerCase().includes(tx.counterpartName.toLowerCase()))
   ) {
-    score += 25;
-    reasons.push("Contato/Favorecido compatível (+25)");
+    score += 30;
+    reasons.push("Contato/Favorecido compatível (+30)");
   }
 
-  // 5. Data na Mesma Janela (±3 dias do vencimento)
+  // 5. Título da Conta vs Descrição da Movimentação
+  if (
+    installment.title &&
+    ((tx.description && (tx.description.toLowerCase().includes(installment.title.toLowerCase()) || installment.title.toLowerCase().includes(tx.description.toLowerCase()))) ||
+      (tx.counterpartName && (tx.counterpartName.toLowerCase().includes(installment.title.toLowerCase()) || installment.title.toLowerCase().includes(tx.counterpartName.toLowerCase()))))
+  ) {
+    score += 25;
+    reasons.push("Título/Serviço identificado no extrato (+25)");
+  }
+
+  // 6. Data na Mesma Janela (±3 dias do vencimento)
   const diffTime = Math.abs(tx.occurredAt.getTime() - installment.dueDate.getTime());
   const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   if (diffDays <= 3) {
@@ -101,42 +113,255 @@ export async function calculateReconciliationScore(
 }
 
 /**
- * Regra de categorização automática utilizando banco (CategoryRule) com fallback normalizado
+ * Regra de categorização automática utilizando banco (CategoryRule) com fallback normalizado inteligente
  */
 export async function categorizeTransactionDescription(description: string, workspaceId?: string): Promise<string> {
-  const descLower = description.toLowerCase().trim();
+  const descLower = (description || "").toLowerCase().trim();
 
   if (workspaceId) {
     const dbRules = await db.categoryRule.findMany({
-        where: { workspaceId, isEnabled: true },
-        include: { category: true },
-        orderBy: { confidenceScore: "desc" },
-      });
+      where: { workspaceId, isEnabled: true },
+      include: { category: true },
+      orderBy: { confidenceScore: "desc" },
+    });
 
     for (const rule of dbRules) {
-        if (descLower.includes(rule.pattern.toLowerCase().trim())) {
-          return rule.category.name;
-        }
+      if (descLower.includes(rule.pattern.toLowerCase().trim())) {
+        return rule.category.name;
+      }
     }
   }
 
-  if (descLower.includes("posto") || descLower.includes("shell") || descLower.includes("ipiranga") || descLower.includes("uber")) {
-    return "Transporte & Veículo";
-  }
-  if (descLower.includes("drogaria") || descLower.includes("farmacia") || descLower.includes("hospital")) {
-    return "Saúde & Medicamentos";
-  }
-  if (descLower.includes("aws") || descLower.includes("hetzner") || descLower.includes("github") || descLower.includes("google cloud")) {
-    return "Serviços & Tech";
-  }
-  if (descLower.includes("aluguel") || descLower.includes("imobiliaria")) {
-    return "Moradia";
-  }
-  if (descLower.includes("restaurante") || descLower.includes("ifood") || descLower.includes("padaria")) {
-    return "Alimentação";
+  // 1. Assinaturas & Lazer (Streaming & Entretenimento)
+  if (
+    descLower.includes("youtube") ||
+    descLower.includes("youtubepremium") ||
+    descLower.includes("netflix") ||
+    descLower.includes("spotify") ||
+    descLower.includes("prime") ||
+    descLower.includes("disney") ||
+    descLower.includes("hbo") ||
+    descLower.includes("max") ||
+    descLower.includes("star+") ||
+    descLower.includes("deezer") ||
+    descLower.includes("apple") ||
+    descLower.includes("globoplay") ||
+    descLower.includes("paramount") ||
+    descLower.includes("crunchyroll") ||
+    descLower.includes("twitch") ||
+    descLower.includes("streaming")
+  ) {
+    return "Assinaturas & Lazer";
   }
 
-  return "Não categorizada";
+  // 2. Telecom & Internet (Celular, Telefonia e Banda Larga)
+  if (
+    descLower.includes("claro") ||
+    descLower.includes("vivo") ||
+    descLower.includes("tim") ||
+    descLower.includes("oi") ||
+    descLower.includes("algar") ||
+    descLower.includes("net virtua") ||
+    descLower.includes("starlink") ||
+    descLower.includes("embratel") ||
+    descLower.includes("telefonia") ||
+    descLower.includes("fatura celular")
+  ) {
+    return "Telecom & Internet";
+  }
+
+  // 3. Serviços & Softwares (Cloud, IA, Hospedagem e Ferramentas)
+  if (
+    descLower.includes("google one") ||
+    descLower.includes("google") ||
+    descLower.includes("aws") ||
+    descLower.includes("hetzner") ||
+    descLower.includes("vultr") ||
+    descLower.includes("digitalocean") ||
+    descLower.includes("cloudflare") ||
+    descLower.includes("github") ||
+    descLower.includes("openai") ||
+    descLower.includes("claude") ||
+    descLower.includes("anthropic") ||
+    descLower.includes("cursor") ||
+    descLower.includes("vercel") ||
+    descLower.includes("hostinger") ||
+    descLower.includes("godaddy") ||
+    descLower.includes("adobe") ||
+    descLower.includes("canva") ||
+    descLower.includes("notion") ||
+    descLower.includes("slack") ||
+    descLower.includes("zoom") ||
+    descLower.includes("software") ||
+    descLower.includes("hospedagem")
+  ) {
+    return "Serviços & Softwares";
+  }
+
+  // 4. Empréstimos & Crédito
+  if (
+    descLower.includes("mercado crédito") ||
+    descLower.includes("mercado credito") ||
+    descLower.includes("emprestimo") ||
+    descLower.includes("empréstimo") ||
+    descLower.includes("financiamento") ||
+    descLower.includes("fatura cartão") ||
+    descLower.includes("parcela de mercado")
+  ) {
+    return "Empréstimos & Crédito";
+  }
+
+  // 5. Compras & E-commerce
+  if (
+    descLower.includes("mercado livre") ||
+    descLower.includes("mercadolivre") ||
+    descLower.includes("amazon") ||
+    descLower.includes("shopee") ||
+    descLower.includes("aliexpress") ||
+    descLower.includes("shein") ||
+    descLower.includes("magalu") ||
+    descLower.includes("magazine luiza") ||
+    descLower.includes("relogio") ||
+    descLower.includes("relógio") ||
+    descLower.includes("compra")
+  ) {
+    return "Compras & E-commerce";
+  }
+
+  // 6. Transporte & Mobilidade
+  if (
+    descLower.includes("posto") ||
+    descLower.includes("shell") ||
+    descLower.includes("ipiranga") ||
+    descLower.includes("petrobras") ||
+    descLower.includes("uber") ||
+    descLower.includes("99app") ||
+    descLower.includes("99 pop") ||
+    descLower.includes("99 taxi") ||
+    descLower.includes("indrive") ||
+    descLower.includes("combustivel") ||
+    descLower.includes("combustível") ||
+    descLower.includes("sem parar") ||
+    descLower.includes("veloe") ||
+    descLower.includes("conectcar") ||
+    descLower.includes("estacionamento")
+  ) {
+    return "Transporte & Mobilidade";
+  }
+
+  // 7. Alimentação & Mercado
+  if (
+    descLower.includes("restaurante") ||
+    descLower.includes("ifood") ||
+    descLower.includes("rappi") ||
+    descLower.includes("ze delivery") ||
+    descLower.includes("zé delivery") ||
+    descLower.includes("mcdonald") ||
+    descLower.includes("burger king") ||
+    descLower.includes("subway") ||
+    descLower.includes("padaria") ||
+    descLower.includes("mercado") ||
+    descLower.includes("supermercado") ||
+    descLower.includes("carrefour") ||
+    descLower.includes("pao de acucar") ||
+    descLower.includes("pão de açúcar") ||
+    descLower.includes("assai") ||
+    descLower.includes("assaí") ||
+    descLower.includes("atacadao") ||
+    descLower.includes("atacadão") ||
+    descLower.includes("delivery")
+  ) {
+    return "Alimentação & Mercado";
+  }
+
+  // 8. Saúde & Farmácia
+  if (
+    descLower.includes("drogaria") ||
+    descLower.includes("farmacia") ||
+    descLower.includes("farmácia") ||
+    descLower.includes("drogasil") ||
+    descLower.includes("droga raia") ||
+    descLower.includes("pacheco") ||
+    descLower.includes("panvel") ||
+    descLower.includes("pague menos") ||
+    descLower.includes("hospital") ||
+    descLower.includes("consulta") ||
+    descLower.includes("laboratorio") ||
+    descLower.includes("laboratório") ||
+    descLower.includes("unimed")
+  ) {
+    return "Saúde & Farmácia";
+  }
+
+  // 9. Moradia & Utilidades (Água, Luz, Aluguel, Condomínio)
+  if (
+    descLower.includes("enel") ||
+    descLower.includes("sabesp") ||
+    descLower.includes("copel") ||
+    descLower.includes("cemig") ||
+    descLower.includes("cpfl") ||
+    descLower.includes("energia") ||
+    descLower.includes("luz") ||
+    descLower.includes("agua") ||
+    descLower.includes("água") ||
+    descLower.includes("saneamento") ||
+    descLower.includes("aluguel") ||
+    descLower.includes("imobiliaria") ||
+    descLower.includes("imobiliária") ||
+    descLower.includes("iptu") ||
+    descLower.includes("condominio") ||
+    descLower.includes("condomínio")
+  ) {
+    return "Moradia & Utilidades";
+  }
+
+  // 10. Receitas Operacionais & Assinaturas Novex
+  if (
+    descLower.includes("assinatura novex") ||
+    descLower.includes("totem") ||
+    descLower.includes("deposito totem") ||
+    descLower.includes("sistema de atendimento") ||
+    descLower.includes("mensalidade")
+  ) {
+    return "Receitas Operacionais";
+  }
+
+  // 11. Rendimentos & Tarifas do Provedor
+  if (
+    descLower.includes("settlement") ||
+    descLower.includes("rendimento") ||
+    descLower.includes("tarifa") ||
+    descLower.includes("iof") ||
+    descLower.includes("taxa")
+  ) {
+    return "Rendimentos & Tarifas MP";
+  }
+
+  // 12. Transferências, Bancos & Carteiras Digitais
+  if (
+    descLower.includes("99pay") ||
+    descLower.includes("picpay") ||
+    descLower.includes("c6") ||
+    descLower.includes("santander") ||
+    descLower.includes("nu pagamentos") ||
+    descLower.includes("nubank") ||
+    descLower.includes("inter") ||
+    descLower.includes("pagseguro") ||
+    descLower.includes("itau") ||
+    descLower.includes("itaú") ||
+    descLower.includes("bradesco") ||
+    descLower.includes("banco do brasil") ||
+    descLower.includes("caixa") ||
+    descLower.includes("bancoob") ||
+    descLower.includes("asaas") ||
+    descLower.includes("mercado pago") ||
+    descLower.includes("mercadopago") ||
+    descLower.includes("pix")
+  ) {
+    return "Transferências & Carteiras";
+  }
+
+  return "Outros";
 }
 
 /**
@@ -151,6 +376,7 @@ export async function reconcileWorkspace(internalContext?: symbol, targetWorkspa
     const unmatchedTxs = await db.externalTransaction.findMany({
       where: {
         workspaceId,
+        quarantinedAt: null,
         reconciliations: {
           none: {
             status: { in: ["MATCHED", "IGNORED"] },
@@ -188,6 +414,7 @@ export async function reconcileWorkspace(internalContext?: symbol, targetWorkspa
             counterpartName: tx.counterpartName || undefined,
             txid: tx.txid || undefined,
             rawReference: tx.rawReference || undefined,
+            description: tx.description || undefined,
           },
           {
             id: inst.id,
@@ -196,6 +423,7 @@ export async function reconcileWorkspace(internalContext?: symbol, targetWorkspa
             dueDate: inst.dueDate,
             contactName: inst.financialItem.contact?.name || undefined,
             uniqueReference: inst.uniqueReference || undefined,
+            title: inst.financialItem.title || undefined,
           }
         );
 

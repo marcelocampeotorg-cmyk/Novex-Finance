@@ -212,8 +212,8 @@ export async function getOrderById(input: { accessToken: string; orderId: string
         (paymentStatus === "processed" || paymentStatus === "accredited") &&
         (statusDetail === "accredited" || statusDetail === "processed");
 
-      // Timestamp oficial da API de Orders (last_updated_date ou created_date)
-      const providerUpdatedAt = data.last_updated_date || data.created_date || new Date().toISOString();
+      const paidAt = paymentObj?.date_approved || paymentObj?.date_processed || undefined;
+      const providerUpdatedAt = data.last_updated_date || data.created_date || undefined;
 
       const amountCents = paymentObj?.amount != null ? Math.round(Number(paymentObj.amount) * 100) : (data.total_amount != null ? Math.round(Number(data.total_amount) * 100) : undefined);
       const paidAmountCents = paymentObj?.paid_amount != null ? Math.round(Number(paymentObj.paid_amount) * 100) : amountCents;
@@ -223,6 +223,7 @@ export async function getOrderById(input: { accessToken: string; orderId: string
         orderId: String(data.id),
         status: orderStatus,
         isPaid,
+        paidAt,
         providerUpdatedAt,
         paymentId: paymentObj?.id ? String(paymentObj.id) : undefined,
         externalReference: data.external_reference || undefined,

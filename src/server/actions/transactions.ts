@@ -9,3 +9,5 @@ export const ignoreExternalTransaction = (id: string) => service.ignoreExternalT
 export const getReconciliationSummary = (period = "MONTHLY") => service.getReconciliationSummary(period);
 export const matchReconciliation = (externalTransactionId: string, installmentId: string) => service.matchReconciliation(externalTransactionId, installmentId);
 export const syncMercadoPagoStatement = (force = false) => service.continueMercadoPagoSyncRun(force);
+export const enrichMercadoPagoTransactions = () => service.enrichAllMercadoPagoTransactions();
+

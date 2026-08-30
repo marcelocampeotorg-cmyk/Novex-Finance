@@ -18,8 +18,9 @@ Estas referências devem ser revalidadas antes de uma implementação sensível,
 - Status de order/transação QR:
   https://www.mercadopago.com.br/developers/pt/docs/qr-code/resources/status-order-transaction
 
-Pontos confirmados na documentação consultada em 24/08/2026:
-- criação do settlement report é assíncrona e retorna HTTP 202 com id e file_name;
+Pontos confirmados e revalidados em 26/08/2026:
+- criação do settlement report é assíncrona e retorna uma tarefa; task, report e arquivo devem permanecer semanticamente separados;
+- a tarefa específica é consultada por `/settlement_report/task/{task-id}` e o contrato efetivamente observado pode retornar `status=available`, identificador do report e uma coleção `files`;
 - busca de relatórios gerados é realizada via /settlement_report/search;
 - download oficial do arquivo de liquidação é efetuado via GET /settlement_report/{file_name} com Authorization Bearer;
 - `SETTLEMENT_NET_AMOUNT` representa o impacto líquido no dinheiro em conta;

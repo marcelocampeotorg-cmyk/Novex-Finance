@@ -2,7 +2,7 @@ import { db } from "../db.ts";
 
 export interface SettlePixChargeInput {
   pixChargeId: string;
-  paidAt?: Date;
+  paidAt: Date;
   actorType?: "SYSTEM" | "USER" | "WEBHOOK";
   actorId?: string;
   externalOrderId?: string;
@@ -30,7 +30,10 @@ export async function settlePixChargeAtomic(input: SettlePixChargeInput) {
     const workspaceId = pixCharge.workspaceId;
     const installmentId = pixCharge.installmentId;
     const chargeAmt = input.paidAmountCents || Number(pixCharge.amountCents);
-    const paidAtDate = input.paidAt || new Date();
+    if (Number.isNaN(input.paidAt.getTime())) {
+      return { success: false, claimed: false, error: "Timestamp oficial de pagamento inválido." };
+    }
+    const paidAtDate = input.paidAt;
 
     // 2. Claim atômico condicional: apenas se status for diferente de PAID
     const claimResult = await tx.pixCharge.updateMany({

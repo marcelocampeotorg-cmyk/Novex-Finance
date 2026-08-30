@@ -2,6 +2,7 @@
   "name": "novex-finance",
   "version": "1.0.0",
   "private": true,
+  "packageManager": "pnpm@10.15.1",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -11,7 +12,10 @@
     "test": "node --experimental-strip-types --test tests/*.test.js",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:seed": "npx tsx prisma/seed.ts"
+    "db:seed": "npx tsx prisma/seed.ts",
+    "local:bootstrap": "powershell -ExecutionPolicy Bypass -File scripts/bootstrap-local.ps1",
+    "local:init": "powershell -ExecutionPolicy Bypass -File scripts/bootstrap-local.ps1 -Initialize",
+    "local:start": "powershell -ExecutionPolicy Bypass -File scripts/bootstrap-local.ps1 -Start"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
@@ -25,6 +29,7 @@
     "react-dom": "^18.3.1",
     "react-hook-form": "^7.53.0",
     "recharts": "^2.12.7",
+    "server-only": "0.0.1",
     "tailwind-merge": "^2.5.2",
     "zod": "^3.23.8"
   },
