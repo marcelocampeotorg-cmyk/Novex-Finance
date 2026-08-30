@@ -29,11 +29,44 @@ export async function settlePixChargeAtomic(input: SettlePixChargeInput) {
 
     const workspaceId = pixCharge.workspaceId;
     const installmentId = pixCharge.installmentId;
-    const chargeAmt = input.paidAmountCents || Number(pixCharge.amountCents);
+    const expectedAmt = Number(pixCharge.amountCents);
+    const paidAmt = input.paidAmountCents !== undefined && input.paidAmountCents !== null ? input.paidAmountCents : expectedAmt;
     if (Number.isNaN(input.paidAt.getTime())) {
       return { success: false, claimed: false, error: "Timestamp oficial de pagamento inválido." };
     }
     const paidAtDate = input.paidAt;
+
+    // Regra Canônica 17.3: QR tem valor fixo. Se o valor oficial for divergente, não aplica baixa automática
+    if (paidAmt !== expectedAmt) {
+      await tx.pixCharge.update({
+        where: { id: pixCharge.id },
+        data: {
+          status: "ACTION_REQUIRED",
+          statusDetail: `PAGAMENTO_DIVERGENTE: Recebido R$ ${(paidAmt/100).toFixed(2)}, esperado R$ ${(expectedAmt/100).toFixed(2)}. Parcela mantida sem baixa automática para decisão do usuário.`,
+          paidAt: paidAtDate,
+          lastCheckedAt: new Date(),
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          workspaceId,
+          actorType: input.actorType || "SYSTEM",
+          actorId: input.actorId || "SYSTEM",
+          action: "MP_PIX_CHARGE_DIVERGENT_PAYMENT",
+          entityType: "PixCharge",
+          entityId: pixCharge.id,
+          metadata: {
+            externalOrderId: input.externalOrderId || pixCharge.externalOrderId,
+            expectedAmountCents: expectedAmt,
+            receivedAmountCents: paidAmt,
+            installmentId,
+          },
+        },
+      });
+
+      return { success: true, claimed: true, divergent: true, expectedAmt, paidAmt };
+    }
 
     // 2. Claim atômico condicional: apenas se status for diferente de PAID
     const claimResult = await tx.pixCharge.updateMany({
@@ -49,13 +82,30 @@ export async function settlePixChargeAtomic(input: SettlePixChargeInput) {
     // 3. Incrementar parcela no processo vencedor do claim usando as relações derivadas
     const currentInstallment = pixCharge.installment;
 
+    // Regra Canônica 17.4: Pagamento duplicado em parcela já quitada gera alerta e não altera dívida
     if (!currentInstallment || currentInstallment.status === "SETTLED") {
-      return { success: true, claimed: true, installmentAlreadySettled: true };
+      await tx.auditLog.create({
+        data: {
+          workspaceId,
+          actorType: input.actorType || "SYSTEM",
+          actorId: input.actorId || "SYSTEM",
+          action: "MP_PIX_CHARGE_DUPLICATE_PAYMENT_ALERT",
+          entityType: "PixCharge",
+          entityId: pixCharge.id,
+          metadata: {
+            externalOrderId: input.externalOrderId || pixCharge.externalOrderId,
+            amountCents: expectedAmt,
+            installmentId,
+            reason: "Parcela já se encontrava quitada.",
+          },
+        },
+      });
+      return { success: true, claimed: true, duplicatePayment: true, installmentAlreadySettled: true };
     }
 
     const currentSettled = Number(currentInstallment.settledAmountCents);
     const totalAmount = Number(currentInstallment.amountCents);
-    const newSettled = currentSettled + chargeAmt;
+    const newSettled = currentSettled + expectedAmt;
     const newStatus = newSettled >= totalAmount ? "SETTLED" : "PARTIAL";
 
     await tx.installment.update({
@@ -77,7 +127,7 @@ export async function settlePixChargeAtomic(input: SettlePixChargeInput) {
         entityId: pixCharge.id,
         metadata: {
           externalOrderId: input.externalOrderId || pixCharge.externalOrderId,
-          amountCents: chargeAmt,
+          amountCents: expectedAmt,
           installmentId,
           newStatus,
         },

@@ -311,7 +311,7 @@ export async function importExternalTransactions(
                 amountCents: newTx.netAmountCents, // Regra 8: Usa impacto líquido oficial netAmountCents
                 occurredAt: newTx.occurredAt,
                 sourceType: newTx.source,
-                sourceId: newTx.externalId,
+                sourceId: newTx.id,
                 categoryId,
               },
             });
@@ -464,8 +464,8 @@ export async function continueMercadoPagoSyncRun(
       }
     }
 
-    // Cache normal de 5 minutos para chamadas não forçadas
-    const CACHE_MINUTES = 5;
+    // Cache de 15 minutos para chamadas automáticas/não forçadas
+    const CACHE_MINUTES = 15;
     if (!isForce && account.lastSyncAt && account.historyBackfillStatus === "COMPLETE") {
       const now = new Date();
       const diffInMinutes = (now.getTime() - account.lastSyncAt.getTime()) / (1000 * 60);
@@ -473,7 +473,7 @@ export async function continueMercadoPagoSyncRun(
         return {
           success: true,
           cached: true,
-          message: "Sincronização recente (menos de 5 min). Retornando dados locais.",
+          message: "Sincronização recente (menos de 15 min). Retornando dados locais.",
           insertedCount: 0,
           updatedCount: 0,
           skippedCount: 0,
@@ -1043,11 +1043,13 @@ export async function enrichAllMercadoPagoTransactions(internalContext?: symbol,
     const credentials = parseMercadoPagoCredentials(account.encryptedCredentials);
     const paymentsClient = new MercadoPagoPaymentsClient(credentials.accessToken);
 
-    // 1. Buscar apenas transações que ainda precisam de enriquecimento
+    // 1. Buscar apenas transações ativas elegíveis que ainda precisam de enriquecimento
     const txsToEnrich = await db.externalTransaction.findMany({
       where: {
         workspaceId,
         integrationAccountId: account.id,
+        quarantinedAt: null,
+        type: "SETTLEMENT",
         OR: [
           { description: "SETTLEMENT" },
           { counterpartName: null },
@@ -1062,12 +1064,24 @@ export async function enrichAllMercadoPagoTransactions(internalContext?: symbol,
 
     let enrichedCount = 0;
     for (const tx of txsToEnrich) {
-      // Pausa preventiva de 100ms entre requisições para conformidade estrita com a política de rate limit
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      const rawPayment = await paymentsClient.getPaymentDetails(tx.externalId);
+      // 2. Extrair o ID oficial do provedor (SOURCE_ID / EXTERNAL_ID original) e NUNCA usar chave interna composta
+      const rawSourceId = String((tx.rawProviderData as any)?.SOURCE_ID || (tx.rawProviderData as any)?.EXTERNAL_ID || "").trim();
+      const isNumericPaymentId = /^\d{5,18}$/.test(rawSourceId);
+      const isTaxOrYield = tx.description?.toLowerCase().includes("imposto") ||
+        tx.description?.toLowerCase().includes("retenção") ||
+        tx.description?.toLowerCase().includes("rendimento") ||
+        tx.description?.toLowerCase().includes("tarifa");
+
       let pData: any = null;
-      if (rawPayment && (rawPayment.status === "approved" || rawPayment.status === "accredited")) {
-        pData = paymentsClient.mapPaymentToEnrichmentData(rawPayment);
+
+      // Somente consultar a Payments API se o ID for comprovadamente um identificador de pagamento numérico válido e não for taxa/imposto
+      if (isNumericPaymentId && !isTaxOrYield) {
+        // Pausa preventiva de 100ms entre requisições para conformidade estrita com a política de rate limit
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        const rawPayment = await paymentsClient.getPaymentDetails(rawSourceId);
+        if (rawPayment && (rawPayment.status === "approved" || rawPayment.status === "accredited")) {
+          pData = paymentsClient.mapPaymentToEnrichmentData(rawPayment);
+        }
       }
 
       if (pData) {
@@ -1094,6 +1108,18 @@ export async function enrichAllMercadoPagoTransactions(internalContext?: symbol,
           }
         }
         enrichedCount++;
+      } else {
+        // Se não for enriquecível pela Payments API (ex: saques, taxas, rendimentos), auto-categoriza pela descrição do Settlement
+        const categoryName = await categorizeTransactionDescription(tx.description, workspaceId);
+        if (categoryName && categoryName !== "Não categorizada") {
+          const cat = await db.category.findFirst({ where: { workspaceId, name: categoryName } });
+          if (cat) {
+            await db.ledgerEntry.updateMany({
+              where: { externalTransactionId: tx.id, categoryId: null },
+              data: { categoryId: cat.id },
+            });
+          }
+        }
       }
     }
 

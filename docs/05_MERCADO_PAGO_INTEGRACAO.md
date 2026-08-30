@@ -31,7 +31,7 @@ Não criar um relatório novo a cada render/poll do frontend.
 - A carga inicial percorre janelas consecutivas de até 60 dias até a data oficial de criação/limite realmente disponibilizado pelo provedor.
 - Se o provedor não informar uma data inicial confiável, registrar a limitação e não inventar cobertura.
 - `coverageEnd` representa o período consultado/processado pelo NOVEX, não garantia de completude absoluta de eventos futuros ou atrasados.
-- A sincronização incremental aplica uma sobreposição de 3 dias (`coverageEnd - 3 dias`), garantindo que movimentações publicadas com atraso (late-arriving transactions) sejam capturadas sem gerar duplicidades.
+- A sincronização incremental adota uma sobreposição operacional de 3 dias (`coverageEnd - 3 dias`), mitigando o risco de perder movimentações liberadas pelo provedor com atraso (late-arriving transactions) e garantindo ingestão estritamente idempotente via chave composta.
 - Progresso, janela atual, cobertura, rejeições e erro precisam ser persistidos e exibidos.
 
 ## Saldo disponível

@@ -66,7 +66,7 @@ export async function generateReceivablePixCharge(input: {
       },
       pixCharges: {
         where: {
-          status: { in: ["CREATING", "PENDING", "ACTION_REQUIRED", "FAILED"] },
+          status: { in: ["CREATING", "PENDING", "ACTION_REQUIRED", "FAILED", "EXPIRED"] },
         },
         orderBy: {
           createdAt: "desc",

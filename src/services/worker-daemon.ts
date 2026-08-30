@@ -177,7 +177,7 @@ export class WorkerDaemonService {
               } else if (consecutiveFailures === 1) {
                 minIntervalMs = 5 * 60 * 1000;
               } else {
-                minIntervalMs = isBackfill ? 60 * 1000 : 5 * 60 * 1000;
+                minIntervalMs = isBackfill ? 60 * 1000 : 15 * 60 * 1000;
               }
 
               if (now - lastEventTime >= minIntervalMs) {

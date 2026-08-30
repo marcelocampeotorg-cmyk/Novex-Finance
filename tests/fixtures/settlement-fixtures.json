@@ -1,0 +1,77 @@
+{
+  "description": "Fixtures sanitizadas de relatórios de liquidação do Mercado Pago (Dinheiro em Conta / Account Money)",
+  "fixtures": {
+    "normalCredit": {
+      "csv": "SOURCE_ID;TRANSACTION_TYPE;SETTLEMENT_NET_AMOUNT;FEE_AMOUNT;SETTLEMENT_DATE;DESCRIPTION;EXTERNAL_REFERENCE\n900100001;SETTLEMENT;150.00;0.00;2026-08-10T14:30:00Z;Pix Recebido de Cliente Teste;REF_CREDIT_001",
+      "expected": {
+        "count": 1,
+        "direction": "CREDIT",
+        "netAmountCents": 15000,
+        "externalId": "900100001_SETTLEMENT_CREDIT_15000"
+      }
+    },
+    "normalDebit": {
+      "csv": "SOURCE_ID;TRANSACTION_TYPE;SETTLEMENT_NET_AMOUNT;FEE_AMOUNT;SETTLEMENT_DATE;DESCRIPTION;EXTERNAL_REFERENCE\n900100002;SETTLEMENT;-53.90;0.00;2026-08-19T14:15:00Z;Google YouTubePremi;REF_DEBIT_002",
+      "expected": {
+        "count": 1,
+        "direction": "DEBIT",
+        "netAmountCents": 5390,
+        "externalId": "900100002_SETTLEMENT_DEBIT_5390"
+      }
+    },
+    "yieldAndTaxSameSourceId": {
+      "csv": "SOURCE_ID;TRANSACTION_TYPE;SETTLEMENT_NET_AMOUNT;FEE_AMOUNT;SETTLEMENT_DATE;DESCRIPTION\n900100003;SETTLEMENT;0.05;0.00;2026-08-20T03:00:00Z;Rendimento do saldo\n900100003;SETTLEMENT;-0.01;0.00;2026-08-20T03:00:00Z;Retenção de imposto de renda sobre rendimento",
+      "expected": {
+        "count": 2,
+        "first": { "direction": "CREDIT", "netAmountCents": 5, "externalId": "900100003_SETTLEMENT_CREDIT_5" },
+        "second": { "direction": "DEBIT", "netAmountCents": 1, "externalId": "900100003_SETTLEMENT_DEBIT_1" }
+      }
+    },
+    "disputeAndSettlementSameSourceId": {
+      "csv": "SOURCE_ID;TRANSACTION_TYPE;SETTLEMENT_NET_AMOUNT;FEE_AMOUNT;SETTLEMENT_DATE;DESCRIPTION\n900100004;SETTLEMENT;-44.99;0.00;2026-08-23T10:14:00Z;Contestação de Pagamento\n900100004;DISPUTE;44.99;0.00;2026-08-23T10:14:00Z;Resolução de Disputa a Favor",
+      "expected": {
+        "count": 2,
+        "first": { "direction": "DEBIT", "netAmountCents": 4499, "externalId": "900100004_SETTLEMENT_DEBIT_4499" },
+        "second": { "direction": "CREDIT", "netAmountCents": 4499, "externalId": "900100004_DISPUTE_CREDIT_4499" }
+      }
+    },
+    "overlappingIdenticalReports": {
+      "reportA": "SOURCE_ID;TRANSACTION_TYPE;SETTLEMENT_NET_AMOUNT;FEE_AMOUNT;SETTLEMENT_DATE;DESCRIPTION\n900100005;SETTLEMENT;200.00;0.00;2026-08-25T12:00:00Z;Venda Identica",
+      "reportB": "SOURCE_ID;TRANSACTION_TYPE;SETTLEMENT_NET_AMOUNT;FEE_AMOUNT;SETTLEMENT_DATE;DESCRIPTION\n900100005;SETTLEMENT;200.00;0.00;2026-08-25T12:00:00Z;Venda Identica"
+    },
+    "refund": {
+      "csv": "SOURCE_ID;TRANSACTION_TYPE;SETTLEMENT_NET_AMOUNT;FEE_AMOUNT;SETTLEMENT_DATE;DESCRIPTION\n900100006;REFUND;-30.00;0.00;2026-08-26T15:00:00Z;Estorno Solicitado",
+      "expected": {
+        "count": 1,
+        "direction": "DEBIT",
+        "netAmountCents": 3000,
+        "externalId": "900100006_REFUND_DEBIT_3000"
+      }
+    },
+    "withdrawal": {
+      "csv": "SOURCE_ID;TRANSACTION_TYPE;SETTLEMENT_NET_AMOUNT;FEE_AMOUNT;SETTLEMENT_DATE;DESCRIPTION\n900100007;WITHDRAWAL;-500.00;0.00;2026-08-27T10:00:00Z;Transferência para Conta Bancária",
+      "expected": {
+        "count": 1,
+        "direction": "DEBIT",
+        "netAmountCents": 50000,
+        "externalId": "900100007_WITHDRAWAL_DEBIT_50000"
+      }
+    },
+    "lateArriving": {
+      "csv": "SOURCE_ID;TRANSACTION_TYPE;SETTLEMENT_NET_AMOUNT;FEE_AMOUNT;SETTLEMENT_DATE;DESCRIPTION\n900100008;SETTLEMENT;89.90;0.00;2026-08-24T08:00:00Z;Pagamento Liquidado com Atraso",
+      "expected": {
+        "count": 1,
+        "direction": "CREDIT",
+        "netAmountCents": 8990,
+        "externalId": "900100008_SETTLEMENT_CREDIT_8990"
+      }
+    },
+    "invalidRows": {
+      "csv": "SOURCE_ID;TRANSACTION_TYPE;SETTLEMENT_NET_AMOUNT;FEE_AMOUNT;SETTLEMENT_DATE;DESCRIPTION\n;SETTLEMENT;100.00;0.00;2026-08-24T10:00:00Z;Sem ID\n900100009;SETTLEMENT;VALOR_INVALIDO;0.00;2026-08-24T10:00:00Z;Valor quebrado\n900100010;SETTLEMENT;50.00;0.00;;Data ausente",
+      "expected": {
+        "validCount": 0,
+        "rejectedCount": 3
+      }
+    }
+  }
+}

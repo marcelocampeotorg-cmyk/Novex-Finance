@@ -68,7 +68,8 @@ export async function POST(req: NextRequest) {
     // Identificar tipo de recurso (Tópico "order" obrigatório)
     const type = body.type || body.topic || searchParams.get("type") || searchParams.get("topic");
     const queryDataId = searchParams.get("data.id");
-    const dataId = String(queryDataId || "");
+    const bodyDataId = body?.data?.id ? String(body.data.id) : (body?.id ? String(body.id) : undefined);
+    const dataId = String(queryDataId || bodyDataId || "");
 
     if (!dataId) {
       return NextResponse.json({ error: "ID do recurso não informado" }, { status: 400 });
@@ -89,10 +90,10 @@ export async function POST(req: NextRequest) {
     const isLive = body.live_mode;
     const environment = isLive ? "PRODUCTION" : "SANDBOX";
 
-    // Regra 29: Identificador único baseado na NOTIFICAÇÃO (x-request-id ou ID único de webhook), não na action
-    const xRequestId = req.headers.get("x-request-id");
-    if (!xRequestId) return NextResponse.json({ error: "x-request-id ausente" }, { status: 400 });
-    const eventId = `ev_${xRequestId}`;
+    // Regra 29: Identificador único baseado na notificação oficial
+    const xRequestId = req.headers.get("x-request-id") || "";
+    const notificationId = body?.id ? String(body.id) : (xRequestId || dataId);
+    const eventId = `ev_${notificationId}_${dataId}_${body.action || "updated"}`;
 
     // 2. Inbox Idempotente de Webhook
     const existingEvent = await db.webhookEvent.findUnique({

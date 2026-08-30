@@ -188,22 +188,22 @@ export async function getWorkspaceSummary() {
       }
     }
 
-    // Métricas Reais do Mês Atual
-    const monthTxs = await db.externalTransaction.findMany({
+    // Métricas Reais do Mês Atual (LedgerEntry como Fonte Canônica dos Relatórios)
+    const monthEntries = await db.ledgerEntry.findMany({
       where: {
         workspaceId,
-        quarantinedAt: null,
+        excludedFromReports: false,
         occurredAt: { gte: monthStart, lte: monthEnd },
       },
-      select: { direction: true, netAmountCents: true },
+      select: { direction: true, amountCents: true },
     });
 
     let monthIncomeCents = 0;
     let monthExpenseCents = 0;
-    for (const t of monthTxs) {
-      const val = Number(t.netAmountCents);
-      if (t.direction === "CREDIT") monthIncomeCents += val;
-      if (t.direction === "DEBIT") monthExpenseCents += val;
+    for (const entry of monthEntries) {
+      const val = Number(entry.amountCents);
+      if (entry.direction === "CREDIT") monthIncomeCents += val;
+      if (entry.direction === "DEBIT") monthExpenseCents += val;
     }
     const monthNetCents = monthIncomeCents - monthExpenseCents;
 

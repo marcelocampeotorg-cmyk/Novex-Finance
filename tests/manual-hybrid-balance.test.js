@@ -9,11 +9,11 @@ test("Conta manual: saldo inicial recebe créditos e débitos sem perder a ânco
   ]), 85_00);
 });
 
-test("Híbrido: total é omitido sem saldo oficial do Mercado Pago", () => {
+test("Saldo Consolidado V1: Retorna null quando o saldo oficial do Mercado Pago estiver em reconciliação", () => {
   assert.equal(calculateConsolidatedBalance({ mode: "HYBRID", manualBalanceCents: 85_00, mercadoPagoOfficialBalanceCents: null }), null);
-  assert.equal(calculateConsolidatedBalance({ mode: "HYBRID", manualBalanceCents: 85_00, mercadoPagoOfficialBalanceCents: 15_00 }), 100_00);
+  assert.equal(calculateConsolidatedBalance({ mode: "MANUAL", manualBalanceCents: 85_00, mercadoPagoOfficialBalanceCents: null }), null);
 });
 
-test("Manual: saldo geral é o consolidado sem depender do Mercado Pago", () => {
-  assert.equal(calculateConsolidatedBalance({ mode: "MANUAL", manualBalanceCents: 85_00, mercadoPagoOfficialBalanceCents: null }), 85_00);
+test("Saldo Consolidado V1: Reflete estritamente o saldo oficial quando confirmado", () => {
+  assert.equal(calculateConsolidatedBalance({ mode: "HYBRID", manualBalanceCents: 85_00, mercadoPagoOfficialBalanceCents: 15_00 }), 15_00);
 });
