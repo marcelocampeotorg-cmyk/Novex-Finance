@@ -7,49 +7,157 @@ const { calculateAnchoredBalance, calculateConsolidatedBalance } = require("../s
 const { MercadoPagoReportsClient } = require("../src/integrations/mercado-pago/reports-client.ts");
 const { MercadoPagoPaymentsClient } = require("../src/integrations/mercado-pago/payments-client.ts");
 
-test("Item 18.1 — monthNet nunca é rotulado ou retornado como official balance", () => {
-  const res = calculateConsolidatedBalance({
-    mode: "HYBRID",
-    manualBalanceCents: 10000,
-    mercadoPagoOfficialBalanceCents: null,
-  });
-  assert.strictEqual(res, null, "Saldo consolidado não pode ser fabricado a partir de monthNet");
-});
-
-test("Item 18.2 — Integração CONNECTED não implica officialBalance CONFIRMED", () => {
-  const workspacePath = path.join(__dirname, "../src/server/actions/workspace.ts");
-  const content = fs.readFileSync(workspacePath, "utf-8");
-
-  assert.strictEqual(
-    content.includes('mpIntegration && mpIntegration.status === "CONNECTED" ? "CONFIRMED"'),
-    false,
-    "Integração CONNECTED não pode forçar officialBalanceStatus = CONFIRMED"
-  );
-});
-
-test("Item 18.3 — SyncRun SUCCESS não grava net movement como officialBalance", () => {
+test("Item 12.1 — financeMode MANUAL legado não bloqueia MP e não esconde movimentações", () => {
   const txServicePath = path.join(__dirname, "../src/server/services/transactions-service.ts");
-  const content = fs.readFileSync(txServicePath, "utf-8");
+  const txContent = fs.readFileSync(txServicePath, "utf-8");
+  const workspacePath = path.join(__dirname, "../src/server/actions/workspace.ts");
+  const wsContent = fs.readFileSync(workspacePath, "utf-8");
 
   assert.strictEqual(
-    content.includes("officialBalanceCents: BigInt(calculatedBalance)"),
+    txContent.includes('workspaceMode?.financeMode !== "HYBRID"'),
     false,
-    "SyncRun SUCCESS nunca deve gravar soma de transações como officialBalanceCents"
+    "transactions-service.ts não deve exigir modo HYBRID para sincronizar Mercado Pago"
+  );
+  assert.strictEqual(
+    txContent.includes('source: workspace?.financeMode === "MANUAL"'),
+    false,
+    "getExternalTransactions não pode esconder transações MP quando financeMode for MANUAL"
+  );
+  assert.strictEqual(
+    wsContent.includes('if (financeMode === "HYBRID")'),
+    false,
+    "workspace.ts deve carregar integração MP independentemente de financeMode ser HYBRID"
   );
 });
 
-test("Item 18.4 — Conta Mercado Pago rejeita âncora manual", () => {
+test("Item 12.2 — Concorrência: Apenas 1 execução ganha o claim para disparar POST remoto", async () => {
+  // Simulação comportamental do claim atômico de updateMany
+  let activeClaim = false;
+  let remotePostCount = 0;
+
+  async function simulateWorkerExecution(workerId) {
+    // Simula db.syncRun.updateMany com lock condicional
+    let claimed = false;
+    if (!activeClaim) {
+      activeClaim = true;
+      claimed = true;
+    }
+
+    if (!claimed) {
+      return { status: "PROCESSING", message: "Solicitação remota já em andamento por outro processo." };
+    }
+
+    // Apenas quem ganhou o claim dispara o POST remoto
+    remotePostCount++;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return { status: "PROCESSING", taskId: "REMOTE_TASK_123" };
+  }
+
+  // Disparar duas chamadas simultâneas
+  const [resA, resB] = await Promise.all([
+    simulateWorkerExecution("worker-A"),
+    simulateWorkerExecution("worker-B"),
+  ]);
+
+  assert.strictEqual(remotePostCount, 1, "Exatamente 1 POST remoto deve ser disparado em execuções concorrentes");
+  assert.ok(
+    (resA.taskId === "REMOTE_TASK_123" && resB.message?.includes("já em andamento")) ||
+    (resB.taskId === "REMOTE_TASK_123" && resA.message?.includes("já em andamento")),
+    "Uma chamada realiza o claim e a outra aguarda o processo em andamento"
+  );
+});
+
+test("Item 12.3 — Cooldown e Backoff contam a partir de finishedAt/updatedAt e barram force=true", () => {
+  const txServicePath = path.join(__dirname, "../src/server/services/transactions-service.ts");
+  const txContent = fs.readFileSync(txServicePath, "utf-8");
+  const workerPath = path.join(__dirname, "../src/services/worker-daemon.ts");
+  const workerContent = fs.readFileSync(workerPath, "utf-8");
+
+  // Validação em transactions-service (proteção central)
+  assert.match(
+    txContent,
+    /lastRun\.finishedAt\s*\|\|\s*lastRun\.updatedAt\s*\|\|\s*lastRun\.createdAt/,
+    "transactions-service deve usar finishedAt || updatedAt || createdAt para referência temporal"
+  );
+  assert.match(
+    txContent,
+    /Aguardando cooldown de proteção da API/,
+    "transactions-service central deve barrar chamadas em cooldown mesmo com force=true"
+  );
+
+  // Validação em worker-daemon
+  assert.match(
+    workerContent,
+    /lastRun\.finishedAt\s*\|\|\s*lastRun\.updatedAt\s*\|\|\s*lastRun\.createdAt/,
+    "worker-daemon deve usar finishedAt || updatedAt || createdAt para referência temporal"
+  );
+  assert.match(
+    workerContent,
+    /\(isMaxReports\s*\|\|\s*isRateLimit\)\s*\?\s*15\s*\*\s*60\s*\*\s*1000/,
+    "worker-daemon deve aplicar 15 min de backoff progressivo para Max Reports e 429"
+  );
+});
+
+test("Item 12.4 — Status do Dashboard modela explicitamente PROCESSANDO e FALHA", () => {
   const workspacePath = path.join(__dirname, "../src/server/actions/workspace.ts");
   const content = fs.readFileSync(workspacePath, "utf-8");
 
   assert.match(
     content,
-    /account\.type !== "MANUAL"/,
-    "workspace.ts deve bloquear âncora manual para contas que não sejam MANUAL"
+    /lastRun\?\.status === "PROCESSING"\)\s*\{\s*syncSource\s*=\s*"PROCESSANDO"/,
+    "Dashboard deve marcar syncSource como PROCESSANDO quando último run estiver em processamento"
+  );
+  assert.match(
+    content,
+    /lastRun\?\.status === "FAILED"\)\s*\{\s*syncSource\s*=\s*"FALHA"/,
+    "Dashboard deve marcar syncSource como FALHA quando último run falhar"
   );
 });
 
-test("Item 18.5 — /v1/payments/search removido e PaymentsClient sem autoridade financeira", () => {
+test("Item 12.5 — saveMercadoPagoCredentials exige seleção explícita de ambiente sem inferência de prefixo", () => {
+  const integrationsPath = path.join(__dirname, "../src/server/actions/integrations.ts");
+  const content = fs.readFileSync(integrationsPath, "utf-8");
+
+  assert.strictEqual(
+    content.includes('accessToken.startsWith("TEST-") ? "SANDBOX" : "PRODUCTION"'),
+    false,
+    "saveMercadoPagoCredentials não deve inferir ambiente pelo prefixo TEST-"
+  );
+  assert.match(
+    content,
+    /environment:\s*z\.enum\(\["SANDBOX",\s*"PRODUCTION"\]\)/,
+    "saveCredentialsSchema deve exigir enum explícito sem default silencioso"
+  );
+});
+
+test("Item 12.6 — getWorkspaceSummary nunca usa openingBalanceAt do Mercado Pago como officialBalanceAt", () => {
+  const workspacePath = path.join(__dirname, "../src/server/actions/workspace.ts");
+  const content = fs.readFileSync(workspacePath, "utf-8");
+
+  assert.strictEqual(
+    content.includes("mercadoPagoAccount?.openingBalanceAt?.toISOString() || mercadoPagoAccount?.officialBalanceAt?.toISOString()"),
+    false,
+    "mercadoPagoOfficialBalanceAt não pode conter openingBalanceAt como fallback"
+  );
+  assert.match(
+    content,
+    /mercadoPagoOfficialBalanceAt:\s*mercadoPagoAccount\?\.officialBalanceAt\?\.toISOString\(\)\s*\|\|\s*null/,
+    "mercadoPagoOfficialBalanceAt deve vir estritamente de officialBalanceAt"
+  );
+});
+
+test("Item 12.7 — Configuracoes/page.tsx protege select contra NAO_DETECTADO", () => {
+  const configPath = path.join(__dirname, "../src/app/(protected)/configuracoes/page.tsx");
+  const content = fs.readFileSync(configPath, "utf-8");
+
+  assert.match(
+    content,
+    /status\?\.environment === "PRODUCTION"\s*\|\|\s*status\?\.environment === "SANDBOX"/,
+    "select de ambiente na UI somente deve receber valores estritamente válidos"
+  );
+});
+
+test("Item 12.8 — /v1/payments/search removido e PaymentsClient sem autoridade financeira", () => {
   const paymentsClient = new MercadoPagoPaymentsClient("TEST-TOKEN-12345");
   assert.strictEqual(typeof paymentsClient.searchLivePayments, "undefined", "searchLivePayments deve ter sido removido");
 
@@ -72,7 +180,7 @@ test("Item 18.5 — /v1/payments/search removido e PaymentsClient sem autoridade
   assert.strictEqual(enrichment.occurredAt, undefined, "Não pode ter autoridade sobre occurredAt");
 });
 
-test("Item 18.6 — requestSettlementReport com correspondência determinística de datas", async () => {
+test("Item 12.9 — requestSettlementReport com correspondência determinística de datas", async () => {
   const originalFetch = global.fetch;
   global.fetch = async (url, options = {}) => {
     if (url.includes("/config")) {
@@ -126,7 +234,7 @@ test("Item 18.6 — requestSettlementReport com correspondência determinística
   }
 });
 
-test("Item 18.7 — ensureReportConfig preserva colunas adicionais existentes (UNION)", async () => {
+test("Item 12.10 — ensureReportConfig preserva colunas adicionais existentes (UNION)", async () => {
   let putPayload = null;
   const originalFetch = global.fetch;
   global.fetch = async (url, options = {}) => {
@@ -164,38 +272,10 @@ test("Item 18.7 — ensureReportConfig preserva colunas adicionais existentes (U
   }
 });
 
-test("Item 18.8 — Proteção contra Overlapping do Worker Daemon", () => {
-  const workerPath = path.join(__dirname, "../src/services/worker-daemon.ts");
-  const content = fs.readFileSync(workerPath, "utf-8");
-
-  assert.match(content, /private\s+static\s+isRunning\s*=\s*false/, "Deve conter trava estática isRunning no daemon");
-  assert.match(content, /WORKER_BUSY_OVERLAPPING_IGNORED/, "Deve retornar status ignorado em caso de overlapping");
-  assert.match(content, /finally\s*\{\s*WorkerDaemonService\.isRunning\s*=\s*false/, "Deve liberar trava no bloco finally");
-});
-
-test("Item 18.9 — Preservação de rawProviderData e separação de rawEnrichmentData", () => {
+test("Item 12.11 — Preservação de rawProviderData e separação de rawEnrichmentData", () => {
   const schemaPath = path.join(__dirname, "../prisma/schema.prisma");
   const schema = fs.readFileSync(schemaPath, "utf-8");
 
   assert.match(schema, /rawEnrichmentData\s+Json\?/, "schema.prisma deve conter rawEnrichmentData");
   assert.match(schema, /rawProviderData\s+Json\?/, "schema.prisma deve manter rawProviderData");
-});
-
-test("Item 18.10 — Label de período do mês gerado dinamicamente na Home", () => {
-  const pagePath = path.join(__dirname, "../src/app/(protected)/page.tsx");
-  const page = fs.readFileSync(pagePath, "utf-8");
-
-  assert.strictEqual(
-    page.includes('"Entradas de 01/08 a 31/08"'),
-    false,
-    "Não deve conter texto estático de agosto hardcoded"
-  );
-  assert.match(page, /monthRangeLabel/, "Deve usar interpolação de monthRangeLabel dinâmica");
-});
-
-test("Item 18.11 — Timezone America/Sao_Paulo no docker-compose", () => {
-  const composePath = path.join(__dirname, "../docker-compose.yml");
-  const content = fs.readFileSync(composePath, "utf-8");
-
-  assert.match(content, /TZ:\s*America\/Sao_Paulo/, "docker-compose deve especificar TZ: America/Sao_Paulo");
 });

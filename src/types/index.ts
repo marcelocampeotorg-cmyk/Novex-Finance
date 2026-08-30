@@ -123,7 +123,7 @@ export interface BalanceSummaryDTO {
   totalOverdueCents: number;
   totalDebtorsOwedCents: number;
   lastSyncAt: string | null;
-  syncSource: "SINCRONIZADO" | "PENDENTE" | "DESCONECTADO" | "CALCULADO";
+  syncSource: "SINCRONIZADO" | "PROCESSANDO" | "PENDENTE" | "FALHA" | "DESCONECTADO" | "CALCULADO";
   accountDisplayName: string;
   unresolvedTransactionsCount: number;
   uncategorizedCount: number;

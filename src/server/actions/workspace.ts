@@ -85,18 +85,16 @@ export async function getWorkspaceSummary() {
     }
 
     let mpIntegration = null;
-    if (financeMode === "HYBRID") {
-      try {
-        mpIntegration = await getActiveMercadoPagoIntegrationForWorkspace(workspaceId);
-      } catch (e: any) {
-        if (!e.message?.includes("Nenhuma integração") && !e.message?.includes("Configuração inválida")) {
-          throw e;
-        }
+    try {
+      mpIntegration = await getActiveMercadoPagoIntegrationForWorkspace(workspaceId);
+    } catch (e: any) {
+      if (!e.message?.includes("Nenhuma integração") && !e.message?.includes("Configuração inválida")) {
+        throw e;
       }
     }
 
     let knownNetMovementCents = 0;
-    let syncSource: "SINCRONIZADO" | "PENDENTE" | "DESCONECTADO" | "CALCULADO" = "CALCULADO";
+    let syncSource: "SINCRONIZADO" | "PROCESSANDO" | "PENDENTE" | "FALHA" | "DESCONECTADO" | "CALCULADO" = "CALCULADO";
     let accountDisplayName = "Conta Local";
     let lastSyncAt: string | null = null;
     let isOutdated = false;
@@ -113,10 +111,18 @@ export async function getWorkspaceSummary() {
       if (mpIntegration.status !== "CONNECTED" || mpIntegration.lastValidationErrorCode) {
         syncSource = "DESCONECTADO";
         isOutdated = true;
-      } else if (!mpIntegration.lastSyncAt || lastRun?.status === "PARTIAL") {
+      } else if (lastRun?.status === "PROCESSING") {
+        syncSource = "PROCESSANDO";
+        isOutdated = true;
+      } else if (lastRun?.status === "FAILED") {
+        syncSource = "FALHA";
+        isOutdated = true;
+      } else if (lastRun?.status === "PARTIAL") {
         syncSource = "PENDENTE";
         isOutdated = true;
-        lastSyncAt = mpIntegration.lastSyncAt ? mpIntegration.lastSyncAt.toISOString() : null;
+      } else if (!mpIntegration.lastSyncAt) {
+        syncSource = "PENDENTE";
+        isOutdated = true;
       } else {
         lastSyncAt = mpIntegration.lastSyncAt.toISOString();
         const diffInMinutes = (new Date().getTime() - mpIntegration.lastSyncAt.getTime()) / (1000 * 60);
@@ -235,7 +241,7 @@ export async function getWorkspaceSummary() {
       manualBalanceCents,
       manualBalanceAt: manualAccount?.openingBalanceAt?.toISOString() || null,
       mercadoPagoOfficialBalanceCents,
-      mercadoPagoOfficialBalanceAt: mercadoPagoAccount?.openingBalanceAt?.toISOString() || mercadoPagoAccount?.officialBalanceAt?.toISOString() || null,
+      mercadoPagoOfficialBalanceAt: mercadoPagoAccount?.officialBalanceAt?.toISOString() || null,
       mercadoPagoBalanceStatus,
       consolidatedBalanceCents,
       financeMode,
@@ -340,7 +346,7 @@ export async function getDashboardData() {
     const { workspaceId } = await requireAuthenticatedWorkspace();
 
     const txs = await db.externalTransaction.findMany({
-      where: { workspaceId, quarantinedAt: null, source: summary.financeMode === "MANUAL" ? "MANUAL_ADJUSTMENT" : undefined },
+      where: { workspaceId, quarantinedAt: null },
       orderBy: { occurredAt: "desc" },
       take: 10,
       include: { reconciliations: { orderBy: { createdAt: "desc" }, take: 1 } },
@@ -398,7 +404,6 @@ export async function getDashboardData() {
         where: {
           workspaceId,
           quarantinedAt: null,
-          source: summary.financeMode === "MANUAL" ? "MANUAL_ADJUSTMENT" : undefined,
           occurredAt: {
             gte: new Date(d.getFullYear(), d.getMonth(), 1),
             lt: new Date(d.getFullYear(), d.getMonth() + 1, 1),

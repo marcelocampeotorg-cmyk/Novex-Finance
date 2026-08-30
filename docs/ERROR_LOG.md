@@ -310,3 +310,39 @@ Status: RESOLVIDO
 - **Causa confirmada:** o Better Auth respondia `INVALID_ORIGIN` para `Origin: http://localhost:3001`. Além da ausência inicial de `trustedOrigins`, `NEXT_PUBLIC_APP_URL` era incorporada pelo build do Next.js como `http://localhost:3000`; portanto o processo no container ignorava, para esse trecho empacotado, o valor externo `http://localhost:3001` fornecido em runtime.
 - **Correção:** a URL server-only passou a usar `BETTER_AUTH_URL`, fornecida em runtime pelo Compose, tanto em `baseURL` quanto em `trustedOrigins`. `NEXT_PUBLIC_APP_URL` permanece destinada ao cliente.
 - **Evidência:** imagem reconstruída e container reiniciado; `POST /api/auth/sign-in/email` com `Origin: http://localhost:3001` retornou HTTP 200 e `Set-Cookie`; a requisição autenticada seguinte para `/` retornou HTTP 200 com conteúdo do dashboard.
+
+### ERR-048 — Dependência residual de financeMode no backend
+Status: RESOLVIDO
+- **Data:** 2026-08-29
+- **Área:** sincronização e leitura de movimentações / backend
+- **Sintoma:** O backend ainda continha filtros `financeMode === "MANUAL" => source: "MANUAL_ADJUSTMENT"` e bloqueio de sincronização se `financeMode !== "HYBRID"`, ocultando movimentações Mercado Pago em workspaces legados.
+- **Causa:** Remoção inicial focada na interface sem eliminação completa dos gates no serviço de backend.
+- **Correção:** Eliminadas todas as travas condicionais de `financeMode` em `transactions-service.ts` e `workspace.ts`. A existência de integração ativa/conectada governa a leitura e sincronização.
+- **Teste:** Testes comportamentais em `tests/forensic-finance-rules.test.js`.
+
+### ERR-049 — Concorrência de SyncRun permitindo dois POSTs remotos simultâneos
+Status: RESOLVIDO
+- **Data:** 2026-08-29
+- **Área:** concorrência e idempotência de relatórios remotos
+- **Sintoma:** Duas requisições simultâneas compartilhavam o mesmo SyncRun com `remoteTaskId: null` e ambas disparavam `requestSettlementReport` no Mercado Pago.
+- **Causa:** Falta de trava transacional atômica antes do disparo HTTP externo.
+- **Correção:** Implementado claim atômico via `updateMany` condicional no PostgreSQL (`errorCode: "REQUESTING_REPORT"`). Apenas uma execução ganha o direito do POST; a outra retorna em andamento (`PROCESSING`).
+- **Teste:** Teste com concorrência real simulada em `tests/forensic-finance-rules.test.js`.
+
+### ERR-050 — Forçar sincronização e cooldown ignorando momento real da falha
+Status: RESOLVIDO
+- **Data:** 2026-08-29
+- **Área:** proteção contra rate limits e cotas da API
+- **Sintoma:** Cliques repetidos na UI (force=true) ou ticks do worker calculavam cooldown a partir do `createdAt` do run (que podia ter sido criado minutos antes da falha), permitindo loops de chamadas contra o provedor bloqueado.
+- **Causa:** Cálculo temporal baseado em `createdAt` e `force=true` contornando proteções.
+- **Correção:** Referência temporal ajustada para `finishedAt || updatedAt || createdAt` e proteção central implementada diretamente no `continueMercadoPagoSyncRun`, aplicando backoff de 15 minutos em `Max number of reports` / 429 e 5 minutos em falhas gerais.
+- **Teste:** Testes em `tests/forensic-finance-rules.test.js`.
+
+### ERR-051 — Inferência implícita de ambiente MP por prefixo de token e cast de NAO_DETECTADO
+Status: RESOLVIDO
+- **Data:** 2026-08-29
+- **Área:** credenciais e tela de configurações
+- **Sintoma:** `saveMercadoPagoCredentials` usava fallback `accessToken.startsWith("TEST-")` e a tela de configurações podia atribuir `"NAO_DETECTADO"` ao select de ambiente.
+- **Causa:** Falta de validação estrita do enum de ambiente no backend e frontend.
+- **Correção:** `saveCredentialsSchema` exige explicitamente `"PRODUCTION" | "SANDBOX"` sem fallback implícito e `configuracoes/page.tsx` somente atribui se o valor for estritamente um dos dois.
+- **Teste:** Testes em `tests/forensic-finance-rules.test.js`.

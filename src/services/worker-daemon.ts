@@ -131,21 +131,29 @@ export class WorkerDaemonService {
                 failedCount++;
                 console.error(`[WorkerDaemon] SyncRun ${activeSync.id} falhou:`, syncErr.message);
               }
-            } else {
-              // Decisão estrita de CRIAR novo report: baseada na última tentativa e erro anterior
+              // Decisão estrita de CRIAR novo report: baseada no momento real da última falha ou término
               const now = Date.now();
               const lastRun = await db.syncRun.findFirst({
                 where: { integrationAccountId: integration.id },
                 orderBy: { createdAt: "desc" },
               });
 
-              const lastAttemptTime = lastRun ? lastRun.createdAt.getTime() : 0;
+              const lastEventTime = lastRun
+                ? (lastRun.finishedAt || lastRun.updatedAt || lastRun.createdAt).getTime()
+                : 0;
               const isBackfill = ["NOT_STARTED", "IN_PROGRESS"].includes(integration.historyBackfillStatus);
               const isLastFailed = lastRun?.status === "FAILED";
               const isMaxReports = Boolean(lastRun?.errorMessage && lastRun.errorMessage.includes("Max number of reports"));
-              const minIntervalMs = (isLastFailed || isMaxReports) ? 5 * 60 * 1000 : (isBackfill ? 60 * 1000 : 5 * 60 * 1000);
+              const isRateLimit = Boolean(lastRun?.errorMessage && (lastRun.errorMessage.includes("429") || lastRun.errorMessage.includes("Rate limit")));
 
-              if (now - lastAttemptTime >= minIntervalMs) {
+              // Backoff progressivo: 15 min em Max Reports/429, 5 min em falha geral, 60s em backfill saudável
+              const minIntervalMs = (isMaxReports || isRateLimit)
+                ? 15 * 60 * 1000
+                : isLastFailed
+                ? 5 * 60 * 1000
+                : (isBackfill ? 60 * 1000 : 5 * 60 * 1000);
+
+              if (now - lastEventTime >= minIntervalMs) {
                 try {
                   const syncResult = await continueMercadoPagoSyncRun({
                     integrationAccountId: integration.id,

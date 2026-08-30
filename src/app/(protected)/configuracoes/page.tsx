@@ -84,8 +84,8 @@ export default function ConfiguracoesPage() {
       if (status?.publicKey) {
         setPublicKeyInput(status.publicKey);
       }
-      if (status?.environment) {
-        setMpEnvInput(status.environment as "PRODUCTION" | "SANDBOX");
+      if (status?.environment === "PRODUCTION" || status?.environment === "SANDBOX") {
+        setMpEnvInput(status.environment);
       }
 
       const evo = await getEvolutionApiStatus();

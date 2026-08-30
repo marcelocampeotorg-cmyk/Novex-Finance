@@ -17,7 +17,7 @@ import { evolutionAPIClient } from "@/integrations/evolution-api/client";
 const saveCredentialsSchema = z.object({
   accessToken: z.string().min(10).max(512),
   publicKey: z.string().optional(),
-  environment: z.enum(["SANDBOX", "PRODUCTION"]).default("SANDBOX"),
+  environment: z.enum(["SANDBOX", "PRODUCTION"]),
 });
 
 export interface IntegrationStatusResult {
@@ -119,8 +119,8 @@ export async function saveMercadoPagoCredentials(input: {
 
     const { accessToken, publicKey } = parsed.data;
 
-    // 1. Determinar ambiente: respeitar valor explícito ou sinal confiável
-    const detectedEnvironment = input.environment || (accessToken.startsWith("TEST-") ? "SANDBOX" : "PRODUCTION");
+    // 1. Determinar ambiente: respeitar valor estritamente explícito validado
+    const detectedEnvironment = parsed.data.environment;
 
     // 1. Validação local do formato
     const localCheck = validateTokenLocalFormat(accessToken);

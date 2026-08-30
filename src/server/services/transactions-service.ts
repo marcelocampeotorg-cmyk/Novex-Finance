@@ -15,7 +15,6 @@ import { validateAccessToken } from "@/integrations/mercado-pago/credentials-val
 export async function getExternalTransactions(period: string = "MONTHLY") {
   try {
     const { workspaceId } = await requireAuthenticatedWorkspace();
-    const workspace = await db.workspace.findUnique({ where: { id: workspaceId }, select: { financeMode: true } });
 
     const now = new Date();
     let dateFilter: { gte?: Date; lte?: Date } | undefined = undefined;
@@ -53,7 +52,6 @@ export async function getExternalTransactions(period: string = "MONTHLY") {
     const txs = await db.externalTransaction.findMany({
       where: {
         workspaceId,
-        source: workspace?.financeMode === "MANUAL" ? "MANUAL_ADJUSTMENT" : undefined,
         quarantinedAt: null,
         occurredAt: dateFilter,
       },
@@ -319,9 +317,6 @@ export async function continueMercadoPagoSyncRun(
     workspaceId = auth.workspaceId;
     account = await getActiveMercadoPagoIntegrationForWorkspace(workspaceId);
   }
-  const workspaceMode = await db.workspace.findUnique({ where: { id: workspaceId }, select: { financeMode: true } });
-  if (workspaceMode?.financeMode !== "HYBRID") throw new Error("A sincronização Mercado Pago exige o modo Híbrido.");
-
   if (!account.providerAccountCreatedAt && account.encryptedCredentials) {
     const identityCredentials = parseMercadoPagoCredentials(account.encryptedCredentials);
     const identity = await validateAccessToken(identityCredentials.accessToken);
@@ -342,21 +337,51 @@ export async function continueMercadoPagoSyncRun(
   });
   if (syncRunId && !syncRun) throw new Error("SyncRun específico não encontrado ou não pertence à integração/workspace.");
 
-  // Cache de 5 minutos: impede criação de NOVO sync, mas NUNCA impede continuação de um existente
-  const CACHE_MINUTES = 5;
-  if (!syncRun && !isForce && account.lastSyncAt && account.historyBackfillStatus === "COMPLETE") {
-    const now = new Date();
-    const diffInMinutes = (now.getTime() - account.lastSyncAt.getTime()) / (1000 * 60);
-    if (diffInMinutes < CACHE_MINUTES) {
-      return {
-        success: true,
-        cached: true,
-        message: "Sincronização recente (menos de 5 min). Retornando dados locais.",
-        insertedCount: 0,
-        updatedCount: 0,
-        skippedCount: 0,
-        autoMatchedCount: 0,
-      };
+  // Proteção Central contra Quotas e Loops (MAX_REPORTS, 429, 5xx): mesmo com force=true
+  if (!syncRun) {
+    const lastRun = await db.syncRun.findFirst({
+      where: { workspaceId, integrationAccountId: account.id },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (lastRun && lastRun.status === "FAILED") {
+      const failureTime = (lastRun.finishedAt || lastRun.updatedAt || lastRun.createdAt).getTime();
+      const isMaxReports = Boolean(lastRun.errorMessage && lastRun.errorMessage.includes("Max number of reports"));
+      const isRateLimit = Boolean(lastRun.errorMessage && (lastRun.errorMessage.includes("429") || lastRun.errorMessage.includes("Rate limit")));
+      const cooldownMs = (isMaxReports || isRateLimit) ? 15 * 60 * 1000 : 5 * 60 * 1000;
+      const timeSinceFailure = Date.now() - failureTime;
+
+      if (timeSinceFailure < cooldownMs) {
+        const remainingSec = Math.ceil((cooldownMs - timeSinceFailure) / 1000);
+        return {
+          success: false,
+          status: "FAILED",
+          message: `Aguardando cooldown de proteção da API (${remainingSec}s restantes) após erro recente no provedor.`,
+          error: lastRun.errorMessage || "COOLDOWN_ACTIVE",
+          insertedCount: 0,
+          updatedCount: 0,
+          skippedCount: 0,
+          autoMatchedCount: 0,
+        };
+      }
+    }
+
+    // Cache de 5 minutos para sucessos completos
+    const CACHE_MINUTES = 5;
+    if (!isForce && account.lastSyncAt && account.historyBackfillStatus === "COMPLETE") {
+      const now = new Date();
+      const diffInMinutes = (now.getTime() - account.lastSyncAt.getTime()) / (1000 * 60);
+      if (diffInMinutes < CACHE_MINUTES) {
+        return {
+          success: true,
+          cached: true,
+          message: "Sincronização recente (menos de 5 min). Retornando dados locais.",
+          insertedCount: 0,
+          updatedCount: 0,
+          skippedCount: 0,
+          autoMatchedCount: 0,
+        };
+      }
     }
   }
 
@@ -420,10 +445,51 @@ export async function continueMercadoPagoSyncRun(
 
     // 1. Solicitar geração assíncrona do Settlement Report se ainda não tiver ID remoto
     if (!syncRun.remoteTaskId) {
-      const requestRes = await client.requestSettlementReport(beginDate, endDate);
+      // Atomic claim para garantir que exatamente 1 execução ganhe o direito de fazer o POST remoto para este SyncRun
+      const claimRes = await db.syncRun.updateMany({
+        where: {
+          id: syncRun.id,
+          remoteTaskId: null,
+          errorCode: { not: "REQUESTING_REPORT" },
+        },
+        data: {
+          errorCode: "REQUESTING_REPORT",
+        },
+      });
+
+      if (claimRes.count === 0) {
+        // Outro processo concorrente já está disparando a solicitação
+        console.log(`[TransactionsService] Solicitação remota já reivindicada por processo concorrente para SyncRun ${syncRun.id}.`);
+        return {
+          success: true,
+          status: "PROCESSING",
+          message: "Solicitação de relatório remota já em andamento por outro processo concorrente.",
+          insertedCount: 0,
+          updatedCount: 0,
+          skippedCount: 0,
+          autoMatchedCount: 0,
+        };
+      }
+
+      let requestRes;
+      try {
+        requestRes = await client.requestSettlementReport(beginDate, endDate);
+      } catch (reqErr: any) {
+        await db.syncRun.update({
+          where: { id: syncRun.id },
+          data: { errorCode: runPurpose },
+        });
+        throw reqErr;
+      }
+
       if (!requestRes.success) {
+        await db.syncRun.update({
+          where: { id: syncRun.id },
+          data: { errorCode: runPurpose },
+        });
         throw new Error(requestRes.error || "Falha ao solicitar relatório de liquidação no Mercado Pago.");
       }
+
       if (requestRes.fileName && requestRes.status === "READY") {
         await db.syncRun.update({
           where: { id: syncRun.id },
@@ -431,6 +497,7 @@ export async function continueMercadoPagoSyncRun(
             remoteTaskId: requestRes.taskId || "DIRECT",
             remoteFileName: requestRes.fileName,
             remoteReportId: requestRes.taskId || "DIRECT",
+            errorCode: runPurpose,
           },
         });
         syncRun.remoteTaskId = requestRes.taskId || "DIRECT";
@@ -441,6 +508,7 @@ export async function continueMercadoPagoSyncRun(
           where: { id: syncRun.id },
           data: {
             remoteTaskId: requestRes.taskId,
+            errorCode: runPurpose,
           },
         });
         syncRun.remoteTaskId = requestRes.taskId;
