@@ -20,11 +20,23 @@ export interface WorkerRunResult {
 }
 
 export class WorkerDaemonService {
+  private static isRunning = false;
+
   /**
    * Executa a rotina completa do Worker Daemon de background para todos os workspaces ativos.
    * Não requer cookies de sessão de navegador.
    */
   async runBackgroundJobs(): Promise<WorkerRunResult> {
+    if (WorkerDaemonService.isRunning) {
+      console.warn("[WorkerDaemon] Execução anterior ainda em andamento. Ignorando overlapping tick.");
+      return {
+        success: true,
+        executedAt: new Date().toISOString(),
+        error: "WORKER_BUSY_OVERLAPPING_IGNORED",
+      };
+    }
+
+    WorkerDaemonService.isRunning = true;
     const executedAt = new Date().toISOString();
 
     try {
@@ -120,13 +132,20 @@ export class WorkerDaemonService {
                 console.error(`[WorkerDaemon] SyncRun ${activeSync.id} falhou:`, syncErr.message);
               }
             } else {
-              // Sem run em processamento: iniciar nova rodada apenas se respeitar cadência mínima
+              // Decisão estrita de CRIAR novo report: baseada na última tentativa e erro anterior
               const now = Date.now();
-              const lastSyncTime = integration.lastSyncAt ? integration.lastSyncAt.getTime() : 0;
-              const isBackfill = ["NOT_STARTED", "IN_PROGRESS"].includes(integration.historyBackfillStatus);
-              const minIntervalMs = isBackfill ? 30 * 1000 : 5 * 60 * 1000;
+              const lastRun = await db.syncRun.findFirst({
+                where: { integrationAccountId: integration.id },
+                orderBy: { createdAt: "desc" },
+              });
 
-              if (now - lastSyncTime >= minIntervalMs) {
+              const lastAttemptTime = lastRun ? lastRun.createdAt.getTime() : 0;
+              const isBackfill = ["NOT_STARTED", "IN_PROGRESS"].includes(integration.historyBackfillStatus);
+              const isLastFailed = lastRun?.status === "FAILED";
+              const isMaxReports = Boolean(lastRun?.errorMessage && lastRun.errorMessage.includes("Max number of reports"));
+              const minIntervalMs = (isLastFailed || isMaxReports) ? 5 * 60 * 1000 : (isBackfill ? 60 * 1000 : 5 * 60 * 1000);
+
+              if (now - lastAttemptTime >= minIntervalMs) {
                 try {
                   const syncResult = await continueMercadoPagoSyncRun({
                     integrationAccountId: integration.id,
@@ -181,6 +200,8 @@ export class WorkerDaemonService {
         executedAt,
         error: err.message || "Erro durante execução do worker daemon",
       };
+    } finally {
+      WorkerDaemonService.isRunning = false;
     }
   }
 }

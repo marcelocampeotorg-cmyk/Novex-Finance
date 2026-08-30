@@ -119,8 +119,8 @@ export async function saveMercadoPagoCredentials(input: {
 
     const { accessToken, publicKey } = parsed.data;
 
-    // 1. Inferir ambiente pelo prefixo (APP_USR = Produção, TEST = Sandbox)
-    const detectedEnvironment = accessToken.startsWith("APP_USR-") ? "PRODUCTION" : "SANDBOX";
+    // 1. Determinar ambiente: respeitar valor explícito ou sinal confiável
+    const detectedEnvironment = input.environment || (accessToken.startsWith("TEST-") ? "SANDBOX" : "PRODUCTION");
 
     // 1. Validação local do formato
     const localCheck = validateTokenLocalFormat(accessToken);
@@ -168,12 +168,6 @@ export async function saveMercadoPagoCredentials(input: {
         update: { isActive: true },
         create: { workspaceId: context.workspaceId, type: "MERCADO_PAGO", name: "Mercado Pago" },
       });
-      await tx.financialAccount.upsert({
-        where: { workspaceId_type: { workspaceId: context.workspaceId, type: "MANUAL" } },
-        update: { isActive: true },
-        create: { workspaceId: context.workspaceId, type: "MANUAL", name: "Conta geral" },
-      });
-      await tx.workspace.update({ where: { id: context.workspaceId }, data: { financeMode: "HYBRID" } });
 
       // Desativar integrações prévias do mesmo provedor
       await tx.integrationAccount.updateMany({

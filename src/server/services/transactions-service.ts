@@ -380,18 +380,38 @@ export async function continueMercadoPagoSyncRun(
   }
 
   if (!syncRun) {
-    syncRun = await db.syncRun.create({
-      data: {
-        workspaceId,
-        integrationAccountId: account.id,
-        source: "MERCADO_PAGO_API",
-        status: "PROCESSING",
-        beginDate,
-        endDate,
-        startedAt: new Date(),
-        errorCode: runPurpose,
-      },
-    });
+    try {
+      syncRun = await db.syncRun.create({
+        data: {
+          workspaceId,
+          integrationAccountId: account.id,
+          source: "MERCADO_PAGO_API",
+          status: "PROCESSING",
+          beginDate,
+          endDate,
+          startedAt: new Date(),
+          errorCode: runPurpose,
+        },
+      });
+    } catch (createErr: any) {
+      if (createErr.code === "P2002" || String(createErr.message).includes("unique_active_sync_run_per_integration")) {
+        const activeRun = await db.syncRun.findFirst({
+          where: {
+            workspaceId,
+            integrationAccountId: account.id,
+            status: "PROCESSING",
+          },
+          orderBy: { createdAt: "desc" },
+        });
+        if (activeRun) {
+          syncRun = activeRun;
+        } else {
+          throw createErr;
+        }
+      } else {
+        throw createErr;
+      }
+    }
   }
 
   try {
@@ -805,7 +825,7 @@ export async function enrichAllMercadoPagoTransactions(internalContext?: symbol,
       const rawPayment = await paymentsClient.getPaymentDetails(tx.externalId);
       let pData: any = null;
       if (rawPayment && (rawPayment.status === "approved" || rawPayment.status === "accredited")) {
-        pData = paymentsClient.mapPaymentToRawTransaction(rawPayment, account.externalAccountId || undefined);
+        pData = paymentsClient.mapPaymentToEnrichmentData(rawPayment);
       }
 
       if (pData) {
@@ -814,9 +834,10 @@ export async function enrichAllMercadoPagoTransactions(internalContext?: symbol,
           data: {
             description: pData.description && pData.description !== "SETTLEMENT" ? pData.description : tx.description,
             counterpartName: pData.counterpartName || tx.counterpartName || null,
+            counterpartDocument: pData.counterpartDocument || tx.counterpartDocument || null,
             txid: pData.txid || tx.txid || null,
             rawReference: pData.rawReference || tx.rawReference || null,
-            rawProviderData: pData.rawProviderData as any,
+            rawEnrichmentData: pData.rawEnrichmentData as any,
           },
         });
 

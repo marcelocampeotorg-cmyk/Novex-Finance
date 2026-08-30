@@ -139,7 +139,7 @@ test("Account Money: configuração legada é atualizada com colunas oficiais e 
     const creationBody = JSON.parse(creation.options.body);
     assert.ok(configBody.columns.some((column) => column.key === "TRANSACTION_TYPE"));
     assert.ok(configBody.columns.some((column) => column.key === "SETTLEMENT_NET_AMOUNT"));
-    assert.strictEqual(configBody.columns.some((column) => column.key === "RECORD_TYPE"), false);
+    assert.strictEqual(configBody.columns.some((column) => column.key === "RECORD_TYPE"), true, "Deve preservar coluna existente RECORD_TYPE (UNION)");
     assert.deepStrictEqual(creationBody, { begin_date: "2026-08-01T00:00:00Z", end_date: "2026-08-02T23:59:59Z" });
   } finally { global.fetch = originalFetch; }
 });

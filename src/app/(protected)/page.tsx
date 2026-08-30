@@ -152,6 +152,10 @@ export default function DashboardPage() {
   if (dashboardState === "error") return <div className="p-8 text-sm text-red-400">{syncError || "Não foi possível carregar os dados financeiros."}</div>;
   if (dashboardState === "loading" || !summary) return <div className="p-8 text-sm text-novex-text-secondary">Carregando dados financeiros...</div>;
   const displaySummary = summary;
+  const now = new Date();
+  const currentMonthNum = String(now.getMonth() + 1).padStart(2, "0");
+  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const monthRangeLabel = `de 01/${currentMonthNum} a ${String(lastDay).padStart(2, "0")}/${currentMonthNum}`;
 
   return (
     <div className="space-y-8 animate-in fade-in duration-300">
@@ -161,13 +165,12 @@ export default function DashboardPage() {
         actions={
           <button
             onClick={async () => {
-              if (displaySummary.financeMode !== "HYBRID") return;
               setIsSyncing(true); setSyncError(null);
               try { const { triggerMercadoPagoSync } = await import("@/server/actions/workspace"); const result = await triggerMercadoPagoSync(true); if (!result.success) throw new Error(("error" in result ? String(result.error) : "") || ("message" in result ? String(result.message) : "Falha ao solicitar atualização.")); await loadDashboard(); }
               catch (error: any) { setSyncError(error.message || "Falha ao solicitar atualização."); }
               finally { setIsSyncing(false); }
             }}
-            disabled={isSyncing || displaySummary.financeMode !== "HYBRID"}
+            disabled={isSyncing}
             className={`flex items-center gap-2 text-xs px-3.5 py-2 rounded-lg border transition-all ${
               isSyncing
                 ? "bg-novex-surface1 text-novex-cyan border-novex-cyan/40 cursor-wait shadow-sm"
@@ -175,11 +178,9 @@ export default function DashboardPage() {
                 ? "bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20"
                 : "bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20"
             }`}
-            title={displaySummary.financeMode === "HYBRID" ? "Clique para sincronizar com Mercado Pago agora" : "Ative o modo Híbrido para conectar o Mercado Pago"}
+            title="Clique para sincronizar com Mercado Pago agora"
           >
-            {displaySummary.financeMode !== "HYBRID" ? (
-              <><Wallet className="h-4 w-4" /><span className="font-semibold">Modo Manual</span></>
-            ) : isSyncing ? (
+            {isSyncing ? (
               <>
                 <RefreshCw className="h-4 w-4 animate-spin text-novex-cyan" />
                 <span className="font-semibold text-novex-cyan">Sincronizando...</span>
@@ -212,7 +213,7 @@ export default function DashboardPage() {
       {/* Grid de Cards Métricos Principais */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         <MetricCard
-          title={displaySummary.financeMode === "HYBRID" ? "Saldo Mercado Pago" : "Saldo Consolidado"}
+          title="Saldo Mercado Pago"
           amountCents={displaySummary.mercadoPagoOfficialBalanceCents ?? 0}
           overrideText={displaySummary.mercadoPagoOfficialBalanceCents === null ? "Em reconciliação" : undefined}
           subtitle={displaySummary.mercadoPagoOfficialBalanceCents === null ? "Aguardando âncora oficial comprovada" : "Saldo oficial comprovado"}
@@ -225,7 +226,7 @@ export default function DashboardPage() {
         <MetricCard
           title="Ganhos do Mês (Entradas)"
           amountCents={displaySummary.monthIncomeCents ?? 0}
-          subtitle="Entradas de 01/08 a 31/08"
+          subtitle={`Entradas ${monthRangeLabel}`}
           icon={ArrowDownLeft}
           variant="success"
           badgeText="Mês Atual"
@@ -235,7 +236,7 @@ export default function DashboardPage() {
         <MetricCard
           title="Gastos do Mês (Saídas)"
           amountCents={displaySummary.monthExpenseCents ?? 0}
-          subtitle="Saídas de 01/08 a 31/08"
+          subtitle={`Saídas ${monthRangeLabel}`}
           icon={ArrowUpRight}
           variant="default"
           badgeText="Mês Atual"

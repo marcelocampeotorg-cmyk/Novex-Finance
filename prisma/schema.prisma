@@ -447,6 +447,7 @@ model ExternalTransaction {
   description          String
   rawReference         String?              @map("raw_reference")
   rawProviderData      Json?                @map("raw_provider_data")
+  rawEnrichmentData    Json?                @map("raw_enrichment_data")
   importedAt           DateTime             @default(now()) @map("imported_at")
   quarantinedAt        DateTime?            @map("quarantined_at")
   quarantineReason     String?              @map("quarantine_reason")

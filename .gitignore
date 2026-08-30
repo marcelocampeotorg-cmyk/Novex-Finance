@@ -65,3 +65,7 @@ test-*
 # Bancos de dados locais adicionais (Prisma SQLite etc)
 *.db
 *.db-journal
+
+# TypeScript build info
+*.tsbuildinfo
+tsconfig.tsbuildinfo

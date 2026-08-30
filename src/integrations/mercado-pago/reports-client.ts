@@ -161,18 +161,21 @@ export class MercadoPagoReportsClient {
 
     if (configRes.ok) {
       const currentConfig = await configRes.json();
-      const currentColumns = new Set(
-        Array.isArray(currentConfig.columns) ? currentConfig.columns.map((column: any) => String(column?.key || "")) : []
-      );
-      const missingColumns = requiredColumns.filter((col) => !currentColumns.has(col.key));
+      const existingColumns: Array<{ key: string; alias?: string }> = Array.isArray(currentConfig.columns)
+        ? currentConfig.columns
+        : [];
+      const existingKeys = new Set(existingColumns.map((col) => String(col?.key || "")));
+      const missingColumns = requiredColumns.filter((col) => !existingKeys.has(col.key));
       const hasWithdraw = currentConfig.include_withdraw === true;
 
       if (missingColumns.length === 0 && hasWithdraw) return;
 
+      const mergedColumns = [...existingColumns, ...missingColumns];
+
       const updatePayload = {
         ...currentConfig,
         include_withdraw: true,
-        columns: requiredColumns,
+        columns: mergedColumns,
       };
 
       const updateRes = await fetch("https://api.mercadopago.com/v1/account/settlement_report/config", {
@@ -250,7 +253,7 @@ export class MercadoPagoReportsClient {
       const errMsg = String(errData.message || errData.error || "");
 
       // Resiliência: se o Mercado Pago atingiu o limite de relatórios gerados simultâneos (HTTP 400 Max number of reports)
-      // SOMENTE reutilizar se o relatório na lista corresponder estritamente às datas solicitadas
+      // SOMENTE reutilizar se o relatório na lista corresponder determinística e estritamente às datas solicitadas
       if (response.status === 400 || errMsg.toLowerCase().includes("max number of reports")) {
         try {
           const listRes = await fetch("https://api.mercadopago.com/v1/account/settlement_report/list", {
@@ -258,16 +261,15 @@ export class MercadoPagoReportsClient {
           });
           if (listRes.ok) {
             const list = await listRes.json();
-            const requestedBeginUtc = new Date(begin).getTime();
-            const requestedEndUtc = new Date(end).getTime();
+            const requestedBeginIso = new Date(begin).toISOString().replace(/\.\d{3}Z$/, "Z");
+            const requestedEndIso = new Date(end).toISOString().replace(/\.\d{3}Z$/, "Z");
 
             const matchingReport = Array.isArray(list) ? list.find((r: any) => {
               if (r.status !== "processed" || !r.file_name) return false;
               if (!r.begin_date || !r.end_date) return false;
-              const repBegin = new Date(r.begin_date).getTime();
-              const repEnd = new Date(r.end_date).getTime();
-              return Math.abs(repBegin - requestedBeginUtc) <= 2 * 3600 * 1000 &&
-                     Math.abs(repEnd - requestedEndUtc) <= 2 * 3600 * 1000;
+              const repBeginIso = new Date(r.begin_date).toISOString().replace(/\.\d{3}Z$/, "Z");
+              const repEndIso = new Date(r.end_date).toISOString().replace(/\.\d{3}Z$/, "Z");
+              return repBeginIso === requestedBeginIso && repEndIso === requestedEndIso;
             }) : null;
 
             if (matchingReport) {

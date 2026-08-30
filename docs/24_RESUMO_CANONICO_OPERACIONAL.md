@@ -28,7 +28,7 @@ O domínio possui três camadas distintas:
 
 Toda movimentação real afeta o Ledger e a movimentação líquida conhecida, mesmo quando ainda não foi identificada ou conciliada. Entretanto, a soma das movimentações importadas não prova automaticamente o saldo absoluto atual da conta.
 
-Enquanto não houver âncora oficial e cobertura contínua suficiente, a conta Mercado Pago deve utilizar conceitos como “Movimentação líquida conhecida”, “Saldo em reconciliação”, “Fluxo conhecido” ou “Cobertura financeira conhecida”. O produto pode manter uma conta geral manual independente, mas nunca usar seu saldo para fazer os números do Mercado Pago “baterem”.
+Enquanto não houver âncora oficial e cobertura contínua suficiente, a conta Mercado Pago deve utilizar conceitos como “Movimentação líquida conhecida”, “Saldo em reconciliação”, “Fluxo conhecido” ou “Cobertura financeira conhecida”. Saldo manual não é arquitetura oficial na V1 e não deve ser exigido do usuário na interface nem utilizado para fabricar saldos do Mercado Pago.
 
 Se futuramente uma fonte oficial fornecer saldo absoluto comprovado, esse saldo poderá ser exibido com sua fonte, cobertura e timestamp.
 

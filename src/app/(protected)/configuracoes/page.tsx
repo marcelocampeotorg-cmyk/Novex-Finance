@@ -37,7 +37,6 @@ import {
   fetchEvolutionQRCode,
   sendNeutralWhatsAppTest,
 } from "@/server/actions/notifications";
-import { configureFinanceMode, getFinanceModeSettings } from "@/server/actions/financial-accounts";
 
 export default function ConfiguracoesPage() {
   const [saved, setSaved] = useState(false);
@@ -49,10 +48,11 @@ export default function ConfiguracoesPage() {
   const [pwdStatus, setPwdStatus] = useState<{ type: "success" | "error"; msg: string } | null>(null);
   const [pwdLoading, setPwdLoading] = useState(false);
 
-  // Mercado Pago States (Public Key + Access Token)
+  // Mercado Pago States (Public Key + Access Token + Ambiente)
   const [mpStatus, setMpStatus] = useState<IntegrationStatusResult | null>(null);
   const [publicKeyInput, setPublicKeyInput] = useState("");
   const [tokenInput, setTokenInput] = useState("");
+  const [mpEnvInput, setMpEnvInput] = useState<"PRODUCTION" | "SANDBOX">("PRODUCTION");
   const [showToken, setShowToken] = useState(false);
   const [mpLoading, setMpLoading] = useState(false);
   const [mpTestLoading, setMpTestLoading] = useState(false);
@@ -69,11 +69,6 @@ export default function ConfiguracoesPage() {
   const [waLoading, setWaLoading] = useState(false);
   const [waFeedback, setWaFeedback] = useState<{ type: "success" | "error"; msg: string } | null>(null);
   const [testPhone, setTestPhone] = useState("");
-  const [financeMode, setFinanceMode] = useState<"MANUAL" | "HYBRID">("MANUAL");
-  const [openingBalance, setOpeningBalance] = useState("");
-  const [openingBalanceAt, setOpeningBalanceAt] = useState(new Date().toISOString().slice(0, 10));
-  const [financeFeedback, setFinanceFeedback] = useState<{ type: "success" | "error"; msg: string } | null>(null);
-  const [financeLoading, setFinanceLoading] = useState(false);
 
   useEffect(() => {
     loadIntegrationStatus();
@@ -89,39 +84,16 @@ export default function ConfiguracoesPage() {
       if (status?.publicKey) {
         setPublicKeyInput(status.publicKey);
       }
+      if (status?.environment) {
+        setMpEnvInput(status.environment as "PRODUCTION" | "SANDBOX");
+      }
 
       const evo = await getEvolutionApiStatus();
       if (evo.baseUrl) setEvoUrl(evo.baseUrl);
       setEvoApiKey("");
       if (evo.instanceName) setEvoInstance(evo.instanceName);
-
-      const finance = await getFinanceModeSettings();
-      setFinanceMode(finance.mode);
-      if (finance.manualAccount?.openingBalanceCents !== null && finance.manualAccount?.openingBalanceCents !== undefined) {
-        setOpeningBalance((finance.manualAccount.openingBalanceCents / 100).toFixed(2).replace(".", ","));
-      }
-      if (finance.manualAccount?.openingBalanceAt) setOpeningBalanceAt(finance.manualAccount.openingBalanceAt.slice(0, 10));
     } catch (e) {
       console.error("Erro ao carregar status:", e);
-    }
-  };
-
-  const handleSaveFinanceMode = async () => {
-    const normalized = openingBalance.replace(/\./g, "").replace(",", ".");
-    const amount = Number(normalized);
-    if (!Number.isFinite(amount) || amount < 0 || !openingBalanceAt) {
-      setFinanceFeedback({ type: "error", msg: "Informe um saldo inicial válido e sua data." });
-      return;
-    }
-    setFinanceLoading(true);
-    setFinanceFeedback(null);
-    try {
-      const result = await configureFinanceMode({ mode: financeMode, openingBalanceCents: Math.round(amount * 100), openingBalanceAt });
-      setFinanceFeedback(result.success ? { type: "success", msg: "Modo financeiro e conta geral atualizados." } : { type: "error", msg: result.error });
-    } catch {
-      setFinanceFeedback({ type: "error", msg: "Falha ao salvar a configuração financeira." });
-    } finally {
-      setFinanceLoading(false);
     }
   };
 
@@ -195,6 +167,7 @@ export default function ConfiguracoesPage() {
       const res = await saveMercadoPagoCredentials({
         accessToken: tokenInput.trim(),
         publicKey: publicKeyInput.trim(),
+        environment: mpEnvInput,
       });
 
       if (res.success) {
@@ -387,37 +360,6 @@ export default function ConfiguracoesPage() {
           </button>
         </div>
 
-        <div className="rounded-xl border border-novex-border bg-novex-surface1 p-6 space-y-4">
-          <div className="flex items-center gap-3 border-b border-novex-border pb-3">
-            <Wallet className="h-5 w-5 text-novex-cyan" />
-            <div>
-              <h3 className="text-base font-bold text-novex-text-primary">Modo financeiro e conta geral</h3>
-              <p className="text-[11px] text-novex-text-muted">O saldo manual nunca sobrescreve a conta Mercado Pago.</p>
-            </div>
-          </div>
-          {financeFeedback && <div className={`rounded-lg border p-3 text-xs ${financeFeedback.type === "success" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400" : "border-red-500/30 bg-red-500/10 text-red-400"}`}>{financeFeedback.msg}</div>}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-            <div>
-              <label className="font-semibold text-novex-text-secondary block mb-1">Modo</label>
-              <select value={financeMode} onChange={(event) => setFinanceMode(event.target.value as "MANUAL" | "HYBRID")} className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-novex-text-primary">
-                <option value="MANUAL">Manual</option>
-                <option value="HYBRID">Híbrido</option>
-              </select>
-            </div>
-            <div>
-              <label className="font-semibold text-novex-text-secondary block mb-1">Saldo inicial da conta geral</label>
-              <input value={openingBalance} onChange={(event) => setOpeningBalance(event.target.value)} inputMode="decimal" placeholder="0,00" className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-novex-text-primary" />
-            </div>
-            <div>
-              <label className="font-semibold text-novex-text-secondary block mb-1">Data do saldo inicial</label>
-              <input type="date" value={openingBalanceAt} onChange={(event) => setOpeningBalanceAt(event.target.value)} className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-novex-text-primary" />
-            </div>
-          </div>
-          <button onClick={handleSaveFinanceMode} disabled={financeLoading} className="rounded-lg bg-novex-cyan px-5 py-2.5 text-xs font-semibold text-novex-bg disabled:opacity-50">
-            {financeLoading ? "Salvando..." : "Salvar configuração financeira"}
-          </button>
-        </div>
-
         {/* Alterar Senha */}
         <div className="rounded-xl border border-novex-border bg-novex-surface1 p-6 space-y-4">
           <div className="flex items-center gap-3 border-b border-novex-border pb-3">
@@ -592,6 +534,20 @@ export default function ConfiguracoesPage() {
 
           {/* Formulário de Conexão com Public Key e Access Token */}
           <form onSubmit={handleConnectMercadoPago} className="space-y-4 text-xs pt-2">
+            <div>
+              <label className="font-semibold text-novex-text-secondary block mb-1">
+                Ambiente da Conta *
+              </label>
+              <select
+                value={mpEnvInput}
+                onChange={(e) => setMpEnvInput(e.target.value as "PRODUCTION" | "SANDBOX")}
+                className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-novex-text-primary focus:border-novex-cyan focus:outline-none"
+              >
+                <option value="PRODUCTION">Produção (Conta Real)</option>
+                <option value="SANDBOX">Sandbox (Conta de Testes)</option>
+              </select>
+            </div>
+
             <div>
               <label className="font-semibold text-novex-text-secondary block mb-1">
                 Public Key (Chave Pública)
