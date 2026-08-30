@@ -496,9 +496,10 @@ export class MercadoPagoReportsClient {
       }
       const descStr = descIdx >= 0 && cols[descIdx] ? cols[descIdx] : typeStr;
       const refStr = refIdx >= 0 && cols[refIdx] ? cols[refIdx] : undefined;
+      const compositeExternalId = `${rawSourceId}_${typeStr}_${direction}_${absNetAmountCents}`;
 
       transactions.push({
-        externalId: rawSourceId,
+        externalId: compositeExternalId,
         occurredAt,
         type: typeStr,
         description: descStr,

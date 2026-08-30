@@ -18,12 +18,14 @@ test("Account Money: Parser RFC 4180 lida com aspas, delimitadores entre aspas, 
 
   assert.strictEqual(result.validCount, 2);
   assert.strictEqual(result.rejectedCount, 0);
-  assert.strictEqual(result.transactions[0].externalId, "TX_SETTLE_201");
+  assert.strictEqual(result.transactions[0].externalId, "TX_SETTLE_201_SETTLEMENT_CREDIT_15050");
+  assert.strictEqual(result.transactions[0].rawProviderData.SOURCE_ID, "TX_SETTLE_201");
   assert.strictEqual(result.transactions[0].description, "Venda via Pix, com vírgula e ; ponto-e-vírgula");
   assert.strictEqual(result.transactions[0].amountCents, 15050);
   assert.strictEqual(result.transactions[0].feeCents, 500);
 
-  assert.strictEqual(result.transactions[1].externalId, "TX_SETTLE_202");
+  assert.strictEqual(result.transactions[1].externalId, "TX_SETTLE_202_WITHDRAWAL_DEBIT_5000");
+  assert.strictEqual(result.transactions[1].rawProviderData.SOURCE_ID, "TX_SETTLE_202");
   assert.strictEqual(result.transactions[1].description, 'Saque "especial" com aspas');
   assert.strictEqual(result.transactions[1].direction, "DEBIT");
   assert.strictEqual(result.transactions[1].netAmountCents, 5000);

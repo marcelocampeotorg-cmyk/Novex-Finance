@@ -520,3 +520,36 @@ test("Item 12.18 — Preservação de startedAt: Lease de claim utiliza updatedA
     "startedAt não deve ser sobrescrito durante renovação do claim"
   );
 });
+
+test("Item 12.19 — Composite externalId: Yield e Tax com mesmo SOURCE_ID geram externalIds distintos", () => {
+  const reportsClientPath = path.join(__dirname, "../src/integrations/mercado-pago/reports-client.ts");
+  const content = fs.readFileSync(reportsClientPath, "utf-8");
+
+  assert.match(
+    content,
+    /const compositeExternalId = `\$\{rawSourceId\}_\$\{typeStr\}_\$\{direction\}_\$\{absNetAmountCents\}`;/,
+    "reports-client.ts deve gerar chave composta para evitar colisões entre fatos financeiros com mesmo SOURCE_ID"
+  );
+});
+
+test("Item 12.20 — Fail-closed: Erro de rede ou 5xx no lookup prévio não dispara POST cego", () => {
+  const txServicePath = path.join(__dirname, "../src/server/services/transactions-service.ts");
+  const content = fs.readFileSync(txServicePath, "utf-8");
+
+  assert.match(
+    content,
+    /if\s*\(remoteLookupFailed && !syncRun\.remoteTaskId\)\s*\{\s*return\s*\{[\s\S]*?status:\s*"PROCESSING"/,
+    "transactions-service.ts deve retornar PROCESSING em fail-closed se o lookup remoto falhar"
+  );
+});
+
+test("Item 12.21 — Janela Incremental: Overlap de 3 dias configurado para late-arriving transactions", () => {
+  const windowPath = path.join(__dirname, "../src/domain/mercado-pago-sync-window.ts");
+  const content = fs.readFileSync(windowPath, "utf-8");
+
+  assert.match(
+    content,
+    /export const INCREMENTAL_OVERLAP_DAYS = 3;/,
+    "mercado-pago-sync-window.ts deve definir INCREMENTAL_OVERLAP_DAYS = 3"
+  );
+});

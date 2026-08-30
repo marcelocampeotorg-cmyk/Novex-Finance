@@ -382,3 +382,13 @@ Status: RESOLVIDO
 - **Causa:** Ausência de lógica de reativação condicional em `importExternalTransactions`, busca estrita por `processed` e uso indevido de `startedAt` como relógio de lease.
 - **Correção:** (1) Implementada reativação automática restrita ao motivo `UNCONFIRMED_PAYMENTS_API_IMPORT` quando comprovado por Settlement Report oficial, restaurando dados oficiais, liberando `LedgerEntry` (`excludedFromReports: false`) e emitindo `AuditLog` (`TRANSACTION_REACTIVATED_FROM_SETTLEMENT`); (2) Checagem prévia expandida para todos os status e retorno fail-closed `PROCESSING` sem novo POST se já houver task em processamento; (3) Lease migrado para `updatedAt`, preservando `startedAt` original imutável.
 - **Teste:** Testes em `tests/forensic-finance-rules.test.js` (itens 12.16, 12.17 e 12.18).
+
+### ERR-056 — Colisão de SOURCE_ID colapsando eventos financeiros distintos e ausência de overlap para late-arriving
+Status: RESOLVIDO
+- **Data:** 2026-08-30
+- **Área:** integridade contábil / parser CSV / idempotência
+- **Sintoma:** (1) Diferença de 1 crédito e 1 débito entre CSV e Banco em Agosto/2026, com perda de débitos de retenção de impostos e sobrescrita mútua de liquidação e contestação (ex: disputa R$ 44,99 e rendimentos diários); (2) Janela incremental com overlap de apenas 1 dia arriscava perder movimentações liberadas pelo provedor com 48-72h de atraso (late-arriving transactions).
+- **Causa:** Uso de `SOURCE_ID` simples como `externalId`, colapsando 24 pares de eventos financeiros distintos que compartilham o mesmo identificador de lote no Mercado Pago; janela incremental sem overlap seguro.
+- **Correção:** (1) `reports-client.ts` atualizado para gerar chave contábil composta `${rawSourceId}_${typeStr}_${direction}_${absNetAmountCents}`, garantindo que fatos financeiros distintos sob o mesmo lote sejam 100% preservados no banco e no ledger, mantendo 100% de idempotência entre relatórios sobrepostos; (2) `importExternalTransactions` atualizado com migração retroativa de registros legados; (3) Janela incremental atualizada para sobreposição de 3 dias (`INCREMENTAL_OVERLAP_DAYS = 3`); (4) Fail-closed implementado para erros de rede na checagem prévia.
+- **Evidência:** Reconciliação 1:1 exata em Agosto/2026: 51 CREDITs (R$ 2.722,43) e 26 DEBITs (R$ 305,13) em todas as 4 camadas (CSV, ExternalTransaction, LedgerEntry e Dashboard).
+- **Teste:** Testes em `tests/forensic-finance-rules.test.js` (itens 12.19, 12.20 e 12.21) e `tests/mercado-pago-sync-window.test.js`.

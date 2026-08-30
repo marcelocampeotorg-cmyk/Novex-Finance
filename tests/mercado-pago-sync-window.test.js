@@ -16,9 +16,9 @@ test("Account Money: backfill nunca ultrapassa a criação oficial da conta", ()
   assert.equal(window.beginDate.toISOString(), created.toISOString());
 });
 
-test("Account Money: incremental sobrepõe um dia para ajustes tardios", () => {
+test("Account Money: incremental sobrepõe 3 dias para captura de late-arriving transactions", () => {
   const coverageEnd = new Date("2026-08-26T12:00:00.000Z");
   const window = selectMercadoPagoSyncWindow({ now: new Date("2026-08-27T12:00:00.000Z"), coverageStart: new Date("2026-01-01T00:00:00.000Z"), coverageEnd, historyBackfillStatus: "COMPLETE", providerAccountCreatedAt: new Date("2025-01-01T00:00:00.000Z") });
   assert.equal(window.purpose, "INCREMENTAL");
-  assert.equal(window.beginDate.toISOString(), "2026-08-25T12:00:00.000Z");
+  assert.equal(window.beginDate.toISOString(), "2026-08-23T12:00:00.000Z");
 });

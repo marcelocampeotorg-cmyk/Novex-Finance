@@ -21,12 +21,17 @@ O pipeline precisa persistir estado:
 
 Não criar um relatório novo a cada render/poll do frontend.
 
-## Cobertura histórica
+## Identidade e Idempotência Contábil
+- No Settlement Report do Mercado Pago, um mesmo `SOURCE_ID` pode conter múltiplos eventos financeiros distintos (ex: crédito de rendimento diário e débito de imposto retido, ou débito de liquidação e crédito de disputa).
+- Para evitar que eventos financeiros distintos colapsem ou sobrescrevam uns aos outros, o identificador contábil canônico (`externalId`) é composto determinísticamente: `${SOURCE_ID}_${TRANSACTION_TYPE}_${DIRECTION}_${NET_AMOUNT_CENTS}`.
+- Relatórios sobrepostos que contenham o mesmo fato financeiro geram a mesma chave composta, garantindo 100% de idempotência.
 
+## Cobertura histórica e Janela Incremental
 - Cada relatório cobre no máximo 60 dias.
 - A carga inicial percorre janelas consecutivas de até 60 dias até a data oficial de criação/limite realmente disponibilizado pelo provedor.
 - Se o provedor não informar uma data inicial confiável, registrar a limitação e não inventar cobertura.
-- A sincronização normal retoma de `coverageEnd`, com sobreposição curta e importação idempotente para capturar ajustes tardios.
+- `coverageEnd` representa o período consultado/processado pelo NOVEX, não garantia de completude absoluta de eventos futuros ou atrasados.
+- A sincronização incremental aplica uma sobreposição de 3 dias (`coverageEnd - 3 dias`), garantindo que movimentações publicadas com atraso (late-arriving transactions) sejam capturadas sem gerar duplicidades.
 - Progresso, janela atual, cobertura, rejeições e erro precisam ser persistidos e exibidos.
 
 ## Saldo disponível

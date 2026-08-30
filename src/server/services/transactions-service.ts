@@ -125,7 +125,7 @@ export async function importExternalTransactions(
 
       try {
         await db.$transaction(async (tx) => {
-          const existingTx = await tx.externalTransaction.findUnique({
+          let existingTx = await tx.externalTransaction.findUnique({
             where: {
               workspaceId_source_externalId: {
                 workspaceId,
@@ -134,6 +134,23 @@ export async function importExternalTransactions(
               },
             },
           });
+
+          // Compatibilidade retroativa: se não encontrou pela chave composta, busca por SOURCE_ID simples para migração
+          const rawSourceId = (raw.rawProviderData as any)?.SOURCE_ID;
+          if (!existingTx && rawSourceId && rawSourceId !== raw.externalId) {
+            const legacyTx = await tx.externalTransaction.findUnique({
+              where: {
+                workspaceId_source_externalId: {
+                  workspaceId,
+                  source,
+                  externalId: rawSourceId,
+                },
+              },
+            });
+            if (legacyTx) {
+              existingTx = legacyTx;
+            }
+          }
 
           if (existingTx) {
             const isSettlement = Boolean(
@@ -144,6 +161,7 @@ export async function importExternalTransactions(
             const shouldReactivate = isSettlement && isQuarantinedForUnconfirmed;
 
             const needsFinancialSync = isSettlement && (
+              existingTx.externalId !== raw.externalId ||
               Number(existingTx.amountCents) !== raw.amountCents ||
               Number(existingTx.netAmountCents) !== raw.netAmountCents ||
               existingTx.direction !== raw.direction ||
@@ -154,6 +172,7 @@ export async function importExternalTransactions(
             await tx.externalTransaction.update({
               where: { id: existingTx.id },
               data: {
+                externalId: raw.externalId,
                 direction: isSettlement ? raw.direction : existingTx.direction,
                 amountCents: isSettlement ? BigInt(raw.amountCents) : existingTx.amountCents,
                 feeCents: isSettlement ? BigInt(raw.feeCents ?? 0) : existingTx.feeCents,
@@ -558,6 +577,7 @@ export async function continueMercadoPagoSyncRun(
       }
 
       // 1.1 Recuperação de resultado remoto ambíguo: verificar se já existe relatório correspondente (processado ou em processamento) antes de emitir POST
+      let remoteLookupFailed = false;
       try {
         const listRes = await fetch("https://api.mercadopago.com/v1/account/settlement_report/list", {
           headers: { Authorization: `Bearer ${credentials.accessToken}` },
@@ -601,9 +621,25 @@ export async function continueMercadoPagoSyncRun(
               };
             }
           }
+        } else {
+          remoteLookupFailed = true;
         }
       } catch (ambiguousErr) {
+        remoteLookupFailed = true;
         console.warn("[TransactionsService] Verificação prévia de relatório existente falhou:", ambiguousErr);
+      }
+
+      // Fail-closed em recuperação ambígua: se a consulta remota falhou, não disparamos novo POST às cegas
+      if (remoteLookupFailed && !syncRun.remoteTaskId) {
+        return {
+          success: true,
+          status: "PROCESSING",
+          message: "Falha de comunicação temporária ao verificar relatórios no Mercado Pago. Aguardando próximo ciclo seguro sem emissão de POST duplicado.",
+          insertedCount: 0,
+          updatedCount: 0,
+          skippedCount: 0,
+          autoMatchedCount: 0,
+        };
       }
 
       // Se após a verificação prévia ainda não tiver remoteTaskId, emite a chamada POST oficial
