@@ -180,15 +180,14 @@ export async function POST(req: NextRequest) {
     const remoteOrder = await getOrderById({ accessToken: creds.accessToken, orderId: dataId });
 
     if (remoteOrder.success && remoteOrder.isPaid) {
-      if (!remoteOrder.paidAt || !remoteOrder.paymentId || remoteOrder.externalReference !== pixCharge.externalReference ||
-          classifyFixedChargePayment(Number(pixCharge.amountCents), remoteOrder.amountCents || 0) === "DIVERGENT") {
+      if (!remoteOrder.paidAt || !remoteOrder.paymentId || remoteOrder.externalReference !== pixCharge.externalReference) {
         await db.webhookEvent.update({ where: { id: webhookEvent.id }, data: { status: "FAILED", lastErrorCode: "INCOMPLETE_PAYMENT_EVIDENCE" } });
-        return NextResponse.json({ received: true, processed: false, reason: "Evidência oficial incompleta ou divergente" }, { status: 202 });
+        return NextResponse.json({ received: true, processed: false, reason: "Evidência oficial incompleta ou referência divergente" }, { status: 202 });
       }
       const paidAt = new Date(remoteOrder.paidAt);
 
       // BAIXA ATÔMICA DA PARCELA COM CLAIM EXCLUSIVO VIA SERVIÇO UNIFICADO (Correção L)
-      await settlePixChargeAtomic({
+      const settleResult = await settlePixChargeAtomic({
         pixChargeId: pixCharge.id,
         paidAt,
         actorType: "WEBHOOK",
@@ -196,6 +195,14 @@ export async function POST(req: NextRequest) {
         externalOrderId: dataId,
         paidAmountCents: remoteOrder.paidAmountCents,
       });
+
+      if (!settleResult.success) {
+        await db.webhookEvent.update({
+          where: { id: webhookEvent.id },
+          data: { status: "FAILED", lastErrorCode: "SETTLEMENT_ERROR" },
+        });
+        return NextResponse.json({ received: true, processed: false, reason: settleResult.error }, { status: 500 });
+      }
 
       await db.webhookEvent.update({
         where: { id: webhookEvent.id },
