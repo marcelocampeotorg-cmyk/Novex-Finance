@@ -373,3 +373,12 @@ Status: RESOLVIDO
 - **Causa:** As condições na Home apenas desviavam para alerta nos estados `DESCONECTADO` e `PENDENTE`.
 - **Correção:** Mapeamento visual estrito: `PROCESSANDO` exibe spinner de carregamento e texto "Sincronização em andamento..."; `FALHA` exibe badge vermelho com `AlertTriangle` e mensagem de erro; `CheckCircle2` verde é renderizado exclusivamente no status `SINCRONIZADO`.
 - **Teste:** Teste em `tests/forensic-finance-rules.test.js`.
+
+### ERR-055 — Quarentena permanente após prova oficial, risco de POST duplicado em processing e mutação de startedAt
+Status: RESOLVIDO
+- **Data:** 2026-08-30
+- **Área:** ingestão contábil / resiliência distribuída / integridade de auditoria
+- **Sintoma:** (1) Transações quarentenadas com motivo `UNCONFIRMED_PAYMENTS_API_IMPORT` não eram reativadas automaticamente se um Settlement Report posterior as trouxesse; (2) A checagem prévia de relatórios antes de POST só buscava `status === "processed"`, ignorando relatórios em `processing` e podendo gerar duplicidade; (3) O lease do claim atômico atualizava `SyncRun.startedAt`, corrompendo a marcação histórica de início do run.
+- **Causa:** Ausência de lógica de reativação condicional em `importExternalTransactions`, busca estrita por `processed` e uso indevido de `startedAt` como relógio de lease.
+- **Correção:** (1) Implementada reativação automática restrita ao motivo `UNCONFIRMED_PAYMENTS_API_IMPORT` quando comprovado por Settlement Report oficial, restaurando dados oficiais, liberando `LedgerEntry` (`excludedFromReports: false`) e emitindo `AuditLog` (`TRANSACTION_REACTIVATED_FROM_SETTLEMENT`); (2) Checagem prévia expandida para todos os status e retorno fail-closed `PROCESSING` sem novo POST se já houver task em processamento; (3) Lease migrado para `updatedAt`, preservando `startedAt` original imutável.
+- **Teste:** Testes em `tests/forensic-finance-rules.test.js` (itens 12.16, 12.17 e 12.18).

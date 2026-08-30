@@ -425,3 +425,98 @@ test("Item 12.15 — UI Home: PROCESSANDO e FALHA não exibem CheckCircle verde"
     "page.tsx deve renderizar CheckCircle2 exclusivamente no ramo de sucesso"
   );
 });
+
+test("Item 12.16 — Reativação de transação quarentenada por UNCONFIRMED_PAYMENTS_API_IMPORT em importação oficial do Settlement", () => {
+  const txServicePath = path.join(__dirname, "../src/server/services/transactions-service.ts");
+  const content = fs.readFileSync(txServicePath, "utf-8");
+
+  assert.match(
+    content,
+    /const isQuarantinedForUnconfirmed = existingTx\.quarantinedAt !== null && existingTx\.quarantineReason === "UNCONFIRMED_PAYMENTS_API_IMPORT"/,
+    "Deve identificar especificamente transações quarentenadas por UNCONFIRMED_PAYMENTS_API_IMPORT"
+  );
+  assert.match(
+    content,
+    /const shouldReactivate = isSettlement && isQuarantinedForUnconfirmed/,
+    "Somente deve reativar se for importação do Settlement Report oficial"
+  );
+  assert.match(
+    content,
+    /quarantinedAt:\s*shouldReactivate\s*\?\s*null\s*:\s*existingTx\.quarantinedAt/,
+    "Deve limpar quarantinedAt ao reativar"
+  );
+  assert.match(
+    content,
+    /action:\s*"TRANSACTION_REACTIVATED_FROM_SETTLEMENT"/,
+    "Deve registrar AuditLog de reativação oficial"
+  );
+});
+
+test("Item 12.17 — Relatório remoto ambíguo em estado 'processing' evita novo POST e retorna PROCESSING", async () => {
+  let postCalls = 0;
+  const originalFetch = global.fetch;
+
+  global.fetch = async (url, options = {}) => {
+    if (url.includes("/settlement_report/list")) {
+      return {
+        ok: true,
+        json: async () => [
+          {
+            id: "TASK_PROCESSING_555",
+            status: "processing", // em andamento no Mercado Pago
+            file_name: null,
+            begin_date: "2026-08-28T00:00:00Z",
+            end_date: "2026-08-30T00:00:00Z",
+          },
+        ],
+      };
+    }
+    if (url.endsWith("/settlement_report") && options.method === "POST") {
+      postCalls++;
+      return { ok: true, json: async () => ({ id: "TASK_DUPLICADA" }) };
+    }
+    return { ok: true, json: async () => ({}) };
+  };
+
+  try {
+    const listRes = await fetch("https://api.mercadopago.com/v1/account/settlement_report/list", {
+      headers: { Authorization: "Bearer TEST" },
+    });
+    const list = await listRes.json();
+    const requestedBeginIso = new Date("2026-08-28T00:00:00Z").toISOString().replace(/\.\d{3}Z$/, "Z");
+    const requestedEndIso = new Date("2026-08-30T00:00:00Z").toISOString().replace(/\.\d{3}Z$/, "Z");
+
+    const existingReport = list.find((r) => {
+      if (!r.begin_date || !r.end_date) return false;
+      const repBeginIso = new Date(r.begin_date).toISOString().replace(/\.\d{3}Z$/, "Z");
+      const repEndIso = new Date(r.end_date).toISOString().replace(/\.\d{3}Z$/, "Z");
+      return repBeginIso === requestedBeginIso && repEndIso === requestedEndIso;
+    });
+
+    assert.ok(existingReport, "Deve encontrar o relatório existente");
+    assert.strictEqual(existingReport.status, "processing");
+    const isReady = existingReport.status === "processed" && Boolean(existingReport.file_name);
+    assert.strictEqual(isReady, false, "Não deve considerar pronto");
+
+    // Como encontrou o relatório em processamento, não deve emitir POST
+    assert.strictEqual(postCalls, 0, "Nenhum POST deve ser emitido quando já existe relatório em processamento");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("Item 12.18 — Preservação de startedAt: Lease de claim utiliza updatedAt", () => {
+  const txServicePath = path.join(__dirname, "../src/server/services/transactions-service.ts");
+  const content = fs.readFileSync(txServicePath, "utf-8");
+
+  assert.match(
+    content,
+    /errorCode:\s*"REQUESTING_REPORT",\s*updatedAt:\s*\{\s*lt:\s*staleClaimThreshold\s*\}/,
+    "Claim condicional deve usar updatedAt para lease sem sobrescrever startedAt"
+  );
+  assert.strictEqual(
+    content.includes("startedAt: nowClaim"),
+    false,
+    "startedAt não deve ser sobrescrito durante renovação do claim"
+  );
+});

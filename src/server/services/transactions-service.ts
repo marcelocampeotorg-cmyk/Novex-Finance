@@ -140,11 +140,15 @@ export async function importExternalTransactions(
               raw.rawProviderData &&
               ((raw.rawProviderData as any).SETTLEMENT_DATE || (raw.rawProviderData as any).SETTLEMENT_NET_AMOUNT || raw.type === "SETTLEMENT")
             );
+            const isQuarantinedForUnconfirmed = existingTx.quarantinedAt !== null && existingTx.quarantineReason === "UNCONFIRMED_PAYMENTS_API_IMPORT";
+            const shouldReactivate = isSettlement && isQuarantinedForUnconfirmed;
+
             const needsFinancialSync = isSettlement && (
               Number(existingTx.amountCents) !== raw.amountCents ||
               Number(existingTx.netAmountCents) !== raw.netAmountCents ||
               existingTx.direction !== raw.direction ||
-              existingTx.occurredAt.getTime() !== occurredDate.getTime()
+              existingTx.occurredAt.getTime() !== occurredDate.getTime() ||
+              shouldReactivate
             );
 
             await tx.externalTransaction.update({
@@ -162,10 +166,44 @@ export async function importExternalTransactions(
                 txid: raw.txid || existingTx.txid || null,
                 rawReference: raw.rawReference || existingTx.rawReference || null,
                 rawProviderData: raw.rawProviderData ? (raw.rawProviderData as any) : existingTx.rawProviderData || undefined,
+                rawEnrichmentData: shouldReactivate ? (existingTx.rawEnrichmentData || existingTx.rawProviderData || undefined) : undefined,
+                quarantinedAt: shouldReactivate ? null : existingTx.quarantinedAt,
+                quarantineReason: shouldReactivate ? null : existingTx.quarantineReason,
               },
             });
 
-            if (needsFinancialSync) {
+            if (shouldReactivate) {
+              await tx.ledgerEntry.updateMany({
+                where: { externalTransactionId: existingTx.id },
+                data: {
+                  direction: raw.direction,
+                  amountCents: BigInt(raw.netAmountCents),
+                  occurredAt: occurredDate,
+                  excludedFromReports: false,
+                },
+              });
+
+              await tx.auditLog.create({
+                data: {
+                  workspaceId,
+                  actorType: "SYSTEM",
+                  actorId: "SYSTEM",
+                  action: "TRANSACTION_REACTIVATED_FROM_SETTLEMENT",
+                  entityType: "ExternalTransaction",
+                  entityId: existingTx.id,
+                  metadata: {
+                    externalId: raw.externalId,
+                    reactivatedAt: new Date().toISOString(),
+                    reason: "Transação comprovada oficialmente em relatório de liquidação do Mercado Pago",
+                    settlementData: {
+                      amountCents: raw.amountCents,
+                      netAmountCents: raw.netAmountCents,
+                      direction: raw.direction,
+                    },
+                  },
+                },
+              });
+            } else if (needsFinancialSync) {
               await tx.ledgerEntry.updateMany({
                 where: { externalTransactionId: existingTx.id },
                 data: {
@@ -486,7 +524,7 @@ export async function continueMercadoPagoSyncRun(
 
     // 1. Solicitar geração assíncrona do Settlement Report se ainda não tiver ID remoto
     if (!syncRun.remoteTaskId) {
-      // Atomic claim com lease de 2 minutos para permitir recuperação de claim abandonado
+      // Atomic claim com lease de 2 minutos baseado em updatedAt (preservando startedAt imutável)
       const LEASE_MS = 2 * 60 * 1000;
       const nowClaim = new Date();
       const staleClaimThreshold = new Date(nowClaim.getTime() - LEASE_MS);
@@ -497,12 +535,11 @@ export async function continueMercadoPagoSyncRun(
           remoteTaskId: null,
           OR: [
             { errorCode: { not: "REQUESTING_REPORT" } },
-            { errorCode: "REQUESTING_REPORT", startedAt: { lt: staleClaimThreshold } },
+            { errorCode: "REQUESTING_REPORT", updatedAt: { lt: staleClaimThreshold } },
           ],
         },
         data: {
           errorCode: "REQUESTING_REPORT",
-          startedAt: nowClaim,
         },
       });
 
@@ -520,7 +557,7 @@ export async function continueMercadoPagoSyncRun(
         };
       }
 
-      // 1.1 Recuperação de resultado remoto ambíguo: verificar se já existe relatório correspondente antes de emitir POST
+      // 1.1 Recuperação de resultado remoto ambíguo: verificar se já existe relatório correspondente (processado ou em processamento) antes de emitir POST
       try {
         const listRes = await fetch("https://api.mercadopago.com/v1/account/settlement_report/list", {
           headers: { Authorization: `Bearer ${credentials.accessToken}` },
@@ -531,25 +568,38 @@ export async function continueMercadoPagoSyncRun(
           const requestedEndIso = new Date(endDate).toISOString().replace(/\.\d{3}Z$/, "Z");
 
           const existingReport = Array.isArray(list) ? list.find((r: any) => {
-            if (r.status !== "processed" || !r.file_name || !r.begin_date || !r.end_date) return false;
+            if (!r.begin_date || !r.end_date) return false;
             const repBeginIso = new Date(r.begin_date).toISOString().replace(/\.\d{3}Z$/, "Z");
             const repEndIso = new Date(r.end_date).toISOString().replace(/\.\d{3}Z$/, "Z");
             return repBeginIso === requestedBeginIso && repEndIso === requestedEndIso;
           }) : null;
 
           if (existingReport) {
+            const isReady = existingReport.status === "processed" && Boolean(existingReport.file_name);
             await db.syncRun.update({
               where: { id: syncRun.id },
               data: {
                 remoteTaskId: String(existingReport.id),
-                remoteFileName: existingReport.file_name,
+                remoteFileName: isReady ? existingReport.file_name : null,
                 remoteReportId: String(existingReport.id),
                 errorCode: runPurpose,
               },
             });
             syncRun.remoteTaskId = String(existingReport.id);
-            syncRun.remoteFileName = existingReport.file_name;
+            syncRun.remoteFileName = isReady ? existingReport.file_name : null;
             syncRun.remoteReportId = String(existingReport.id);
+
+            if (!isReady) {
+              return {
+                success: true,
+                status: "PROCESSING",
+                message: "Relatório remoto já solicitado em processamento no Mercado Pago. Aguardando conclusão.",
+                insertedCount: 0,
+                updatedCount: 0,
+                skippedCount: 0,
+                autoMatchedCount: 0,
+              };
+            }
           }
         }
       } catch (ambiguousErr) {
