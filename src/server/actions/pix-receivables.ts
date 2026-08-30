@@ -5,7 +5,7 @@ import { db } from "@/server/db";
 import { revalidatePath } from "next/cache";
 import { requireAuthenticatedWorkspace } from "@/server/auth-context";
 import { decryptCredentials, parseMercadoPagoCredentials } from "@/lib/server/credentials-crypto";
-import { createPixOrder, getOrderById } from "@/integrations/mercado-pago/orders-client";
+import { createPixOrder, getOrderById, getOrderByExternalReference } from "@/integrations/mercado-pago/orders-client";
 import { assertReceivableDirection, classifyFixedChargePayment, getFixedChargeAmount, getPixChargeIdempotencyKey } from "@/domain/pix-receivable";
 import { settlePixChargeAtomic } from "@/server/services/pix-settlement-service";
 
@@ -138,7 +138,7 @@ export async function generateReceivablePixCharge(input: {
   // 6. Verificar se já existe uma cobrança PENDING válida reutilizável
   // a) Expirar as PENDING que já passaram da validade temporal
   const pastPending = installment.pixCharges.filter(
-    (c) => (c.status === "PENDING" || c.status === "ACTION_REQUIRED") && c.expiresAt && c.expiresAt <= new Date()
+    (c) => c.status === "PENDING" && c.expiresAt && c.expiresAt <= new Date()
   );
   if (pastPending.length > 0) {
     await db.pixCharge.updateMany({
@@ -184,15 +184,67 @@ export async function generateReceivablePixCharge(input: {
         title: installment.financialItem.title,
         error: stalledCharge.status === "ACTION_REQUIRED" ? "Aguardando confirmação do provedor." : undefined,
       };
-    } else if (ageMs >= 86400000) {
-      // Passou de 24h: idempotencyKey do MP expirou, é seguro marcar como FAILED para gerar nova tentativa
-      await db.pixCharge.update({
-        where: { id: stalledCharge.id },
-        data: { status: "FAILED", statusDetail: "Timeout de 24h na criação ambígua" },
-      });
-      stalledCharge.status = "FAILED";
     }
-    // Caso contrário (1 min a 24h), nós reaproveitaremos `stalledCharge` e faremos o retry do POST.
+
+    // Antes de retentar POST, verificar se a Order já existe no Mercado Pago usando externalReference
+    let accessToken: string;
+    try {
+      const creds = parseMercadoPagoCredentials(integration.encryptedCredentials!);
+      accessToken = creds.accessToken;
+    } catch (e) {
+      return { success: false, status: "FAILED", isPaid: false, error: "Erro ao descriptografar credencial." };
+    }
+
+    const searchResult = await getOrderByExternalReference({ accessToken, externalReference: stalledCharge.externalReference! });
+
+    if (searchResult.success && searchResult.orderId) {
+      const updatedCharge = await db.pixCharge.update({
+        where: { id: stalledCharge.id },
+        data: {
+          externalOrderId: searchResult.orderId,
+          status: searchResult.status === "processed" || searchResult.status === "accredited" ? "PAID" : "PENDING",
+          qrCode: searchResult.qrCode || null,
+          ticketUrl: searchResult.ticketUrl || null,
+        },
+      });
+      return {
+        success: true,
+        pixChargeId: updatedCharge.id,
+        externalOrderId: updatedCharge.externalOrderId || undefined,
+        status: updatedCharge.status,
+        isPaid: updatedCharge.status === "PAID",
+        amountCents: Number(updatedCharge.amountCents),
+        qrCode: updatedCharge.qrCode || undefined,
+        ticketUrl: updatedCharge.ticketUrl || undefined,
+        debtorName: installment.financialItem.contact?.name || "Devedor",
+        title: installment.financialItem.title,
+      };
+    } else if (searchResult.notFound) {
+      // Order confirmadamente NÃO existe no MP.
+      if (ageMs >= 86400000) {
+        // Passou de 24h: idempotencyKey do MP expirou. É seguro marcar FAILED e recomeçar do zero.
+        await db.pixCharge.update({
+          where: { id: stalledCharge.id },
+          data: { status: "FAILED", statusDetail: "Timeout de 24h na criação ambígua" },
+        });
+        stalledCharge.status = "FAILED";
+      }
+      // Se < 24h, o código prossegue para re-utilizar stalledCharge fazendo POST
+    } else {
+      // Falha ambígua na consulta da Order (timeout, etc)
+      if (stalledCharge.status !== "ACTION_REQUIRED") {
+        await db.pixCharge.update({
+          where: { id: stalledCharge.id },
+          data: { status: "ACTION_REQUIRED", statusDetail: "Erro ao consultar order ambígua: " + (searchResult.errorMessage || "") },
+        });
+      }
+      return {
+        success: false,
+        status: "ACTION_REQUIRED",
+        isPaid: false,
+        error: "Resultado remoto ambíguo. Não foi possível confirmar se a cobrança foi criada no provedor.",
+      };
+    }
   }
 
   // 7. Descriptografar Access Token
@@ -410,9 +462,8 @@ export async function getReceivablePixChargeStatus(input: { pixChargeId: string 
       }
 
       if (remoteOrder.success && remoteOrder.isPaid) {
-        if (!remoteOrder.paymentId || remoteOrder.externalReference !== pixCharge.externalReference ||
-            classifyFixedChargePayment(Number(pixCharge.amountCents), remoteOrder.paidAmountCents || remoteOrder.amountCents || 0) === "DIVERGENT") {
-          return { success: false, status: "INCOMPLETE", isPaid: false, error: "Order processada sem evidências oficiais completas ou com valor/referência divergente." };
+        if (!remoteOrder.paymentId || remoteOrder.externalReference !== pixCharge.externalReference) {
+          return { success: false, status: "INCOMPLETE", isPaid: false, error: "Order processada sem evidências oficiais completas ou com referência divergente." };
         }
         // LIQUIDAÇÃO ATÔMICA DA PARCELA VIA CLAIM UNIFICADO (Correção L — polling)
         if (!remoteOrder.paidAt) {

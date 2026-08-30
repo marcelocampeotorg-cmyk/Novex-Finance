@@ -38,6 +38,10 @@ export interface GetOrderResult {
   statusDetail?: string;
   errorCode?: string;
   errorMessage?: string;
+  qrCode?: string;
+  qrCodeBase64?: string;
+  ticketUrl?: string;
+  notFound?: boolean;
 }
 
 /**
@@ -244,5 +248,113 @@ export async function getOrderById(input: { accessToken: string; orderId: string
       return { success: false, errorCode: "TIMEOUT", errorMessage: "Timeout ao consultar Order." };
     }
     return { success: false, errorCode: "NETWORK_ERROR", errorMessage: "Erro de rede ao consultar Order." };
+  }
+}
+
+/**
+ * Consulta a Order no Mercado Pago via GET https://api.mercadopago.com/v1/orders com filtros.
+ */
+export async function getOrderByExternalReference(input: { accessToken: string; externalReference: string }): Promise<GetOrderResult> {
+  const { accessToken, externalReference } = input;
+
+  if (!accessToken || !externalReference) {
+    return { success: false, errorCode: "INVALID_PARAMS", errorMessage: "Parâmetros inválidos para consulta da Order." };
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+  try {
+    const url = new URL("https://api.mercadopago.com/v1/orders");
+    url.searchParams.append("external_reference", externalReference);
+    url.searchParams.append("limit", "1");
+
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken.trim()}`,
+        Accept: "application/json",
+      },
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    const data = await response.json();
+
+    if (response.status === 200) {
+      const results = data.results || data.elements || [];
+      if (results.length === 0) {
+         return { success: false, notFound: true, errorMessage: "Order não encontrada com a referência fornecida." };
+      }
+
+      const orderData = results[0];
+      const paymentsArray = orderData.transactions?.payments || orderData.payments || [];
+      const paymentObj = paymentsArray[0];
+
+      const orderStatus = String(orderData.status || "").toLowerCase();
+      const paymentStatus = String(paymentObj?.status || "").toLowerCase();
+      const statusDetail = String(paymentObj?.status_detail || "").toLowerCase();
+
+      const isPaid = (orderStatus === "processed" || orderStatus === "accredited") &&
+        (paymentStatus === "processed" || paymentStatus === "accredited") &&
+        (statusDetail === "accredited" || statusDetail === "processed");
+
+      const paidAt = paymentObj?.date_approved || paymentObj?.date_processed || undefined;
+      const providerUpdatedAt = orderData.last_updated_date || orderData.created_date || undefined;
+
+      const amountCents = paymentObj?.amount != null ? Math.round(Number(paymentObj.amount) * 100) : (orderData.total_amount != null ? Math.round(Number(orderData.total_amount) * 100) : undefined);
+      const paidAmountCents = paymentObj?.paid_amount != null ? Math.round(Number(paymentObj.paid_amount) * 100) : amountCents;
+
+      const qrCode =
+        paymentObj?.payment_method?.qr_code ||
+        paymentObj?.point_of_interaction?.transaction_data?.qr_code ||
+        orderData.qr_code ||
+        undefined;
+
+      let qrCodeBase64 =
+        paymentObj?.payment_method?.qr_code_base64 ||
+        paymentObj?.point_of_interaction?.transaction_data?.qr_code_base64 ||
+        undefined;
+
+      if (qrCodeBase64 && !qrCodeBase64.startsWith("data:image")) {
+        qrCodeBase64 = `data:image/png;base64,${qrCodeBase64}`;
+      }
+
+      const ticketUrl =
+        paymentObj?.payment_method?.ticket_url ||
+        paymentObj?.ticket_url ||
+        orderData.ticket_url ||
+        undefined;
+
+      return {
+        success: true,
+        orderId: String(orderData.id),
+        status: orderStatus,
+        isPaid,
+        paidAt,
+        providerUpdatedAt,
+        paymentId: paymentObj?.id ? String(paymentObj.id) : undefined,
+        externalReference: orderData.external_reference || undefined,
+        statusDetail,
+        amountCents,
+        paidAmountCents,
+        qrCode,
+        qrCodeBase64,
+        ticketUrl,
+      };
+    }
+
+    return {
+      success: false,
+      errorCode: `HTTP_${response.status}`,
+      errorMessage: data.message || `Erro ${response.status} ao consultar Order via busca.`,
+    };
+  } catch (error: any) {
+    clearTimeout(timeoutId);
+    if (error.name === "AbortError") {
+      return { success: false, errorCode: "TIMEOUT", errorMessage: "Timeout ao consultar Order via busca." };
+    }
+    return { success: false, errorCode: "NETWORK_ERROR", errorMessage: "Erro de rede ao consultar Order via busca." };
   }
 }
