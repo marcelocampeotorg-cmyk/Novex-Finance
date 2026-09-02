@@ -3,7 +3,7 @@
 Este é o documento de maior precedência.
 
 1. Produto: NOVEX Finance / NOVEX.
-2. Domínio alvo: `www.app.novexfinance.com.br`.
+2. Domínio alvo: `finance.novexbr.com.br` (subdomínio exclusivo da zona `novexbr.com.br`).
 3. Uso atual: uma única pessoa. Não projetar telas ou permissões multiusuário como requisito.
 4. Interface: desktop e mobile; site instalável como PWA.
 5. Paleta: identidade NOVEX/NOVEXBR fornecida pelo usuário.

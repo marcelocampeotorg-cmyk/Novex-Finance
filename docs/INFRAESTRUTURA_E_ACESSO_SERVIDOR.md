@@ -2,12 +2,12 @@
 
 > **Documento de Referência Técnica para Engenharia e Agentes (Codex / Antigravity)**
 > **Atualizado em:** 2026-09-02
-> **Domínio Oficial e Canônico:** `https://www.app.novexfinance.com.br` (Obrigatório o uso de `www.`)
-
+> **Domínio Oficial e Canônico:** `https://finance.novexbr.com.br`
+ 
 ---
-
+ 
 ## 1. Dados de Conexão e Acesso ao Servidor
-
+ 
 * **Host / IP:** `192.168.4.12`
 * **Porta SSH:** `22`
 * **Usuário:** `servidor`
@@ -18,11 +18,11 @@
 * **Permissões do Usuário `servidor`:**
   * Pertence ao grupo `docker` (executa `docker` e `docker compose` diretamente sem necessidade de `sudo`);
   * Permissão de leitura e escrita completa no diretório da sua home.
-
+ 
 ---
-
+ 
 ## 2. Caminhos e Diretórios no Servidor
-
+ 
 * **Diretório Raiz do NOVEX Finance:**
   `/home/servidor/Área de trabalho/Sistemas/novex finance`
 * **Arquivo de Configuração de Produção:**
@@ -33,16 +33,16 @@
   `/home/servidor/Área de trabalho/Sistemas/novex finance/backups`
 * **Scripts Operacionais:**
   `/home/servidor/Área de trabalho/Sistemas/novex finance/scripts/` (`deploy-server.sh`, `backup-db.sh`, `backup-loop.sh`, `restore-db.sh`)
-
+ 
 ---
-
+ 
 ## 3. Princípio Rígido de Isolamento Arquitetural
-
+ 
 O servidor hospeda múltiplos sistemas em produção que **NUNCA PODEM SER AFETADOS**:
 * **Novex Oficina / SaaS:** Containers `saas-oficina-*` na rede `novexoficina_saas_network` (portas 8080, 3000, 5434, 6381, 8082);
 * **Master Novex:** Containers `novex-master-*` (portas 3100, 5433, 6380);
 * **Ponto Digital:** Nginx nativo na porta 5001.
-
+ 
 ### Regras de Isolamento do NOVEX Finance:
 1. **Project Name Docker Exclusivo:** `novexfinance-prod` (definido no `docker-compose.prod.yml`);
 2. **Redes Próprias e Isoladas:**
@@ -56,25 +56,23 @@ O servidor hospeda múltiplos sistemas em produção que **NUNCA PODEM SER AFETA
    * **App Next.js:** Apenas em loopback `127.0.0.1:3001` (porta 3001);
    * **Evolution API:** Apenas em loopback `127.0.0.1:8081` (porta 8081);
    * **PostgreSQL e Redis:** Portas internas da rede Docker, **SEM bind público ou de host**.
-
+ 
 ---
-
+ 
 ## 4. Domínio Oficial, DNS e Cloudflare Zero Trust
-
-* **Domínio Oficial Único:** `www.app.novexfinance.com.br`
-* **Proibição Absoluta:** Nunca utilizar `app.novexfinance.com.br` (sem www), `finance.novexbr.com.br` ou qualquer outro domínio.
-* **Zona no Cloudflare:** `novexfinance.com.br`
-* **Registrador Atual:** Hostinger (`dns.hostinger.com` / SOA serial `2026082701`).
-* **Delegação de DNS (Nameservers):**
-  * Para ativar o roteamento Cloudflare e o SSL Edge, os nameservers na Hostinger devem ser alterados de `aurora.dns-parking.com` e `nebula.dns-parking.com` para os nameservers oficiais atribuídos pela Cloudflare na zona `novexfinance.com.br`.
-
+ 
+* **Domínio Oficial Único:** `https://finance.novexbr.com.br`
+* **Zona no Cloudflare:** `novexbr.com.br` (zona já ativa e gerenciada)
+ 
 ### Configuração do Cloudflare Zero Trust Tunnel (Remotely Managed)
 * **Account Tag:** `820b26ab31089eb3d67b2c9ffb0cebcd`
 * **Tunnel ID:** `658e11b9-3278-4908-a602-fa15fcc34530`
 * **Serviço no Host Linux:** `cloudflared.service` (Systemd gerenciado remotamente)
 * **Painel de Gerenciamento:** [Cloudflare Zero Trust](https://one.dash.cloudflare.com) -> Networks -> Tunnels
 * **Public Hostname Configurado:**
-  * **Public Hostname:** `www.app.novexfinance.com.br`
+  * **Public Hostname:** `finance.novexbr.com.br`
+  * **Subdomain:** `finance`
+  * **Domain:** `novexbr.com.br`
   * **Service Type:** `HTTP`
   * **URL de Destino:** `127.0.0.1:3001` (ou `localhost:3001`)
   * **Proxy & HTTPS:** Ativo (gerenciado automaticamente pelo Cloudflare Edge com certificado SSL Universal).
