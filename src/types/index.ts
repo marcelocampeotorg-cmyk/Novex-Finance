@@ -110,6 +110,9 @@ export interface BalanceSummaryDTO {
   manualBalanceAt: string | null;
   mercadoPagoOfficialBalanceCents: number | null;
   mercadoPagoOfficialBalanceAt: string | null;
+  mercadoPagoAnchorBalanceCents: number | null;
+  mercadoPagoAnchorAt: string | null;
+  mercadoPagoBalanceBasis: "RELEASE_REPORT" | "RELEASE_PLUS_ACCOUNT_MONEY" | null;
   mercadoPagoBalanceStatus: "CONFIRMED" | "UNAVAILABLE" | "RECONCILING";
   consolidatedBalanceCents: number | null;
   financeMode: "MANUAL" | "HYBRID";
@@ -142,4 +145,3 @@ export interface BalanceSummaryDTO {
     officialBalanceStatus: string;
   }[];
 }
-

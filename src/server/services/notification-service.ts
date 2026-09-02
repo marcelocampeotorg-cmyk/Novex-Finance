@@ -268,15 +268,30 @@ export async function fetchEvolutionQRCode() {
 /**
  * Disparar lembrete ou cobrança de devedor via WhatsApp (Regras 35 & 38: Servidor resolve credenciais e registra em WhatsAppDeliveryLog)
  */
-export async function sendWhatsAppDebtorReminder(input: { pixChargeId: string; messageStage: "MANUAL" | "DUE" | "OVERDUE" }) {
+export type WhatsAppReminderStage = "MANUAL" | "DUE" | "OVERDUE" | `DUE_SOON_${number}D`;
+
+async function sendWhatsAppDebtorReminderForWorkspace(
+  workspaceId: string,
+  input: { pixChargeId: string; messageStage: WhatsAppReminderStage },
+) {
   try {
-    const { workspaceId } = await requireAuthenticatedWorkspace();
     const charge = await db.pixCharge.findFirst({
       where: { id: input.pixChargeId, workspaceId },
       include: { installment: { include: { financialItem: { include: { contact: true } } } } },
     });
     if (!charge?.qrCode || !charge.installment.financialItem.contact?.phone) throw new Error("Cobrança Pix/telefone reais não encontrados.");
-    
+
+    const creds = await resolveEvolutionCredentials(workspaceId);
+    const { evolutionAPIClient } = await import("@/integrations/evolution-api/client");
+    const connection = await evolutionAPIClient.checkConnectionState(creds.baseUrl, creds.apiKey, creds.instanceName);
+    if (!connection.success || connection.state !== "open") {
+      return { success: false, error: connection.error || "WhatsApp ainda não está conectado (estado open ausente)." };
+    }
+    const safeSettings = await evolutionAPIClient.ensureOutboundOnlySettings(creds.baseUrl, creds.apiKey, creds.instanceName);
+    if (!safeSettings.success) {
+      return { success: false, error: safeSettings.error || "Não foi possível aplicar as configurações seguras da instância." };
+    }
+
     const dedupeKey = `whatsapp:${workspaceId}:${charge.id}:${input.messageStage}`;
 
     // Item 3: Atomic claim exclusivity
@@ -287,13 +302,23 @@ export async function sendWhatsAppDebtorReminder(input: { pixChargeId: string; m
         return { success: true, messageId: existingLog.remoteMessageId, alreadySent: true };
       }
       if (existingLog.status === "SENDING") {
-        return { success: false, error: "Envio de cobrança já em andamento por outro processo." };
+        const leaseExpired = existingLog.lastAttemptAt.getTime() <= Date.now() - 10 * 60 * 1000;
+        if (!leaseExpired) return { success: false, error: "Envio de cobrança já em andamento por outro processo." };
+        const reclaimed = await db.whatsAppDeliveryLog.updateMany({
+          where: { dedupeKey, status: "SENDING", lastAttemptAt: existingLog.lastAttemptAt },
+          data: { lastAttemptAt: new Date(), attemptCount: { increment: 1 } },
+        });
+        if (reclaimed.count === 0) return { success: false, error: "Outra tentativa retomou este envio." };
       }
       if (existingLog.status === "FAILED") {
+        if (existingLog.attemptCount >= 3) return { success: false, error: "Limite de 3 tentativas atingido; reenvio manual necessário." };
+        if (existingLog.nextRetryAt && existingLog.nextRetryAt > new Date()) {
+          return { success: false, error: `Nova tentativa permitida após ${existingLog.nextRetryAt.toISOString()}.` };
+        }
         // Transição atômica FAILED -> SENDING
         const claim = await db.whatsAppDeliveryLog.updateMany({
-          where: { dedupeKey, status: "FAILED" },
-          data: { status: "SENDING", attemptCount: { increment: 1 } },
+          where: { dedupeKey, status: "FAILED", attemptCount: { lt: 3 } },
+          data: { status: "SENDING", attemptCount: { increment: 1 }, lastAttemptAt: new Date(), nextRetryAt: null },
         });
         if (claim.count === 0) {
           return { success: false, error: "Outra tentativa de envio já foi iniciada por outro processo." };
@@ -312,6 +337,7 @@ export async function sendWhatsAppDebtorReminder(input: { pixChargeId: string; m
             dedupeKey,
             status: "SENDING",
             attemptCount: 1,
+            lastAttemptAt: new Date(),
           },
         });
       } catch (e: any) {
@@ -321,9 +347,6 @@ export async function sendWhatsAppDebtorReminder(input: { pixChargeId: string; m
         throw e;
       }
     }
-
-    const creds = await resolveEvolutionCredentials(workspaceId);
-    const { evolutionAPIClient } = await import("@/integrations/evolution-api/client");
 
     const result = await evolutionAPIClient.sendPixChargeReminder({
       debtorName: charge.installment.financialItem.contact.name,
@@ -343,6 +366,7 @@ export async function sendWhatsAppDebtorReminder(input: { pixChargeId: string; m
         remoteMessageId: result.messageId || null,
         status: result.success ? "SENT" : "FAILED",
         errorMessage: result.success ? null : result.error || "Falha no envio",
+        nextRetryAt: result.success ? null : new Date(Date.now() + 15 * 60 * 1000),
         sentAt: result.success ? new Date() : undefined,
       },
     });
@@ -352,6 +376,58 @@ export async function sendWhatsAppDebtorReminder(input: { pixChargeId: string; m
     console.error("Erro ao enviar lembrete WhatsApp:", error);
     return { success: false, error: error.message };
   }
+}
+
+export async function sendWhatsAppDebtorReminder(input: { pixChargeId: string; messageStage: WhatsAppReminderStage }) {
+  const { workspaceId } = await requireAuthenticatedWorkspace();
+  return sendWhatsAppDebtorReminderForWorkspace(workspaceId, input);
+}
+
+export async function processAutomaticWhatsAppCollectionsForWorkspace(
+  workspaceId: string,
+  alerts?: NotificationAlert[],
+) {
+  const rule = await getNotificationRuleForWorkspace(workspaceId);
+  if (!rule.enabled || !rule.channels.includes("WHATSAPP")) return { attempted: 0, sent: 0, failed: 0 };
+
+  const localHour = Number(new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    hour: "2-digit",
+    hour12: false,
+  }).format(new Date()));
+  if (localHour < rule.hour) return { attempted: 0, sent: 0, failed: 0 };
+
+  const eligibleAlerts = (alerts || await processNotificationAlertsForWorkspace(workspaceId))
+    .filter((alert) => alert.direction === "RECEIVABLE");
+  let attempted = 0;
+  let sent = 0;
+  let failed = 0;
+
+  for (const alert of eligibleAlerts) {
+    const charge = await db.pixCharge.findFirst({
+      where: {
+        workspaceId,
+        installmentId: alert.installmentId,
+        status: { in: ["PENDING", "ACTION_REQUIRED"] },
+        qrCode: { not: null },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+    if (!charge) continue;
+
+    const messageStage: WhatsAppReminderStage = alert.type === "OVERDUE"
+      ? "OVERDUE"
+      : alert.type === "DUE_TODAY"
+      ? "DUE"
+      : `DUE_SOON_${alert.daysDiff}D`;
+    attempted++;
+    const result = await sendWhatsAppDebtorReminderForWorkspace(workspaceId, { pixChargeId: charge.id, messageStage });
+    if (result.success) sent++;
+    else failed++;
+  }
+
+  return { attempted, sent, failed };
 }
 
 export async function sendNeutralWhatsAppTest(input: { phone: string }) {
@@ -371,6 +447,7 @@ export async function sendNeutralWhatsAppTest(input: { phone: string }) {
       dedupeKey: `whatsapp-test:${workspaceId}:${input.phone}:${new Date().toISOString().slice(0, 10)}`,
       remoteMessageId: result.messageId || null, status: result.success ? "SENT" : "FAILED",
       errorMessage: result.success ? null : result.error || "Falha no envio",
+      sentAt: result.success ? new Date() : null,
     }});
     return result;
   } catch (error: any) {

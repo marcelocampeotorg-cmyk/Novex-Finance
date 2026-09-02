@@ -16,6 +16,8 @@ Manter saldos por fonte sem chamar a soma de um histórico incompleto de saldo a
 - Nenhum ajuste manual pode sobrescrever seu saldo ou seus fatos.
 - Movimentação líquida importada é fluxo conhecido, não saldo atual.
 - Saldo disponível somente é oficial quando um relatório/âncora oficial validado fornecer valor e corte temporal verificáveis.
+- A âncora oficial é o `BALANCE_AMOUNT` mais recente do Relatório de Liberações, persistido com o corte devolvido pela task. `total` é resultado líquido de subtotais e não pode ser chamado de saldo.
+- O saldo operacional atualizado pode ser âncora + impactos `SETTLEMENT_NET_AMOUNT` posteriores, somente com cobertura contínua do Dinheiro em Conta até o horário exibido.
 
 ## Regras
 - Toda movimentação real altera a movimentação líquida conhecida. Saldo absoluto somente existe quando uma fonte oficial ou uma âncora com cobertura contínua suficiente o comprovar.
@@ -41,9 +43,9 @@ A UI deve distinguir:
 - contas a receber futuras;
 - projeção.
 
-O total consolidado só existe quando todos os saldos integrantes estão comprovados. Se o saldo Mercado Pago estiver indisponível, mostrar as contas separadas e omitir o total geral.
+No modo Manual, o saldo da conta geral é o total disponível do modo. No modo Híbrido, o total consolidado só existe quando o saldo manual e o saldo oficial Mercado Pago estiverem comprovados. Se o saldo Mercado Pago estiver indisponível, mostrar as contas separadas e omitir o total geral.
 
-Não chamar “saldo em tempo real” se a fonte real for relatório assíncrono. Exibir última atualização.
+Não chamar “saldo em tempo real” se a fonte real for relatório assíncrono. Exibir “Saldo disponível em <horário do corte>”, geração do relatório, última sincronização das movimentações e eventual divergência separadamente.
 
 ## Auditoria
 Correções de classificação não devem reescrever o valor original. Ajustes extraordinários precisam de trilha de auditoria e não podem ser usados como atalho para esconder falha de sincronização.

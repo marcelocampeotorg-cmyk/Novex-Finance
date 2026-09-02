@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 
 import { formatCurrency, formatDate } from "@/lib/formatters";
+import { formatTransactionDisplay } from "@/lib/transaction-presentation";
 import { FinancialItemDTO, InstallmentDTO, BalanceSummaryDTO } from "@/types";
 import {
   ResponsiveContainer,
@@ -216,13 +217,15 @@ export default function DashboardPage() {
         }
       />
 
-      {/* Grid de Cards Métricos Principais */}
+      {/* Grid de Cards Métricos Principais - Limpo e Focado */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         <MetricCard
           title="Saldo Mercado Pago"
           amountCents={displaySummary.mercadoPagoOfficialBalanceCents ?? 0}
           overrideText={displaySummary.mercadoPagoOfficialBalanceCents === null ? "Em reconciliação" : undefined}
-          subtitle={displaySummary.mercadoPagoOfficialBalanceCents === null ? "Aguardando âncora oficial comprovada" : "Saldo oficial comprovado"}
+          subtitle={displaySummary.mercadoPagoOfficialBalanceCents === null
+            ? "Relatório Liberações indisponível ou em reconciliação"
+            : `${displaySummary.mercadoPagoBalanceBasis === "RELEASE_PLUS_ACCOUNT_MONEY" ? "Atualizado por fontes oficiais" : "Âncora oficial"} até ${new Date(displaySummary.mercadoPagoOfficialBalanceAt!).toLocaleString("pt-BR")}`}
           icon={Wallet}
           variant="cyan"
           badgeText={displaySummary.mercadoPagoOfficialBalanceCents === null ? "Em Reconciliação" : "Oficial"}
@@ -360,28 +363,41 @@ export default function DashboardPage() {
           </div>
 
           <div className="space-y-3 flex-1 overflow-y-auto max-h-[300px] pr-1">
-            {recentTxs.map((tx) => (
-              <div
-                key={tx.id}
-                className="flex items-center justify-between p-3 rounded-lg border border-novex-border bg-novex-surface2/50 text-xs"
-              >
-                <div>
-                  <div className="font-semibold text-novex-text-primary">{tx.counterpartName || tx.description}</div>
-                  <div className="text-[10px] text-novex-text-muted mt-0.5">{tx.category}</div>
-                </div>
-
-                <div className="text-right">
-                  <div
-                    className={`font-bold ${
-                      tx.direction === "CREDIT" ? "text-emerald-400" : "text-red-400"
-                    }`}
-                  >
-                    {tx.direction === "CREDIT" ? "+" : "-"}{formatCurrency(tx.amountCents)}
-                  </div>
-                  <StatusBadge status={tx.reconciliationStatus} className="mt-1 text-[9px] px-1.5 py-0" />
-                </div>
+            {recentTxs.length === 0 ? (
+              <div className="p-6 text-center text-xs text-novex-text-muted">
+                Nenhuma movimentação recente encontrada.
               </div>
-            ))}
+            ) : (
+              recentTxs.map((tx) => {
+                const presentation = formatTransactionDisplay(tx);
+                return (
+                  <div
+                    key={tx.id}
+                    className="flex items-center justify-between p-3 rounded-lg border border-novex-border bg-novex-surface2/50 text-xs gap-3"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-novex-text-primary truncate" title={presentation.title}>
+                        {presentation.title}
+                      </div>
+                      <div className="text-[10px] text-novex-text-muted mt-0.5 truncate" title={presentation.subtitle}>
+                        {presentation.subtitle}
+                      </div>
+                    </div>
+
+                    <div className="text-right shrink-0">
+                      <div
+                        className={`font-bold ${
+                          tx.direction === "CREDIT" ? "text-emerald-400" : "text-red-400"
+                        }`}
+                      >
+                        {tx.direction === "CREDIT" ? "+" : "-"}{formatCurrency(tx.amountCents)}
+                      </div>
+                      <StatusBadge status={tx.reconciliationStatus} className="mt-1 text-[9px] px-1.5 py-0" />
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       </div>

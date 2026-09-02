@@ -458,6 +458,14 @@ export async function saveEvolutionApiCredentials(input: {
     const remoteState = await evolutionAPIClient.checkConnectionState(
       parsedBaseUrl.toString().replace(/\/$/, ""), apiKey, input.instanceName.trim()
     );
+    if (remoteState.success && remoteState.state === "open") {
+      const safeSettings = await evolutionAPIClient.ensureOutboundOnlySettings(
+        parsedBaseUrl.toString().replace(/\/$/, ""), apiKey, input.instanceName.trim()
+      );
+      if (!safeSettings.success) {
+        return { success: false, error: safeSettings.error || "Falha ao aplicar configuração segura da Evolution." };
+      }
+    }
 
     await db.$transaction(async (tx) => {
       const account = await tx.integrationAccount.upsert({

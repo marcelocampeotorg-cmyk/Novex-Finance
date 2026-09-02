@@ -28,9 +28,13 @@ O domínio possui três camadas distintas:
 
 Toda movimentação real afeta o Ledger e a movimentação líquida conhecida, mesmo quando ainda não foi identificada ou conciliada. Entretanto, a soma das movimentações importadas não prova automaticamente o saldo absoluto atual da conta.
 
-Enquanto não houver âncora oficial e cobertura contínua suficiente, a conta Mercado Pago deve utilizar conceitos como “Movimentação líquida conhecida”, “Saldo em reconciliação”, “Fluxo conhecido” ou “Cobertura financeira conhecida”. Saldo manual não é arquitetura oficial na V1 e não deve ser exigido do usuário na interface nem utilizado para fabricar saldos do Mercado Pago.
+Existem dois modos oficiais. No modo Manual, uma conta geral usa saldo inicial datado e lançamentos auditáveis. No modo Híbrido, a conta geral manual permanece separada da conta Mercado Pago. Nenhum valor manual pode fabricar ou sobrescrever o saldo do Mercado Pago.
 
-Se futuramente uma fonte oficial fornecer saldo absoluto comprovado, esse saldo poderá ser exibido com sua fonte, cobertura e timestamp.
+**Prioridade atual:** homologar o modo Híbrido para o uso real do proprietário. Ampliações do modo Manual ficam para fase posterior.
+
+Enquanto o Relatório de Liberações não fornecer uma âncora válida, a conta Mercado Pago deve utilizar conceitos como “Movimentação líquida conhecida”, “Saldo em reconciliação”, “Fluxo conhecido” ou “Cobertura financeira conhecida”. Após validação, o saldo oficial é exibido com o horário exato do corte do relatório assíncrono.
+
+O `BALANCE_AMOUNT` mais recente do Relatório de Liberações é a âncora oficial adotada para saldo disponível; `total` não é saldo. Um valor mais atual só pode ser calculado adicionando impactos `SETTLEMENT_NET_AMOUNT` posteriores quando a cobertura do Dinheiro em Conta for contínua até o horário exibido.
 
 Ver [Fonte da Verdade](./00_FONTE_DA_VERDADE.md) e [Arquitetura Funcional](./03_ARQUITETURA_FUNCIONAL.md).
 
@@ -75,6 +79,8 @@ O mesmo pagamento não pode gerar um impacto pelo fluxo de Orders e outro pelo A
 O Settlement Report é assíncrono. O backend deve persistir e acompanhar task, report e `file_name`, baixar o arquivo oficial e importar de forma idempotente. Polling visual apenas acompanha o estado persistido e não cria relatórios repetidamente.
 
 Ver [Integração Mercado Pago](./05_MERCADO_PAGO_INTEGRACAO.md) e [Fontes Oficiais](./23_FONTES_OFICIAIS.md).
+
+O contrato campo a campo, endpoints, estados, idempotência e critérios de aceite ficam em [Contrato Operacional Mercado Pago](./25_CONTRATO_OPERACIONAL_MERCADO_PAGO.md).
 
 ## 6. Contas a receber e cobrança Pix
 
@@ -223,7 +229,7 @@ Cada marco termina com evidência, atualização do `ERROR_LOG` e declaração d
 
 ## 20. Deploy
 
-O alvo futuro é `app.novexfinance.com.br`, com arquitetura compatível com Cloudflare Workers/OpenNext. Deploy exige testes, preview, migrations validadas, backup, rollback, segredos e autorização explícita do usuário.
+O alvo é `www.app.novexfinance.com.br`, com arquitetura isolada via Docker Compose. Deploy exige testes, preview, migrations validadas, backup, rollback, segredos e autorização explícita do usuário.
 
 Ver [Cloudflare e Deploy](./17_CLOUDFLARE_E_DEPLOY.md).
 

@@ -51,3 +51,7 @@ O código atual pode estar errado. Portanto, **o código não prevalece sobre as
 ## Resultado esperado
 
 O NOVEX Finance deve funcionar como um gestor financeiro pessoal altamente automático. A pessoa cadastra apenas o que precisa planejar, cobrar ou controlar. Movimentações reais que já aconteceram devem nascer automaticamente da integração financeira sempre que os dados oficiais permitirem.
+
+## Deploy atual
+
+O alvo operacional atual é o servidor Linux próprio, com stack Docker Compose exclusiva `novexfinance-prod`. Consulte `docs/17_CLOUDFLARE_E_DEPLOY.md` e `.env.production.example`. O Finance não compartilha banco, Redis, Evolution, rede ou volumes com os demais sistemas do host.

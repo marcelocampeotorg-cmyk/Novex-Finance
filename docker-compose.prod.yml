@@ -1,34 +1,90 @@
-version: "3.8"
+name: novexfinance-prod
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
 
 services:
-  web:
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: "no"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER obrigatorio}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obrigatoria}@db:5432/${POSTGRES_DB:?POSTGRES_DB obrigatorio}?schema=public
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["npx", "prisma", "migrate", "deploy"]
+    networks: [backend]
+    logging: *default-logging
+
+  app:
     build:
       context: .
       dockerfile: Dockerfile
     restart: always
     ports:
-      - "3000:3000"
+      - "127.0.0.1:${NOVEX_HTTP_PORT:-3001}:3000"
     environment:
+      TZ: America/Sao_Paulo
       NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
-      REDIS_URL: redis://redis:6379
-      CREDENTIALS_ENCRYPTION_KEY_BASE64: ${CREDENTIALS_ENCRYPTION_KEY_BASE64}
       AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET obrigatorio}
+      BETTER_AUTH_URL: ${NEXT_PUBLIC_APP_URL:?NEXT_PUBLIC_APP_URL obrigatoria}
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:?NEXT_PUBLIC_APP_URL obrigatoria}
-      WORKER_SECRET: ${WORKER_SECRET}
+      CREDENTIALS_ENCRYPTION_KEY_BASE64: ${CREDENTIALS_ENCRYPTION_KEY_BASE64:?CREDENTIALS_ENCRYPTION_KEY_BASE64 obrigatoria}
+      MERCADO_PAGO_WEBHOOK_SECRET: ${MERCADO_PAGO_WEBHOOK_SECRET:?MERCADO_PAGO_WEBHOOK_SECRET obrigatorio}
+      WORKER_SECRET: ${WORKER_SECRET:?WORKER_SECRET obrigatorio}
+      DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER obrigatorio}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obrigatoria}@db:5432/${POSTGRES_DB:?POSTGRES_DB obrigatorio}?schema=public
+      REDIS_URL: redis://redis:6379/0
+      EVOLUTION_API_URL: http://evolution:8080
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:?EVOLUTION_API_KEY obrigatoria}
+      EVOLUTION_INSTANCE_NAME: ${EVOLUTION_INSTANCE_NAME:-novex-finance}
+      UPLOADS_DIR: /app/uploads
+      ALLOW_PUBLIC_SIGNUP: "false"
+    volumes:
+      - uploads_data:/app/uploads
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
+      evolution:
+        condition: service_started
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    networks: [edge, backend]
+    security_opt: ["no-new-privileges:true"]
+    logging: *default-logging
 
-  postgres:
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      TZ: America/Sao_Paulo
+      NODE_ENV: production
+      WORKER_SECRET: ${WORKER_SECRET:?WORKER_SECRET obrigatorio}
+    depends_on:
+      app:
+        condition: service_healthy
+    command:
+      - node
+      - -e
+      - "const run=async()=>{try{const r=await fetch('http://app:3000/api/worker/run',{method:'POST',headers:{authorization:'Bearer '+process.env.WORKER_SECRET}});if(!r.ok)console.error('worker HTTP',r.status,await r.text())}catch(e){console.error('worker request',e.message)}};run();setInterval(run,15000)"
+    networks: [edge]
+    security_opt: ["no-new-privileges:true"]
+    logging: *default-logging
+
+  db:
     image: postgres:16-alpine
     restart: always
     environment:
@@ -37,25 +93,108 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB obrigatorio}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./backups:/backups
       - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+    networks: [backend]
+    logging: *default-logging
 
   redis:
     image: redis:7-alpine
     restart: always
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
     volumes:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+    networks: [backend]
+    logging: *default-logging
+
+  evolution:
+    image: evoapicloud/evolution-api:v2.3.7
+    restart: always
+    ports:
+      - "127.0.0.1:${NOVEX_EVOLUTION_PORT:-8081}:8080"
+    environment:
+      SERVER_URL: http://evolution:8080
+      CORS_ORIGIN: "*"
+      LOG_LEVEL: ERROR,WARN
+      LOG_COLOR: "false"
+      LOG_BAILEYS: fatal
+      TELEMETRY_ENABLED: "false"
+      AUTHENTICATION_TYPE: apikey
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?EVOLUTION_API_KEY obrigatoria}
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://${POSTGRES_USER:?POSTGRES_USER obrigatorio}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obrigatoria}@db:5432/evolution_db?schema=public
+      DATABASE_CONNECTION_CLIENT_NAME: novex_finance_evolution
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "false"
+      DATABASE_SAVE_MESSAGE_UPDATE: "false"
+      DATABASE_SAVE_DATA_CONTACTS: "false"
+      DATABASE_SAVE_DATA_CHATS: "false"
+      DATABASE_SAVE_DATA_LABELS: "false"
+      DATABASE_SAVE_DATA_HISTORIC: "false"
+      DATABASE_SAVE_IS_ON_WHATSAPP: "false"
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://redis:6379/1
+      CACHE_REDIS_PREFIX_KEY: novexfinance-evolution
+      CACHE_REDIS_SAVE_INSTANCES: "true"
+      DEL_INSTANCE: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [edge, backend]
+    security_opt: ["no-new-privileges:true"]
+    # A imagem oficial v2.3.7 imprime objetos completos de mensagens com
+    # console.log, ignorando LOG_LEVEL/LOG_BAILEYS. Diagnóstico operacional
+    # usa healthcheck/endpoints autenticados, sem persistir payload bruto.
+    logging:
+      driver: "none"
+
+  backup:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGUSER: ${POSTGRES_USER:?POSTGRES_USER obrigatorio}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obrigatoria}
+      PGDATABASE: ${POSTGRES_DB:?POSTGRES_DB obrigatorio}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+    volumes:
+      - ./backups:/backups
+      - ./scripts/backup-db-container.sh:/opt/novex/backup-db-container.sh:ro
+      - ./scripts/backup-loop.sh:/opt/novex/backup-loop.sh:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["/bin/sh", "/opt/novex/backup-loop.sh"]
+    networks: [backend]
+    security_opt: ["no-new-privileges:true"]
+    logging: *default-logging
+
+networks:
+  edge:
+    name: novexfinance-prod-edge
+    driver: bridge
+  backend:
+    name: novexfinance-prod-backend
+    driver: bridge
+    internal: true
 
 volumes:
   postgres_data:
+    name: novexfinance-prod-postgres-data
   redis_data:
+    name: novexfinance-prod-redis-data
+  uploads_data:
+    name: novexfinance-prod-uploads-data

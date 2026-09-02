@@ -16,3 +16,5 @@ Listar:
 Build sozinho não basta.
 
 Se uma limitação relevante continua aberta, declarar explicitamente “parcial” ou “bloqueado”.
+
+Para este produto, não declarar conclusão sem saldo oficial Mercado Pago com corte real, amostra de entradas/saídas reconciliada e Evolution `open` com envio controlado comprovado.

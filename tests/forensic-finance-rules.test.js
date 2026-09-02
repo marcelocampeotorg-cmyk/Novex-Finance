@@ -130,7 +130,7 @@ test("Item 12.5 — saveMercadoPagoCredentials exige seleção explícita de amb
   );
 });
 
-test("Item 12.6 — getWorkspaceSummary nunca usa openingBalanceAt do Mercado Pago como officialBalanceAt", () => {
+test("Item 12.6 — saldo Mercado Pago nunca usa openingBalanceAt e preserva a âncora oficial separada", () => {
   const workspacePath = path.join(__dirname, "../src/server/actions/workspace.ts");
   const content = fs.readFileSync(workspacePath, "utf-8");
 
@@ -141,9 +141,10 @@ test("Item 12.6 — getWorkspaceSummary nunca usa openingBalanceAt do Mercado Pa
   );
   assert.match(
     content,
-    /mercadoPagoOfficialBalanceAt:\s*mercadoPagoAccount\?\.officialBalanceAt\?\.toISOString\(\)\s*\|\|\s*null/,
-    "mercadoPagoOfficialBalanceAt deve vir estritamente de officialBalanceAt"
+    /mercadoPagoAnchorAt:\s*mercadoPagoAccount\?\.officialBalanceAt\?\.toISOString\(\)\s*\|\|\s*null/,
+    "a âncora deve vir estritamente de officialBalanceAt"
   );
+  assert.match(content, /mercadoPagoOfficialBalanceAt:\s*mercadoPagoOfficialBalanceAt\?\.toISOString\(\)/);
 });
 
 test("Item 12.7 — Configuracoes/page.tsx protege select contra NAO_DETECTADO", () => {

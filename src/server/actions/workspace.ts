@@ -99,6 +99,8 @@ export async function getWorkspaceSummary() {
     let lastSyncAt: string | null = null;
     let isOutdated = false;
     let balanceDescription = "Saldo em reconciliação";
+    let mpContinuousCoverageStart: Date | null = null;
+    let mpContinuousCoverageEnd: Date | null = null;
 
     if (mpIntegration) {
       accountDisplayName = mpIntegration.displayName || "Mercado Pago";
@@ -158,6 +160,8 @@ export async function getWorkspaceSummary() {
           if (run.endDate > continuousEnd) continuousEnd = run.endDate;
         }
       }
+      mpContinuousCoverageStart = continuousStart;
+      mpContinuousCoverageEnd = continuousEnd;
       // Correção F: Semântica correta — movimentação líquida conhecida, não saldo absoluto
       balanceDescription = continuousStart
         ? `Movimentação líquida conhecida desde ${continuousStart.toLocaleDateString("pt-BR")}${continuousEnd && coveredRuns.some((run) => run.beginDate > continuousEnd!) ? " — cobertura com lacunas" : ""}`
@@ -217,8 +221,34 @@ export async function getWorkspaceSummary() {
         : "UNAVAILABLE";
 
     let mercadoPagoOfficialBalanceCents: number | null = null;
+    let mercadoPagoOfficialBalanceAt: Date | null = mercadoPagoAccount?.officialBalanceAt || null;
+    let mercadoPagoBalanceBasis: "RELEASE_REPORT" | "RELEASE_PLUS_ACCOUNT_MONEY" | null = null;
     if (mercadoPagoAccount?.officialBalanceStatus === "CONFIRMED" && mercadoPagoAccount?.officialBalanceCents !== null && mercadoPagoAccount?.officialBalanceCents !== undefined) {
       mercadoPagoOfficialBalanceCents = Number(mercadoPagoAccount.officialBalanceCents);
+      mercadoPagoBalanceBasis = "RELEASE_REPORT";
+
+      const anchorAt = mercadoPagoAccount.officialBalanceAt;
+      const coverageIncludesAnchor = anchorAt && mpContinuousCoverageStart && mpContinuousCoverageEnd
+        && mpContinuousCoverageStart <= anchorAt
+        && mpContinuousCoverageEnd >= anchorAt;
+      if (coverageIncludesAnchor && mercadoPagoAccount.id) {
+        const laterEntries = await db.ledgerEntry.findMany({
+          where: {
+            workspaceId,
+            financialAccountId: mercadoPagoAccount.id,
+            excludedFromReports: false,
+            occurredAt: { gt: anchorAt!, lte: mpContinuousCoverageEnd! },
+            OR: [{ externalTransaction: null }, { externalTransaction: { quarantinedAt: null } }],
+          },
+          select: { direction: true, amountCents: true },
+        });
+        mercadoPagoOfficialBalanceCents += laterEntries.reduce(
+          (sum, entry) => sum + (entry.direction === "CREDIT" ? Number(entry.amountCents) : -Number(entry.amountCents)),
+          0,
+        );
+        mercadoPagoOfficialBalanceAt = mpContinuousCoverageEnd;
+        mercadoPagoBalanceBasis = "RELEASE_PLUS_ACCOUNT_MONEY";
+      }
     } else {
       mercadoPagoOfficialBalanceCents = null;
     }
@@ -241,7 +271,10 @@ export async function getWorkspaceSummary() {
       manualBalanceCents,
       manualBalanceAt: manualAccount?.openingBalanceAt?.toISOString() || null,
       mercadoPagoOfficialBalanceCents,
-      mercadoPagoOfficialBalanceAt: mercadoPagoAccount?.officialBalanceAt?.toISOString() || null,
+      mercadoPagoOfficialBalanceAt: mercadoPagoOfficialBalanceAt?.toISOString() || null,
+      mercadoPagoAnchorBalanceCents: mercadoPagoAccount?.officialBalanceCents !== null && mercadoPagoAccount?.officialBalanceCents !== undefined ? Number(mercadoPagoAccount.officialBalanceCents) : null,
+      mercadoPagoAnchorAt: mercadoPagoAccount?.officialBalanceAt?.toISOString() || null,
+      mercadoPagoBalanceBasis,
       mercadoPagoBalanceStatus,
       consolidatedBalanceCents,
       financeMode,
@@ -358,6 +391,8 @@ export async function getDashboardData() {
       amountCents: Number(tx.netAmountCents),
       description: tx.description,
       counterpartName: tx.counterpartName,
+      type: tx.type,
+      rawProviderData: tx.rawProviderData,
       category: "Movimentação",
       reconciliationStatus: tx.reconciliations[0]?.status || "UNMATCHED",
     }));
@@ -436,7 +471,23 @@ export async function getDashboardData() {
 export async function triggerMercadoPagoSync(force: boolean = false) {
   try {
     const { syncMercadoPagoStatement } = await import('./transactions');
-    return await syncMercadoPagoStatement(force);
+    const { refreshMercadoPagoBalance } = await import('./balance');
+    const [statement, balance] = await Promise.all([
+      syncMercadoPagoStatement(force),
+      refreshMercadoPagoBalance(),
+    ]);
+    const statementSuccess = Boolean(statement && "success" in statement && statement.success);
+    const balanceAccepted = balance.success;
+    return {
+      success: statementSuccess && balanceAccepted,
+      statement,
+      balance,
+      error: !statementSuccess
+        ? ("error" in statement ? String(statement.error || "Falha ao sincronizar movimentações.") : "Falha ao sincronizar movimentações.")
+        : !balanceAccepted
+        ? balance.error
+        : undefined,
+    };
   } catch (error: any) {
     return { success: false, error: error?.message || String(error) };
   }
@@ -460,11 +511,17 @@ export async function getWorkspaceLastUpdateTimestamp() {
       orderBy: { updatedAt: "desc" },
       select: { updatedAt: true },
     });
+    const lastBalanceRun = await db.balanceSyncRun.findFirst({
+      where: { workspaceId },
+      orderBy: { updatedAt: "desc" },
+      select: { updatedAt: true },
+    });
 
     const dates = [
       lastTx?.occurredAt,
       lastInst?.updatedAt,
-      lastRun?.updatedAt
+      lastRun?.updatedAt,
+      lastBalanceRun?.updatedAt,
     ].filter(Boolean) as Date[];
 
     if (dates.length === 0) return { success: true, timestamp: 0 };

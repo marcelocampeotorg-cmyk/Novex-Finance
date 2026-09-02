@@ -143,6 +143,11 @@ export class MercadoPagoReportsClient {
       { key: "SETTLEMENT_DATE" },
       { key: "PAYMENT_METHOD" },
       { key: "PAYMENT_METHOD_TYPE" },
+      { key: "POI_BANK_NAME" },
+      { key: "POI_WALLET_NAME" },
+      { key: "ISSUER_NAME" },
+      { key: "STORE_NAME" },
+      { key: "POS_NAME" },
     ];
 
     const reportConfig = {
@@ -408,6 +413,13 @@ export class MercadoPagoReportsClient {
     const transactionDateIdx = findExactHeaderIndex(["TRANSACTION_DATE", "CREATED_DATE_TIME"]);
     const descIdx = findExactHeaderIndex(["DESCRIPTION"]);
     const refIdx = findExactHeaderIndex(["EXTERNAL_REFERENCE"]);
+    const counterpartIndexes = [
+      findExactHeaderIndex(["POI_BANK_NAME"]),
+      findExactHeaderIndex(["ISSUER_NAME"]),
+      findExactHeaderIndex(["POI_WALLET_NAME"]),
+      findExactHeaderIndex(["STORE_NAME"]),
+      findExactHeaderIndex(["POS_NAME"]),
+    ];
 
     if (sourceIdIdx === -1 || typeIdx === -1 || (settlementDateIdx === -1 && transactionDateIdx === -1) || (netAmountIdx === -1 && netCreditIdx === -1 && netDebitIdx === -1)) {
       return {
@@ -496,6 +508,9 @@ export class MercadoPagoReportsClient {
       }
       const descStr = descIdx >= 0 && cols[descIdx] ? cols[descIdx] : typeStr;
       const refStr = refIdx >= 0 && cols[refIdx] ? cols[refIdx] : undefined;
+      const counterpartName = counterpartIndexes
+        .map((index) => index >= 0 ? cols[index]?.trim() : "")
+        .find(Boolean) || undefined;
       const compositeExternalId = `${rawSourceId}_${typeStr}_${direction}_${absNetAmountCents}`;
 
       transactions.push({
@@ -507,6 +522,7 @@ export class MercadoPagoReportsClient {
         amountCents,
         feeCents,
         netAmountCents: absNetAmountCents,
+        counterpartName,
         rawReference: refStr,
         rawProviderData: Object.fromEntries(headers.map((header, index) => [header, cols[index] ?? ""])),
       });
@@ -520,4 +536,3 @@ export class MercadoPagoReportsClient {
     };
   }
 }
-

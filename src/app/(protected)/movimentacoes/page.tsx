@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Search, Filter, RefreshCw, CheckCircle2, Link2, Tag, Upload, ArrowUpRight, ArrowDownLeft, XCircle, ShieldCheck, Plus } from "lucide-react";
 import { formatCurrency, formatDateTime } from "@/lib/formatters";
+import { formatTransactionDisplay } from "@/lib/transaction-presentation";
 import { getExternalTransactions, getReconciliationSummary, ignoreExternalTransaction } from "@/server/actions/transactions";
 import { runAutomaticReconciliationEngine, confirmSuggestedMatch, unmatchTransaction } from "@/server/actions/reconciliation";
 import { ImportStatementModal } from "@/components/modals/ImportStatementModal";
@@ -284,10 +285,12 @@ export default function MovimentacoesPage() {
             onChange={(e) => setPeriodFilter(e.target.value)}
             className="rounded-lg border border-novex-border bg-novex-bg py-2 px-3 text-xs text-novex-text-primary focus:border-novex-cyan focus:outline-none"
           >
-            <option value="DAILY">Diário (Hoje)</option>
-            <option value="WEEKLY">Semanal (Últimos 7 dias)</option>
-            <option value="BIWEEKLY">Quinzenal (Últimos 15 dias)</option>
             <option value="MONTHLY">Mensal (Mês Atual)</option>
+            <option value="PREVIOUS_MONTH">Mês Anterior</option>
+            <option value="LAST_30_DAYS">Últimos 30 dias</option>
+            <option value="WEEKLY">Últimos 7 dias</option>
+            <option value="BIWEEKLY">Últimos 15 dias</option>
+            <option value="DAILY">Diário (Hoje)</option>
             <option value="YEARLY">Anual (Ano Atual)</option>
             <option value="ALL">Todo o Histórico (Completo)</option>
           </select>
@@ -348,18 +351,22 @@ export default function MovimentacoesPage() {
                   </td>
                 </tr>
               ) : (
-                filteredTxs.map((tx) => (
-                  <tr key={tx.id} className="hover:bg-novex-surface2/40 transition-colors">
-                    <td className="py-4 px-4 text-novex-text-secondary font-mono text-[11px]">
-                      {formatDateTime(tx.occurredAt)}
-                    </td>
-                    <td className="py-4 px-4">
-                      <div className="font-semibold text-novex-text-primary">{tx.description}</div>
-                      <div className="text-[10px] text-novex-text-muted font-mono">{tx.externalId}</div>
-                    </td>
-                    <td className="py-4 px-4 text-novex-text-secondary">
-                      {tx.counterpartName || (tx.source === "MANUAL_ADJUSTMENT" ? "Conta geral manual" : "Não informado pelo provedor")}
-                    </td>
+                filteredTxs.map((tx) => {
+                  const presentation = formatTransactionDisplay(tx);
+                  return (
+                    <tr key={tx.id} className="hover:bg-novex-surface2/40 transition-colors">
+                      <td className="py-4 px-4 text-novex-text-secondary font-mono text-[11px]">
+                        {formatDateTime(tx.occurredAt)}
+                      </td>
+                      <td className="py-4 px-4">
+                        <div className="font-semibold text-novex-text-primary">{presentation.title}</div>
+                        <div className="text-[10px] text-novex-text-muted font-mono">{tx.externalId}</div>
+                      </td>
+                      <td className="py-4 px-4 text-novex-text-secondary">
+                        <span className={presentation.isKnownCounterpart ? "text-novex-text-primary font-medium" : "text-novex-text-muted"}>
+                          {presentation.subtitle}
+                        </span>
+                      </td>
                     <td className="py-4 px-4">
                       <span
                         className={`px-2.5 py-1 rounded-md text-[10px] font-semibold inline-block ${
@@ -427,8 +434,9 @@ export default function MovimentacoesPage() {
                       </div>
                     </td>
                   </tr>
-                ))
-              )}
+                );
+              })
+            )}
             </tbody>
           </table>
         </div>

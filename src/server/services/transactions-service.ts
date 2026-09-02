@@ -34,6 +34,16 @@ export async function getExternalTransactions(period: string = "MONTHLY") {
         gte: new Date(now.getTime() - 15 * 24 * 60 * 60 * 1000),
         lte: now,
       };
+    } else if (period === "LAST_30_DAYS") {
+      dateFilter = {
+        gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000),
+        lte: now,
+      };
+    } else if (period === "PREVIOUS_MONTH") {
+      dateFilter = {
+        gte: new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0),
+        lte: new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999),
+      };
     } else if (period === "YEARLY") {
       dateFilter = {
         gte: new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0),
@@ -84,6 +94,7 @@ export async function getExternalTransactions(period: string = "MONTHLY") {
         description: tx.description,
         txid: tx.txid || undefined,
         rawReference: tx.rawReference || undefined,
+        rawProviderData: tx.rawProviderData,
         reconciliationStatus: activeRec ? activeRec.status : "UNMATCHED",
         matchedInstallmentId: activeRec?.installmentId || undefined,
         reconciliationId: activeRec?.id || undefined,
@@ -137,6 +148,7 @@ export async function importExternalTransactions(
 
           // Compatibilidade retroativa: se não encontrou pela chave composta, busca por SOURCE_ID simples para migração
           const rawSourceId = (raw.rawProviderData as any)?.SOURCE_ID;
+          let duplicateLegacyTx: typeof existingTx = null;
           if (!existingTx && rawSourceId && rawSourceId !== raw.externalId) {
             const legacyTx = await tx.externalTransaction.findUnique({
               where: {
@@ -149,6 +161,20 @@ export async function importExternalTransactions(
             });
             if (legacyTx) {
               existingTx = legacyTx;
+            }
+          } else if (existingTx && rawSourceId && rawSourceId !== raw.externalId) {
+            const legacyCandidate = await tx.externalTransaction.findUnique({
+              where: {
+                workspaceId_source_externalId: { workspaceId, source, externalId: rawSourceId },
+              },
+            });
+            if (
+              legacyCandidate && legacyCandidate.id !== existingTx.id &&
+              legacyCandidate.direction === raw.direction &&
+              Number(legacyCandidate.netAmountCents) === raw.netAmountCents &&
+              legacyCandidate.occurredAt.getTime() === occurredDate.getTime()
+            ) {
+              duplicateLegacyTx = legacyCandidate;
             }
           }
 
@@ -180,7 +206,7 @@ export async function importExternalTransactions(
                 occurredAt: isSettlement ? occurredDate : existingTx.occurredAt,
                 type: isSettlement ? raw.type : existingTx.type,
                 description: raw.description && raw.description !== "SETTLEMENT" ? raw.description : existingTx.description,
-                counterpartName: raw.counterpartName || existingTx.counterpartName || null,
+                counterpartName: raw.counterpartName || existingTx.counterpartName || duplicateLegacyTx?.counterpartName || null,
                 counterpartDocument: raw.counterpartDocument || existingTx.counterpartDocument || null,
                 txid: raw.txid || existingTx.txid || null,
                 rawReference: raw.rawReference || existingTx.rawReference || null,
@@ -190,6 +216,32 @@ export async function importExternalTransactions(
                 quarantineReason: shouldReactivate ? null : existingTx.quarantineReason,
               },
             });
+
+            if (duplicateLegacyTx && !duplicateLegacyTx.quarantinedAt) {
+              const quarantinedAt = new Date();
+              await tx.externalTransaction.update({
+                where: { id: duplicateLegacyTx.id },
+                data: {
+                  quarantinedAt,
+                  quarantineReason: "DUPLICATED_BY_COMPOSITE_SETTLEMENT_MIGRATION",
+                },
+              });
+              await tx.ledgerEntry.updateMany({
+                where: { externalTransactionId: duplicateLegacyTx.id },
+                data: { excludedFromReports: true },
+              });
+              await tx.auditLog.create({
+                data: {
+                  workspaceId,
+                  actorType: "SYSTEM",
+                  actorId: "SYSTEM",
+                  action: "LEGACY_SETTLEMENT_DUPLICATE_QUARANTINED",
+                  entityType: "ExternalTransaction",
+                  entityId: duplicateLegacyTx.id,
+                  metadata: { canonicalTransactionId: existingTx.id, sourceId: rawSourceId },
+                },
+              });
+            }
 
             if (shouldReactivate) {
               await tx.ledgerEntry.updateMany({
@@ -895,6 +947,16 @@ export async function getReconciliationSummary(period: string = "MONTHLY") {
         gte: new Date(now.getTime() - 15 * 24 * 60 * 60 * 1000),
         lte: now,
       };
+    } else if (period === "LAST_30_DAYS") {
+      dateFilter = {
+        gte: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000),
+        lte: now,
+      };
+    } else if (period === "PREVIOUS_MONTH") {
+      dateFilter = {
+        gte: new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0),
+        lte: new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999),
+      };
     } else if (period === "YEARLY") {
       dateFilter = {
         gte: new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0),
@@ -1133,4 +1195,3 @@ export async function enrichAllMercadoPagoTransactions(internalContext?: symbol,
     return { success: false, error: error.message || String(error) };
   }
 }
-

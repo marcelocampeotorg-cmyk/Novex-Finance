@@ -192,6 +192,35 @@ model SyncRun {
   @@map("sync_runs")
 }
 
+model BalanceSyncRun {
+  id                   String    @id @default(uuid())
+  workspaceId          String    @map("workspace_id")
+  integrationAccountId String    @map("integration_account_id")
+  financialAccountId   String    @map("financial_account_id")
+  status               String    @default("PENDING")
+  beginDate            DateTime  @map("begin_date")
+  endDate              DateTime  @map("end_date")
+  remoteTaskId         String?   @map("remote_task_id")
+  remoteReportId       String?   @map("remote_report_id")
+  remoteFileName       String?   @map("remote_file_name")
+  activeKey            String?   @unique @map("active_key")
+  balanceCents         BigInt?   @map("balance_cents")
+  requestedAt          DateTime? @map("requested_at")
+  finishedAt           DateTime? @map("finished_at")
+  errorCode            String?   @map("error_code")
+  errorMessage         String?   @map("error_message")
+  evidenceSummary      Json?     @map("evidence_summary")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  workspace          Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  integrationAccount IntegrationAccount @relation(fields: [integrationAccountId], references: [id], onDelete: Cascade)
+  financialAccount   FinancialAccount   @relation(fields: [financialAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([integrationAccountId, beginDate, endDate])
+  @@map("balance_sync_runs")
+}
+
 model Workspace {
   id                   String                @id @default(uuid())
   name                 String
@@ -215,6 +244,7 @@ model Workspace {
   attachments          Attachment[]
   auditLogs            AuditLog[]
   syncRuns             SyncRun[]
+  balanceSyncRuns      BalanceSyncRun[]
   paymentIntentions    PaymentIntention[]
   categoryRules        CategoryRule[]
   whatsAppLogs         WhatsAppDeliveryLog[]
@@ -241,6 +271,7 @@ model FinancialAccount {
   integrationAccount    IntegrationAccount?
   externalTransactions  ExternalTransaction[]
   ledgerEntries         LedgerEntry[]
+  balanceSyncRuns       BalanceSyncRun[]
 
   @@unique([workspaceId, type])
   @@map("financial_accounts")
@@ -420,6 +451,7 @@ model IntegrationAccount {
   externalTransactions     ExternalTransaction[]
   pixCharges               PixCharge[]
   syncRuns                 SyncRun[]
+  balanceSyncRuns          BalanceSyncRun[]
   financialAccount         FinancialAccount?     @relation(fields: [financialAccountId], references: [id])
 
   @@unique([workspaceId, provider, environment])
@@ -655,19 +687,21 @@ model CategoryRule {
 }
 
 model WhatsAppDeliveryLog {
-  id              String   @id @default(uuid())
-  workspaceId     String   @map("workspace_id")
-  recipientPhone  String   @map("recipient_phone")
-  chargeId        String?  @map("charge_id")
-  installmentId   String?  @map("installment_id")
-  messageType     String   @map("message_type")
-  remoteMessageId String?  @map("remote_message_id")
-  status          String   @default("SENT") // SENT, FAILED, DELIVERED
-  attemptCount    Int      @default(1) @map("attempt_count")
-  errorMessage    String?  @map("error_message")
-  dedupeKey       String   @unique @map("dedupe_key")
-  sentAt          DateTime @default(now()) @map("sent_at")
-  createdAt       DateTime @default(now()) @map("created_at")
+  id              String    @id @default(uuid())
+  workspaceId     String    @map("workspace_id")
+  recipientPhone  String    @map("recipient_phone")
+  chargeId        String?   @map("charge_id")
+  installmentId   String?   @map("installment_id")
+  messageType     String    @map("message_type")
+  remoteMessageId String?   @map("remote_message_id")
+  status          String    @default("SENT") // SENT, FAILED, DELIVERED
+  attemptCount    Int       @default(1) @map("attempt_count")
+  lastAttemptAt   DateTime  @default(now()) @map("last_attempt_at")
+  nextRetryAt     DateTime? @map("next_retry_at")
+  errorMessage    String?   @map("error_message")
+  dedupeKey       String    @unique @map("dedupe_key")
+  sentAt          DateTime? @map("sent_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
 
   workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   pixCharge   PixCharge?   @relation(fields: [chargeId], references: [id], onDelete: SetNull)

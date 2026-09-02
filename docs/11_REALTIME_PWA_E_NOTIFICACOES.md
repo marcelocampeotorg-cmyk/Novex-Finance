@@ -17,7 +17,7 @@ Requisitos:
 - service worker quando necessário;
 - layout mobile-first;
 - instalação sem criar app nativo;
-- domínio `app.novexfinance.com.br`.
+- domínio `www.app.novexfinance.com.br`.
 
 ## Push
 Notificações úteis:

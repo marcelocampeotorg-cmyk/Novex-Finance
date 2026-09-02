@@ -1,10 +1,11 @@
 import { db } from "@/server/db";
 import { processActiveRecurrencesForWorkspace } from "@/server/services/recurrence-service";
-import { processNotificationAlertsForWorkspace } from "@/server/services/notification-service";
+import { processAutomaticWhatsAppCollectionsForWorkspace, processNotificationAlertsForWorkspace } from "@/server/services/notification-service";
 import { reconcileWorkspace } from "@/server/services/reconciliation-service";
 import { continueMercadoPagoSyncRun, enrichAllMercadoPagoTransactions } from "@/server/services/transactions-service";
 import { INTERNAL_WORKER_CONTEXT } from "@/server/internal-context";
 import { discoverWorkspaceRecurrences } from "@/services/recurrence-discovery";
+import { continueMercadoPagoBalanceSync } from "@/server/services/mercado-pago-balance-service";
 
 export interface WorkerRunResult {
   success: boolean;
@@ -79,6 +80,8 @@ export class WorkerDaemonService {
         try {
           const alerts = await processNotificationAlertsForWorkspace(ws.id);
           totalAlerts += alerts.length;
+          const whatsApp = await processAutomaticWhatsAppCollectionsForWorkspace(ws.id, alerts);
+          if (whatsApp.failed > 0) subsystemErrorsCount += whatsApp.failed;
         } catch (e: any) {
           subsystemErrorsCount++;
           console.warn(`[WorkerDaemon] Erro ao processar alertas para workspace ${ws.id}:`, e.message);
@@ -202,6 +205,24 @@ export class WorkerDaemonService {
         } catch (e: any) {
           subsystemErrorsCount++;
           console.warn(`[WorkerDaemon] Erro ao gerenciar SyncRuns para workspace ${ws.id}:`, e.message);
+        }
+
+        // 5. Atualizar o saldo oficial pelo Relatório Liberações, preservando o último
+        // saldo confirmado quando o provedor ainda estiver processando ou não reconciliar.
+        if (ws.financeMode === "HYBRID") {
+          try {
+            const balanceResult = await continueMercadoPagoBalanceSync({
+              workspaceId: ws.id,
+              internalContext: INTERNAL_WORKER_CONTEXT,
+            });
+            if (!balanceResult.success && balanceResult.status !== "UNAVAILABLE") {
+              subsystemErrorsCount++;
+              console.warn(`[WorkerDaemon] Saldo Mercado Pago não confirmado para workspace ${ws.id}: ${balanceResult.error}`);
+            }
+          } catch (e: any) {
+            subsystemErrorsCount++;
+            console.warn(`[WorkerDaemon] Erro ao atualizar saldo Mercado Pago para workspace ${ws.id}:`, e.message);
+          }
         }
       }
 

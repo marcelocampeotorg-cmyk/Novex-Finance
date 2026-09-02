@@ -10,8 +10,14 @@ export function calculateConsolidatedBalance(input: {
   manualBalanceCents?: number | null;
   mercadoPagoOfficialBalanceCents: number | null;
 }): number | null {
-  if (input.mercadoPagoOfficialBalanceCents === null || input.mercadoPagoOfficialBalanceCents === undefined) {
-    return null;
+  const manualBalance = input.manualBalanceCents ?? null;
+
+  if ((input.mode ?? "HYBRID") === "MANUAL") {
+    return manualBalance;
   }
-  return input.mercadoPagoOfficialBalanceCents;
+
+  const mercadoPagoBalance = input.mercadoPagoOfficialBalanceCents ?? null;
+  if (manualBalance === null || mercadoPagoBalance === null) return null;
+
+  return manualBalance + mercadoPagoBalance;
 }

@@ -43,6 +43,8 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/node_modules ./node_modules
 
+RUN mkdir -p /app/uploads && chown -R nextjs:nodejs /app/uploads
+
 USER nextjs
 
 EXPOSE 3000

@@ -5,7 +5,7 @@
 Na interface, a marca pode aparecer simplesmente como **NOVEX** quando isso melhorar a composição visual.
 
 ## Domínio canônico alvo
-`https://app.novexfinance.com.br`
+`https://www.app.novexfinance.com.br`
 
 ## Proposta
 Um gestor financeiro pessoal automático que:

@@ -12,3 +12,4 @@ Toda skill aponta para documentos normativos. Skill não cria requisito novo; el
 4. `SKILL_16_EVIDENCIA_DE_CONCLUSAO.md`
 
 Erros novos sempre ativam também `SKILL_02_REGISTRO_DE_ERROS.md`.
+Pausas de sessão e pendências ativam `SKILL_17_GESTAO_DE_AFAZERES.md`.

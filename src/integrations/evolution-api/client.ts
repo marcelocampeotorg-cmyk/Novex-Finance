@@ -26,6 +26,11 @@ export interface EvolutionStatusResponse {
   error?: string;
 }
 
+export interface EvolutionSettingsResponse {
+  success: boolean;
+  error?: string;
+}
+
 export class EvolutionAPIClient {
   private getTargetUrls(customUrl?: string): string[] {
     const urls: string[] = [];
@@ -53,6 +58,41 @@ export class EvolutionAPIClient {
     const instanceName = customInstance || process.env.EVOLUTION_INSTANCE_NAME || (process.env.NODE_ENV !== "production" ? "novex-finance" : "");
     if (!instanceName) throw new Error("EVOLUTION_INSTANCE_NAME não configurada.");
     return instanceName;
+  }
+
+  /**
+   * Perfil mínimo do NOVEX: enviar cobranças sem importar histórico,
+   * grupos, mensagens pessoais ou confirmações de leitura.
+   */
+  async ensureOutboundOnlySettings(url?: string, key?: string, instance?: string): Promise<EvolutionSettingsResponse> {
+    const targetUrls = this.getTargetUrls(url);
+    const apiKey = this.getApiKey(key);
+    const instanceName = this.getInstanceName(instance);
+    let lastError = "Evolution API não aceitou as configurações seguras da instância.";
+
+    for (const baseUrl of targetUrls) {
+      try {
+        const response = await fetch(`${baseUrl}/settings/set/${instanceName}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", apikey: apiKey },
+          body: JSON.stringify({
+            rejectCall: false,
+            msgCall: "",
+            groupsIgnore: true,
+            alwaysOnline: false,
+            readMessages: false,
+            readStatus: false,
+            syncFullHistory: false,
+          }),
+        });
+        if (response.ok) return { success: true };
+        lastError = `HTTP ${response.status} ao configurar a instância Evolution.`;
+      } catch (error: any) {
+        lastError = error?.message || String(error);
+      }
+    }
+
+    return { success: false, error: lastError };
   }
 
   /**

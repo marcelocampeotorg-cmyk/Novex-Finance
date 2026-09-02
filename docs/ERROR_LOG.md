@@ -402,3 +402,102 @@ Status: RESOLVIDO
 - **Correção:** (1) Enriquecimento corrigido para usar exclusivamente `rawProviderData.SOURCE_ID` numérico oficial e filtrar estritamente não-pagamentos (impostos, saques, taxas); (2) `LedgerEntry.sourceId` normalizado 100% para o `externalTransactionId` da entidade; (3) Status `EXPIRED` incluído na busca de cobranças Pix; (4) `settlePixChargeAtomic` atualizado para bloquear baixa e marcar `ACTION_REQUIRED` em valor divergente e emitir `MP_PIX_CHARGE_DUPLICATE_PAYMENT_ALERT` em parcela já quitada; (5) Webhook atualizado para extrair `dataId` de query ou body e compor `eventId` durável; (6) `TEST_DATABASE_URL` atualizado com skip fail-closed sem fallback para endereços fictícios.
 - **Evidência:** 108 testes passando, fixtures sanitizadas em `tests/fixtures/settlement-fixtures.json` e reconciliação contábil 1:1 rigorosamente preservada.
 - **Teste:** Suíte em `tests/pix-receivables-hardening.test.js` e `tests/concurrency-and-regressions.test.js`.
+### ERR-058 — Fonte da Verdade voltou a contradizer os modos Manual e Híbrido
+Status: RESOLVIDO
+- **Data:** 2026-09-01
+- **Área:** documentação / saldo / dashboard
+- **Sintoma:** `docs/21_DECISOES_CONFIRMADAS.md` e `docs/24_RESUMO_CANONICO_OPERACIONAL.md` voltaram a afirmar que saldo manual não era arquitetura oficial, embora as regras, o schema e a decisão do usuário autorizem uma conta geral manual nos modos Manual e Híbrido. O cálculo consolidado também ignorava o saldo manual.
+- **Correção documental:** modos Manual/Híbrido, separação de contas e regra de consolidação foram restaurados na documentação canônica e nas skills.
+- **Validação:** cálculo e interface corrigidos; regressões de Manual/Híbrido passam. O usuário postergou ampliações do modo Manual para priorizar o Híbrido.
+
+### ERR-059 — Saldo oficial Mercado Pago sem pipeline do Relatório de Liberações
+Status: EM_HOMOLOGACAO
+- **Data:** 2026-09-01
+- **Área:** Mercado Pago / saldo atual
+- **Sintoma:** o schema possui campos de saldo oficial, mas não existe cliente, worker e parser do Relatório de Liberações para preenchê-los com prova oficial. O dashboard permanece indefinidamente em reconciliação.
+- **Correção documental:** o Relatório de Liberações foi definido como fonte obrigatória, com task assíncrona, CSV, fechamento aritmético e horário de corte.
+- **Evidência atual:** task real `888929868` processada, arquivo oficial `64840669` baixado e `BALANCE_AMOUNT` de R$ 137,66 persistido no corte de 31/08/2026 23:59:59 BRT. Dinheiro em Conta coberto até 01/09/2026 00:38:46 BRT sem movimento posterior ao corte.
+- **Validação pendente:** comparação visual do mesmo corte com o aplicativo Mercado Pago pelo usuário.
+
+### ERR-060 — `total` do Relatório Liberações confundido com saldo e janela corrente normalizada para o futuro
+Status: EM_HOMOLOGACAO
+- **Data:** 2026-09-01
+- **Área:** Mercado Pago / saldo / contrato oficial
+- **Sintoma:** a primeira implementação tratava `total` como candidato a saldo e solicitava janela intradiária terminando no instante atual. A API real normalizou essa janela para dias civis completos, deixou o fim no futuro e manteve a task pendente. A configuração também recusou `execute_after_withdrawal` ausente/inválido e frequência diária.
+- **Causa:** leitura incorreta de `total` e falta de validação real do comportamento de normalização do provedor. O glossário oficial define `total` como soma líquida de subtotais e `BALANCE_AMOUNT` como saldo restante após evento que altera o total.
+- **Correção aplicada:** configuração com `execute_after_withdrawal=false` explícito e frequência mensal; job alterado para o último dia encerrado; task passa a prevalecer para `begin_date`/`end_date`; parser usa o `BALANCE_AMOUNT` cronologicamente mais recente e ignora `total` como saldo.
+- **Evidência parcial:** chamada real aceita e tasks `888929829` (janela normalizada ainda aberta) e `888929868` (último dia encerrado) criadas em estado `pending`.
+- **Evidência:** task do último dia encerrado processada; CSV real com 7 linhas validado; `BALANCE_AMOUNT` de R$ 137,66 persistido. Resta apenas comparação visual externa no mesmo corte.
+
+### ERR-061 — Registros legados simples coexistiam com a nova chave composta e duplicavam o Ledger
+Status: RESOLVIDO
+- **Data:** 2026-09-01
+- **Área:** Mercado Pago / extrato / idempotência
+- **Sintoma:** três fatos oficiais já possuíam simultaneamente um registro legado com `externalId=SOURCE_ID` e outro canônico com chave composta, duplicando R$ 45,80 em créditos e R$ 0,01 em débitos nos relatórios internos.
+- **Causa:** quando o registro composto já existia, a importação não verificava se o legado simples também permanecia ativo.
+- **Correção:** os três legados foram colocados em quarentena auditável, seus LedgerEntries foram excluídos dos relatórios e os canônicos foram preservados. A ingestão agora detecta o par exato por SOURCE_ID, direção, valor líquido e timestamp, copia contraparte útil e quarentena o legado de forma idempotente.
+- **Evidência:** correção local registrou `LEGACY_SETTLEMENT_DUPLICATE_QUARANTINED` para cada par; nenhum registro foi apagado.
+
+### ERR-062 — Imagens falhavam no runtime standalone por ausência de `sharp`
+Status: RESOLVIDO
+- **Data:** 2026-09-01
+- **Área:** runtime local / interface
+- **Sintoma:** o container da aplicação registrou que `sharp` era obrigatório para otimização de imagens no modo standalone.
+- **Causa:** a dependência não estava declarada no pacote de produção.
+- **Correção:** `sharp` foi adicionado às dependências do projeto para integrar o binário compatível à imagem Docker.
+- **Validação:** build local e imagem Docker concluídos; aplicação saudável e logs novos sem o erro de `sharp`.
+
+### ERR-063 — Tentativa WhatsApp falha recebia `sentAt` por default
+Status: RESOLVIDO
+- **Data:** 2026-09-01
+- **Área:** Evolution / auditoria de entrega
+- **Sintoma:** `WhatsAppDeliveryLog.sentAt` era obrigatório e tinha default, então uma tentativa `SENDING` ou `FAILED` podia aparentar horário de envio concluído.
+- **Correção:** `sentAt` passou a ser nulo até sucesso real; migração remove default/not-null e limpa o campo de registros não enviados. Retry mantém lease e horário de tentativa separados.
+- **Validação:** Prisma validate/generate/status, cadeia de 10 migrations em banco descartável e suíte integrada aprovados em 02/09/2026.
+
+### ERR-064 — Nomes técnicos de extrato (PAYOUTS/SETTLEMENT) exibidos ao usuário e sobrecarga visual no Dashboard
+Status: RESOLVIDO
+- **Data:** 2026-09-01
+- **Área:** UI / Dashboard / Apresentação de Movimentações / Filtros
+- **Sintoma:** (1) Transações com coluna `DESCRIPTION` vazia no CSV eram exibidas com rótulos técnicos crús como `PAYOUTS` e `SETTLEMENT`; (2) Dashboard continha cards redundantes de Saldo Manual e Saldo Total Comprovado; (3) Aba de Movimentações não possuía atalhos para Mês Anterior ou Últimos 30 dias.
+- **Causa:** Parser usava `TRANSACTION_TYPE` técnico como fallback na ausência de descrição informada pelo provedor; dashboard acumulava múltiplos cards de saldo concebidos antes da decisão de priorizar o Mercado Pago; filtro de período só previa Mês Atual fixo.
+- **Correção:** (1) Criado utilitário determinístico `formatTransactionDisplay` com descrições humanas somente quando amparadas pelos campos oficiais, mantendo fallback neutro e preservando os dados brutos contábeis no banco; (2) Dashboard simplificado com grid executivo de 4 cards em destaque para Saldo Oficial Mercado Pago, Entradas, Saídas e Resultado Líquido; (3) Suporte a `PREVIOUS_MONTH` e `LAST_30_DAYS` implementado no backend e nas opções da tela de movimentações.
+- **Validação:** Testes unitários dedicados em `tests/transaction-presentation.test.js`, suíte de 122 testes (119 aprovados e 3 isolados sem `TEST_DATABASE_URL`; 122/122 no banco descartável), typecheck e lint verdes.
+
+### ERR-065 — Apresentação humanizada inferia rendimento, imposto e Pix apenas pelo valor/tipo
+Status: RESOLVIDO
+- **Data:** 2026-09-02
+- **Área:** UI / verdade financeira / apresentação de movimentações
+- **Sintoma:** qualquer crédito `SETTLEMENT` abaixo de R$ 5,00 era rotulado como rendimento; qualquer débito de até R$ 0,50 era chamado de imposto; `PAYOUTS` era apresentado como Pix/saque mesmo sem prova do meio.
+- **Causa:** heurísticas por valor e rótulo técnico foram tratadas como identificação oficial.
+- **Impacto:** falsos positivos visíveis ao usuário, exatamente no fluxo que deve exibir dados reais e não inferidos.
+- **Correção:** rendimento e imposto agora exigem texto explícito nos campos oficiais; `PAYOUT/PAYOUTS/WITHDRAWAL` recebe descrição neutra; contraparte ausente é exibida como “Não informado pelo provedor”.
+- **Teste de regressão:** `tests/transaction-presentation.test.js` cobre evidência explícita e valores pequenos sem evidência.
+
+### ERR-066 — Compose de produção não isolava nem completava a stack do Finance
+Status: RESOLVIDO_NO_CODIGO_PENDENTE_DEPLOY
+- **Data:** 2026-09-02
+- **Área:** deploy / Docker / isolamento operacional
+- **Sintoma:** `docker-compose.prod.yml` usava nomes genéricos (`web`, `postgres`, volumes `postgres_data`/`redis_data`), publicava a porta 3000, não incluía Evolution, não executava migrations e não definia worker/backup completos.
+- **Impacto:** risco de colisão operacional, banco sem schema, jobs parados e acoplamento acidental a stacks vizinhas.
+- **Correção:** stack `novexfinance-prod` criada com redes e volumes nomeados exclusivamente, banco/Redis internos, app e Evolution somente em loopback, migrator, worker, backup diário e logs rotacionados.
+- **Validação pendente:** executar `docker compose config`, subida e prova de isolamento no servidor antes de alterar o status para `RESOLVIDO`.
+
+### ERR-067 — Evolution em nível VERBOSE expunha chaves criptográficas de sessão nos logs
+Status: RESOLVIDO_LOCALMENTE_PENDENTE_SERVIDOR
+- **Data:** 2026-09-02
+- **Área:** Evolution / segurança / logs
+- **Sintoma:** logs locais da Evolution 2.3.7 incluíam `privKey`, `rootKey`, `remoteIdentityKey` e outros buffers internos da sessão Baileys.
+- **Impacto:** material sensível da sessão WhatsApp ficava retido no driver de logs Docker e poderia vazar em coleta, suporte ou backup de logs.
+- **Correção:** além de reduzir `LOG_LEVEL`, `LOG_BAILEYS`, persistência e telemetria, os Composes usam `logging.driver=none` exclusivamente na Evolution. Isso é necessário porque a própria v2.3.7 usa `console.log(messageRaw)` e `console.log('CACHE:', ...)`, fora do logger configurável. Saúde, autenticação, instância e conexão são diagnosticadas pelos endpoints autenticados.
+- **Fonte:** documentação oficial de variáveis da Evolution Foundation e `.env.example` oficial da Evolution API.
+- **Validação:** container local recriado, histórico anterior eliminado, leitura por `docker logs` indisponível por projeto e endpoint autenticado confirmou estado `open`. Repetir a prova no servidor.
+
+### ERR-068 — Atualização diária escondia o último saldo confirmado e falha não podia ser retomada
+Status: RESOLVIDO_LOCALMENTE_PENDENTE_SERVIDOR
+- **Data:** 2026-09-02
+- **Área:** Mercado Pago / saldo / worker
+- **Sintoma:** ao iniciar a task do dia seguinte, `FinancialAccount.officialBalanceStatus` mudava imediatamente para `RECONCILING`, ocultando a última âncora comprovada. Se uma janela falhasse, a constraint única impedia criar uma nova tentativa para o mesmo período.
+- **Impacto:** o usuário perdia a visualização do saldo válido durante uma atualização assíncrona e um erro transitório podia bloquear permanentemente o refresh daquele dia.
+- **Correção:** atualização em andamento preserva a última âncora e seu corte; somente instalação sem âncora entra em reconciliação. Uma execução falha da mesma janela é reclamada de forma atômica, e o cliente consulta `/release_report/list` antes de qualquer novo POST para evitar relatório remoto duplicado.
+- **Validação:** regressões aprovadas e task real da janela de 01/09/2026 concluída como `CONFIRMED`, publicando `BALANCE_AMOUNT` de R$ 59,68 no corte de 01/09/2026 23:59:59 BRT. A âncora anterior de R$ 137,66 permaneceu confirmada durante o processamento.

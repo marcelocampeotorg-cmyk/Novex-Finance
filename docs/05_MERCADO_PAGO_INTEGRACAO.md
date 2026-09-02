@@ -36,7 +36,22 @@ Não criar um relatório novo a cada render/poll do frontend.
 
 ## Saldo disponível
 
-O relatório Dinheiro em Conta comprova movimentações, não deve ser somado e rotulado como saldo atual. O relatório de Liberações pode ser usado como âncora somente depois de validar em resposta real os campos, o horário de corte e a correspondência com o saldo exibido pelo Mercado Pago. Sem essa prova, o saldo permanece indisponível/em reconciliação.
+O relatório Dinheiro em Conta comprova movimentações e não deve ser somado e rotulado como saldo atual.
+
+O saldo oficial obrigatório vem do Relatório de Liberações (`/v1/account/release_report`). O pipeline deve:
+
+1. garantir configuração compatível com CSV e os campos oficiais necessários;
+2. solicitar relatório assíncrono com `begin_date` e `end_date`, respeitando o máximo oficial de 60 dias;
+3. acompanhar a task persistida até `processed`, sem repetir POST durante processamento;
+4. baixar o `file_name` oficial;
+5. validar CSV, moeda, período, `DATE`, `BALANCE_AMOUNT`, débitos e créditos;
+6. usar o `BALANCE_AMOUNT` cronologicamente mais recente como âncora, nunca o `total` líquido;
+7. persistir a âncora, o corte devolvido pela task, identificadores e resumo de auditoria;
+8. marcar `CONFIRMED` somente com evidência válida e comparação inicial no aplicativo no mesmo corte.
+
+Falha, arquivo incompleto, período incorreto ou divergência mantém `RECONCILING/UNAVAILABLE`. O job usa o último dia civil encerrado, porque a API real normaliza períodos intradiários. Para atualizar após a âncora, somar apenas `SETTLEMENT_NET_AMOUNT` com cobertura contínua do Dinheiro em Conta e mostrar o horário coberto.
+
+O refresh de saldo e a sincronização de movimentações são jobs distintos e idempotentes. Um não pode transformar falha do outro em sucesso.
 
 ## Campos
 Preservar os campos oficiais úteis, entre eles:
@@ -76,4 +91,4 @@ Sandbox e Production não podem ser misturados. A integração ativa deve ser de
 Não implementar endpoint de refund, payout, transferência ou pagamento de saída na V1.
 
 ## Fontes oficiais
-Ver `23_FONTES_OFICIAIS.md`.
+Ver `23_FONTES_OFICIAIS.md` e o contrato detalhado `25_CONTRATO_OPERACIONAL_MERCADO_PAGO.md`.
