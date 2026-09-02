@@ -225,7 +225,7 @@ export default function DashboardPage() {
           overrideText={displaySummary.mercadoPagoOfficialBalanceCents === null ? "Em reconciliação" : undefined}
           subtitle={displaySummary.mercadoPagoOfficialBalanceCents === null
             ? "Relatório Liberações indisponível ou em reconciliação"
-            : `${displaySummary.mercadoPagoBalanceBasis === "RELEASE_PLUS_ACCOUNT_MONEY" ? "Atualizado por fontes oficiais" : "Âncora oficial"} até ${new Date(displaySummary.mercadoPagoOfficialBalanceAt!).toLocaleString("pt-BR")}`}
+            : `${displaySummary.mercadoPagoBalanceBasis === "RELEASE_PLUS_ACCOUNT_MONEY" ? "Atualizado por fontes oficiais" : "Âncora oficial"}${displaySummary.mercadoPagoOfficialBalanceAt ? ` até ${new Date(displaySummary.mercadoPagoOfficialBalanceAt).toLocaleString("pt-BR")}` : ""}`}
           icon={Wallet}
           variant="cyan"
           badgeText={displaySummary.mercadoPagoOfficialBalanceCents === null ? "Em Reconciliação" : "Oficial"}
@@ -343,7 +343,12 @@ export default function DashboardPage() {
                     color: "#F1F5F9",
                     fontSize: "12px",
                   }}
-                  formatter={(value: any) => [`R$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`, ""]}
+                  formatter={(value: any) => [
+                    value !== undefined && value !== null
+                      ? `R$ ${Number(value).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
+                      : "R$ 0,00",
+                    "",
+                  ]}
                 />
                 <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "10px" }} />
                 <Area type="monotone" dataKey="entradas" stroke="#10B981" fill="#10B98133" name="Entradas" />
@@ -428,36 +433,47 @@ export default function DashboardPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-novex-border/60">
-              {payables.map((item) => {
-                const inst = item.installments[0];
-                return (
-                  <tr key={item.id} className="hover:bg-novex-surface2/40 transition-colors">
-                    <td className="py-3.5 px-4 font-semibold text-novex-text-primary">{item.title}</td>
-                    <td className="py-3.5 px-4 text-novex-text-secondary">{item.contact?.name}</td>
-                    <td className="py-3.5 px-4">
-                      <span
-                        className="px-2 py-0.5 rounded text-[10px] font-semibold text-white"
-                        style={{ backgroundColor: item.categoryColor }}
-                      >
-                        {item.category}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4 text-novex-text-secondary">{formatDate(inst.dueDate)}</td>
-                    <td className="py-3.5 px-4 font-bold text-red-400">{formatCurrency(inst.amountCents)}</td>
-                    <td className="py-3.5 px-4">
-                      <StatusBadge status={inst.status} />
-                    </td>
-                    <td className="py-3.5 px-4 text-right">
-                      <button
-                        onClick={() => handleOpenPayment(item, inst)}
-                        className="rounded-lg bg-novex-cyan px-3 py-1.5 text-xs font-semibold text-novex-bg hover:bg-novex-cyan-hover transition-colors"
-                      >
-                        Pagar Pix
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
+              {payables.filter((item) => item.installments && item.installments.length > 0).length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-6 text-center text-xs text-novex-text-muted">
+                    Nenhum pagamento pendente no momento.
+                  </td>
+                </tr>
+              ) : (
+                payables
+                  .filter((item) => item.installments && item.installments.length > 0)
+                  .map((item) => {
+                    const inst = item.installments[0];
+                    if (!inst) return null;
+                    return (
+                      <tr key={item.id} className="hover:bg-novex-surface2/40 transition-colors">
+                        <td className="py-3.5 px-4 font-semibold text-novex-text-primary">{item.title}</td>
+                        <td className="py-3.5 px-4 text-novex-text-secondary">{item.contact?.name || "-"}</td>
+                        <td className="py-3.5 px-4">
+                          <span
+                            className="px-2 py-0.5 rounded text-[10px] font-semibold text-white"
+                            style={{ backgroundColor: item.categoryColor }}
+                          >
+                            {item.category}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 text-novex-text-secondary">{inst.dueDate ? formatDate(inst.dueDate) : "-"}</td>
+                        <td className="py-3.5 px-4 font-bold text-red-400">{formatCurrency(inst.amountCents)}</td>
+                        <td className="py-3.5 px-4">
+                          <StatusBadge status={inst.status} />
+                        </td>
+                        <td className="py-3.5 px-4 text-right">
+                          <button
+                            onClick={() => handleOpenPayment(item, inst)}
+                            className="rounded-lg bg-novex-cyan px-3 py-1.5 text-xs font-semibold text-novex-bg hover:bg-novex-cyan-hover transition-colors"
+                          >
+                            Pagar Pix
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+              )}
             </tbody>
           </table>
         </div>

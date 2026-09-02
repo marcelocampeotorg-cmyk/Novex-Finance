@@ -398,7 +398,17 @@ export async function getDashboardData() {
     }));
 
     const rawPayables = await db.financialItem.findMany({
-      where: { workspaceId, direction: "PAYABLE", status: "ACTIVE", deletedAt: null },
+      where: {
+        workspaceId,
+        direction: "PAYABLE",
+        status: "ACTIVE",
+        deletedAt: null,
+        installments: {
+          some: {
+            status: { notIn: ["SETTLED", "CANCELED"] },
+          },
+        },
+      },
       include: {
         installments: { where: { status: { notIn: ["SETTLED", "CANCELED"] } }, orderBy: { dueDate: "asc" }, take: 1 },
         contact: true,
@@ -408,21 +418,23 @@ export async function getDashboardData() {
       take: 5,
     });
 
-    const payables = rawPayables.map((item: any) => ({
-      id: item.id,
-      title: item.title,
-      contact: item.contact,
-      category: item.category?.name || "Geral",
-      categoryColor: item.category?.colorToken || "#6B7280",
-      startDate: item.startDate.toISOString(),
-      installments: item.installments.map((inst: any) => ({
-        id: inst.id,
-        sequence: inst.sequence,
-        amountCents: Number(inst.amountCents),
-        dueDate: inst.dueDate.toISOString(),
-        status: inst.status,
-      })),
-    }));
+    const payables = rawPayables
+      .filter((item: any) => item.installments && item.installments.length > 0)
+      .map((item: any) => ({
+        id: item.id,
+        title: item.title,
+        contact: item.contact,
+        category: item.category?.name || "Geral",
+        categoryColor: item.category?.colorToken || "#6B7280",
+        startDate: item.startDate.toISOString(),
+        installments: item.installments.map((inst: any) => ({
+          id: inst.id,
+          sequence: inst.sequence,
+          amountCents: Number(inst.amountCents),
+          dueDate: inst.dueDate.toISOString(),
+          status: inst.status,
+        })),
+      }));
 
     const debtorsCount = await db.contact.count({
       where: { workspaceId, isDebtor: true, deletedAt: null },
