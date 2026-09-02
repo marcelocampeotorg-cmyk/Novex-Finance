@@ -48,6 +48,7 @@ Thumbs.db
 /coverage/
 /.cache/
 *.zip
+*.tar.gz
 
 # Arquivos de chaves e certificados
 *.pem

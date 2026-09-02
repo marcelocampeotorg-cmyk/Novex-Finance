@@ -137,6 +137,17 @@
 
 ## 🔄 Fluxo de Retomada na Próxima Sessão
 
+### Ponto exato da interrupção — 2026-09-02 01:20 BRT
+
+- Commits publicados na branch `feat/mercado-pago-pix-receivables`: `052a696` (produto, integrações, documentação e infraestrutura) e `bc4e198` (restore fail-closed).
+- Servidor: pasta exclusiva `/home/servidor/Área de trabalho/Sistemas/novex finance` atualizada com o código e `.env.production` protegido; domínio canônico configurado como `https://www.app.novexfinance.com.br`.
+- Projeto Docker criado: `novexfinance-prod`. Somente `db` e `redis` estão ativos e saudáveis; app, worker, Evolution, migrator e backup ainda não foram iniciados.
+- Restore principal concluído e comprovado: 18 workspaces, 167 `external_transactions`, 167 `ledger_entries` e 10 migrations.
+- Restore Evolution concluído e comprovado: 37 tabelas no schema `public`.
+- Não executar novamente `scripts/restore-fresh-server.sh`: ele deve abortar porque os bancos já não estão vazios.
+- Containers Master e Oficina permaneceram saudáveis e não foram parados, recriados ou conectados a redes/volumes do Finance.
+- Próximo passo seguro: capturar snapshot dos containers/redes/volumes vizinhos, executar migrations/build e subir os serviços restantes do Compose; depois provar health, login, worker, saldo/extrato, Evolution `open`, backup e invariância dos outros sistemas.
+
 1. **Passo 1:** Ler este arquivo (`docs/TAREFAS_A_FAZER.md`) e o documento [docs/20_AUDITORIA_ESTADO_ATUAL.md](20_AUDITORIA_ESTADO_ATUAL.md).
 2. **Passo 2:** Iniciar pela **Tarefa 1** (conferência visual do saldo oficial do mesmo corte no app Mercado Pago; última âncora importada: R$ 59,68 em 01/09/2026 23:59:59 BRT).
 3. **Passo 3:** Executar a **Tarefa 2** (teste real da cobrança Pix de ponta a ponta).
