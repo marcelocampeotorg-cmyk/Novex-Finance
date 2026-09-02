@@ -44,9 +44,11 @@ services:
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:?EVOLUTION_API_KEY obrigatoria}
       EVOLUTION_INSTANCE_NAME: ${EVOLUTION_INSTANCE_NAME:-novex-finance}
       UPLOADS_DIR: /app/uploads
+      LOGS_DIR: /app/logs
       ALLOW_PUBLIC_SIGNUP: "false"
     volumes:
       - uploads_data:/app/uploads
+      - ./logs:/app/logs
     depends_on:
       migrate:
         condition: service_completed_successfully

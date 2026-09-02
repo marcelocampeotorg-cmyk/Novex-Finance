@@ -15,3 +15,27 @@ test("Cálculo de Saldo Projetado", () => {
   const projected = current + receivables - payables;
   assert.strictEqual(projected, 2132050);
 });
+
+test("Formatadores defensivos contra nulo, indefinido e dados corrompidos", async () => {
+  const { formatCurrency, formatDate, formatDateTime } = await import("../src/lib/formatters.ts");
+
+  // formatCurrency nunca lanca excecao
+  assert.strictEqual(formatCurrency(null), "R$ 0,00");
+  assert.strictEqual(formatCurrency(undefined), "R$ 0,00");
+  assert.strictEqual(formatCurrency(NaN), "R$ 0,00");
+  assert.strictEqual(formatCurrency(15000).includes("150,00"), true);
+
+  // formatDate nunca lanca excecao
+  assert.strictEqual(formatDate(null), "");
+  assert.strictEqual(formatDate(undefined), "");
+  assert.strictEqual(formatDate(""), "");
+  assert.strictEqual(formatDate("invalid-date-string"), "");
+  assert.strictEqual(formatDate("2026-09-02T12:00:00Z").includes("02/09/2026"), true);
+
+  // formatDateTime nunca lanca excecao
+  assert.strictEqual(formatDateTime(null), "");
+  assert.strictEqual(formatDateTime(undefined), "");
+  assert.strictEqual(formatDateTime("invalid-date-string"), "");
+  assert.strictEqual(formatDateTime("2026-09-02T12:00:00Z").includes("02/09/2026"), true);
+});
+
