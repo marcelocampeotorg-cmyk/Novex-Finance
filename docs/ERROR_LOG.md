@@ -501,3 +501,30 @@ Status: RESOLVIDO_LOCALMENTE_PENDENTE_SERVIDOR
 - **Impacto:** o usuário perdia a visualização do saldo válido durante uma atualização assíncrona e um erro transitório podia bloquear permanentemente o refresh daquele dia.
 - **Correção:** atualização em andamento preserva a última âncora e seu corte; somente instalação sem âncora entra em reconciliação. Uma execução falha da mesma janela é reclamada de forma atômica, e o cliente consulta `/release_report/list` antes de qualquer novo POST para evitar relatório remoto duplicado.
 - **Validação:** regressões aprovadas e task real da janela de 01/09/2026 concluída como `CONFIRMED`, publicando `BALANCE_AMOUNT` de R$ 59,68 no corte de 01/09/2026 23:59:59 BRT. A âncora anterior de R$ 137,66 permaneceu confirmada durante o processamento.
+
+### ERR-069 — Exceção client-side ao renderizar contas sem parcelas pendentes e ausência de observabilidade no servidor
+Status: RESOLVIDO
+- **Data:** 2026-09-02
+- **Área:** UI / Dashboard / Robustez Client-side / Observabilidade e Logs
+- **Sintoma:** Ao autenticar na conta real do proprietário em `https://finance.novexbr.com.br`, o navegador exibia tela preta com `Application error: a client-side exception has occurred (see the browser console for more information)`.
+- **Causa confirmada:**
+  1. No Dashboard (`src/app/(protected)/page.tsx`), a listagem de contas a pagar mapeava `payables` e lia `item.installments[0].dueDate` diretamente. Quando a conta pertencia a um plano já liquidado (`installments: []`), `item.installments[0]` era `undefined`, disparando `TypeError: Cannot read properties of undefined (reading 'dueDate')`.
+  2. Na sessão anterior, a compilação Docker disparada em background no servidor foi cancelada antes do término pelo encerramento da sessão; portanto, o servidor permaneceu rodando a imagem legada das 03:02:27 que continha o defeito.
+  3. Ausência de Error Boundary (`error.tsx`/`global-error.tsx`) no Next.js App Router, resultando na tela preta sem telemetria para o servidor.
+  4. Falta de utilitário centralizado de logs estruturados e persistência em arquivos para auditoria no host.
+- **Correção aplicada:**
+  1. Blindagem de formatadores em `src/lib/formatters.ts`: `formatDate`, `formatDateTime` e `formatCurrency` protegidos com `try/catch` contra nulos, indefinidos, `NaN` e strings inválidas.
+  2. Blindagem de renderização em `src/app/(protected)/page.tsx` filtrando apenas itens com parcelas ativas e checagem defensiva de existência de `inst.dueDate`.
+  3. Criação de Error Boundaries elegantes (`src/app/error.tsx` e `src/app/global-error.tsx`) no tema dark oficial do NOVEX Finance com botões de recuperação visual.
+  4. Criação da rota `/api/logs/client` (liberada em `src/middleware.ts`) para ingestão segura de erros do navegador.
+  5. Criação de `src/lib/logger.ts` com gravação simultânea em stdout e arquivos rotacionados persistentes (`logs/system.log`, `logs/error.log`, `logs/audit.log`) mapeados no volume `./logs:/app/logs` do Compose de produção.
+  6. Criação do utilitário `scripts/view-logs.sh` no servidor para auditoria rápida e acompanhamento de logs via CLI.
+  7. Imagem Docker `novexfinance-prod-app` recompilada com sucesso no servidor e container `novexfinance-prod-app-1` recriado e validado em loopback (`HTTP 200`).
+- **Evidência:**
+  - 124 testes unitários e de integração passando localmente (121 aprovados, 3 skipped por falta de `TEST_DATABASE_URL`).
+  - Next.js build local e produção Docker com código de saída 0.
+  - Teste de telemetria via loopback `curl -s -X POST http://127.0.0.1:3001/api/logs/client` retornou `{"received":true}` e gravou a entrada em `logs/error.log` no host do servidor.
+  - Execução de `sh scripts/view-logs.sh errors` e `sh scripts/view-logs.sh system` no servidor validou o registro em arquivo.
+  - `curl -sI https://finance.novexbr.com.br/login` respondeu `HTTP/1.1 200 OK`.
+- **Commit:** bd86ead, 895b7ec
+
