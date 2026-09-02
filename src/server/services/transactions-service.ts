@@ -399,6 +399,52 @@ export async function importExternalTransactions(
 }
 
 /**
+ * Sincroniza pagamentos intradiários recentes via API oficial de Pagamentos do Mercado Pago.
+ * Ingerido diretamente no Ledger para refletir recebimentos Pix em tempo real
+ * sem aguardar a geração assíncrona do relatório em lote.
+ */
+export async function syncRecentMercadoPagoPayments(
+  workspaceId: string,
+  internalContext?: symbol,
+) {
+  try {
+    const account = await getActiveMercadoPagoIntegrationForWorkspace(workspaceId);
+    if (!account || !account.encryptedCredentials || !account.financialAccountId) {
+      return { success: false, reason: "INTEGRATION_UNAVAILABLE" };
+    }
+
+    const { accessToken } = parseMercadoPagoCredentials(account.encryptedCredentials);
+    const paymentsClient = new MercadoPagoPaymentsClient(accessToken);
+
+    // Buscar últimos 3 dias para cobrir com segurança pagamentos intradiários recentes
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    const recentPayments = await paymentsClient.searchRecentApprovedPayments({
+      beginDate: threeDaysAgo,
+      limit: 50,
+    });
+
+    if (recentPayments.length === 0) {
+      return { success: true, insertedCount: 0, updatedCount: 0 };
+    }
+
+    const importResult = await importExternalTransactions(
+      recentPayments,
+      account.id,
+      "MERCADO_PAGO_API",
+      "MERCADO_PAGO",
+      internalContext || INTERNAL_WORKER_CONTEXT,
+      workspaceId,
+      account.financialAccountId,
+    );
+
+    return importResult;
+  } catch (error: any) {
+    console.error("[syncRecentMercadoPagoPayments] Erro na sincronização de pagamentos recentes:", error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
  * Pipeline Oficial do Relatório Dinheiro em Conta (Settlement Report - Assíncrono)
  */
 export async function continueMercadoPagoSyncRun(
@@ -435,6 +481,13 @@ export async function continueMercadoPagoSyncRun(
         data: { providerAccountCreatedAt: new Date(identity.accountCreatedAt) },
       });
     }
+  }
+
+  // Sincronizar pagamentos intradiários recentes em tempo real para refletir entradas Pix imediatamente
+  try {
+    await syncRecentMercadoPagoPayments(workspaceId, isInternalWorker ? INTERNAL_WORKER_CONTEXT : undefined);
+  } catch (recentErr) {
+    console.warn("[continueMercadoPagoSyncRun] Sincronização de pagamentos recentes intradiários falhou:", recentErr);
   }
 
   // 1. Verificar se existe SyncRun em andamento (PROCESSING) ou criar novo

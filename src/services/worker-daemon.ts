@@ -2,7 +2,7 @@ import { db } from "@/server/db";
 import { processActiveRecurrencesForWorkspace } from "@/server/services/recurrence-service";
 import { processAutomaticWhatsAppCollectionsForWorkspace, processNotificationAlertsForWorkspace } from "@/server/services/notification-service";
 import { reconcileWorkspace } from "@/server/services/reconciliation-service";
-import { continueMercadoPagoSyncRun, enrichAllMercadoPagoTransactions } from "@/server/services/transactions-service";
+import { continueMercadoPagoSyncRun, enrichAllMercadoPagoTransactions, syncRecentMercadoPagoPayments } from "@/server/services/transactions-service";
 import { INTERNAL_WORKER_CONTEXT } from "@/server/internal-context";
 import { discoverWorkspaceRecurrences } from "@/services/recurrence-discovery";
 import { continueMercadoPagoBalanceSync } from "@/server/services/mercado-pago-balance-service";
@@ -107,6 +107,13 @@ export class WorkerDaemonService {
           });
 
           for (const integration of mpIntegrations) {
+            // Ingestão em tempo real de pagamentos Pix recentes (sem consumir cota de relatórios em lote)
+            try {
+              await syncRecentMercadoPagoPayments(ws.id, INTERNAL_WORKER_CONTEXT);
+            } catch (realtimeErr: any) {
+              console.warn(`[WorkerDaemon] Ingestão em tempo real para workspace ${ws.id} falhou:`, realtimeErr.message);
+            }
+
             // Verificar se já existe um SyncRun PROCESSING ativo para esta integração
             const activeSync = await db.syncRun.findFirst({
               where: {

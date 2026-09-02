@@ -237,16 +237,18 @@ export async function getWorkspaceSummary() {
             workspaceId,
             financialAccountId: mercadoPagoAccount.id,
             excludedFromReports: false,
-            occurredAt: { gt: anchorAt!, lte: mpContinuousCoverageEnd! },
+            occurredAt: { gt: anchorAt! },
             OR: [{ externalTransaction: null }, { externalTransaction: { quarantinedAt: null } }],
           },
-          select: { direction: true, amountCents: true },
+          select: { direction: true, amountCents: true, occurredAt: true },
+          orderBy: { occurredAt: "asc" },
         });
         mercadoPagoOfficialBalanceCents += laterEntries.reduce(
           (sum, entry) => sum + (entry.direction === "CREDIT" ? Number(entry.amountCents) : -Number(entry.amountCents)),
           0,
         );
-        mercadoPagoOfficialBalanceAt = mpContinuousCoverageEnd;
+        const lastEntry = laterEntries.length > 0 ? laterEntries[laterEntries.length - 1] : null;
+        mercadoPagoOfficialBalanceAt = lastEntry ? lastEntry.occurredAt : (mpContinuousCoverageEnd || anchorAt);
         mercadoPagoBalanceBasis = "RELEASE_PLUS_ACCOUNT_MONEY";
       }
     } else {

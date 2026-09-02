@@ -1,3 +1,5 @@
+import type { MercadoPagoRawTransaction } from "./reports-client";
+
 export interface MercadoPagoPaymentEnrichment {
   description?: string;
   counterpartName?: string;
@@ -65,6 +67,99 @@ export class MercadoPagoPaymentsClient {
   }
 
   /**
+   * Converte um pagamento aprovado da Payments API em MercadoPagoRawTransaction
+   * compatível com a chave composta de deduplicação do Settlement Report.
+   */
+  mapPaymentToRawTransaction(p: any): MercadoPagoRawTransaction | null {
+    if (!p || !p.id) return null;
+    const isApproved = p.status === "approved" && ["accredited", "approved"].includes(String(p.status_detail || "").toLowerCase());
+    if (!isApproved) return null;
+
+    const netReceived = p.transaction_details?.net_received_amount ?? p.transaction_amount ?? 0;
+    const totalAmount = p.transaction_amount ?? netReceived;
+    const netAmountCents = Math.round(Number(netReceived) * 100);
+    const amountCents = Math.round(Number(totalAmount) * 100);
+    const feeCents = Math.max(0, amountCents - netAmountCents);
+
+    const enrichment = this.mapPaymentToEnrichmentData(p);
+    const rawSourceId = String(p.id);
+    const typeStr = "SETTLEMENT";
+    const direction = "CREDIT";
+    const compositeExternalId = `${rawSourceId}_${typeStr}_${direction}_${netAmountCents}`;
+
+    const occurredAt = new Date(p.date_approved || p.date_created || Date.now()).toISOString();
+
+    return {
+      externalId: compositeExternalId,
+      occurredAt,
+      type: typeStr,
+      description: enrichment.description || "Pix Recebido",
+      direction,
+      amountCents,
+      feeCents,
+      netAmountCents,
+      counterpartName: enrichment.counterpartName,
+      counterpartDocument: enrichment.counterpartDocument,
+      txid: enrichment.txid,
+      rawReference: enrichment.rawReference,
+      rawProviderData: {
+        payment_id: String(p.id),
+        operation_type: String(p.operation_type || ""),
+        payment_method_id: String(p.payment_method_id || ""),
+        status: String(p.status || ""),
+        status_detail: String(p.status_detail || ""),
+        source: "MERCADO_PAGO_REALTIME_PAYMENT",
+      },
+    };
+  }
+
+  /**
+   * Busca pagamentos recentes aprovados na Payments API
+   */
+  async searchRecentApprovedPayments(options: { beginDate?: Date; limit?: number } = {}): Promise<MercadoPagoRawTransaction[]> {
+    try {
+      const limit = Math.min(options.limit || 50, 50);
+      const url = new URL("https://api.mercadopago.com/v1/payments/search");
+      url.searchParams.set("sort", "date_created");
+      url.searchParams.set("criteria", "desc");
+      url.searchParams.set("limit", String(limit));
+
+      if (options.beginDate) {
+        url.searchParams.set("range", "date_created");
+        url.searchParams.set("begin_date", options.beginDate.toISOString().replace(/\.\d{3}Z$/, "Z"));
+        url.searchParams.set("end_date", new Date().toISOString().replace(/\.\d{3}Z$/, "Z"));
+      }
+
+      const response = await fetch(url.toString(), {
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+          "Content-Type": "application/json",
+          "User-Agent": "NovexFinance/1.0 (Realtime Payment Integration)",
+        },
+      });
+
+      if (!response.ok) {
+        console.warn(`[MercadoPagoPaymentsClient] Falha ao buscar pagamentos recentes: HTTP ${response.status}`);
+        return [];
+      }
+
+      const data = await response.json();
+      const results = Array.isArray(data?.results) ? data.results : [];
+
+      const transactions: MercadoPagoRawTransaction[] = [];
+      for (const p of results) {
+        const raw = this.mapPaymentToRawTransaction(p);
+        if (raw) transactions.push(raw);
+      }
+
+      return transactions;
+    } catch (err) {
+      console.error("[MercadoPagoPaymentsClient] Erro na busca de pagamentos recentes:", err);
+      return [];
+    }
+  }
+
+  /**
    * Obtém os detalhes de um pagamento específico por ID para enriquecimento de fato financeiro já existente
    */
   async getPaymentDetails(paymentId: string | number): Promise<any | null> {
@@ -89,3 +184,4 @@ export class MercadoPagoPaymentsClient {
     }
   }
 }
+
