@@ -11,6 +11,7 @@ export function middleware(request: NextRequest) {
     path.startsWith("/api/webhooks") ||
     path.startsWith("/api/worker") ||
     path.startsWith("/api/health") ||
+    path.startsWith("/api/logs") ||
     path.startsWith("/brand") ||
     path === "/sw.js" ||
     path === "/manifest.json";
