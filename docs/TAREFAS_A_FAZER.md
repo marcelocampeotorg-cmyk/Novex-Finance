@@ -126,30 +126,28 @@
   * [x] Portas, Compose projects, redes e volumes existentes auditados sem alterações.
   * [x] Compose exclusivo, migrator, worker, Evolution, backup e bind em loopback preparados no código.
   * [x] Migração dos dados, credenciais e sessão reais definida para preservar a operação atual; dumps restaurados em banco descartável.
-  * [ ] `docker compose config` e migrations em banco limpo passam no servidor.
-  * [ ] Stack `novexfinance-prod` saudável sem mudança nos containers, redes e volumes dos outros projetos.
+  * [x] `docker compose config` validado com sucesso no servidor.
+  * [x] Build das imagens Docker `migrate`, `app` e `worker` concluído no servidor sem erros.
+  * [x] Teardown dos serviços locais conflitantes (`app`, `worker`, `evolution`) executado para liberar sessão única no servidor.
+  * [ ] Executar `prisma migrate deploy` e subir stack completa (`app`, `worker`, `evolution`, `backup`) no servidor.
+  * [ ] Stack `novexfinance-prod` saudável no loopback (`127.0.0.1:3001/api/health`) sem mudança nos containers vizinhos.
   * [x] Restore dos bancos principal e Evolution validado em PostgreSQL descartável.
+  * [ ] Delegação de nameservers na Hostinger concluída e DNS de `www.app.novexfinance.com.br` propagado via Cloudflare Tunnel.
   * [ ] Login funcionando pela origem final sem `INVALID_ORIGIN`.
-  * [ ] DNS/HTTPS de `www.app.novexfinance.com.br` configurado e webhook público validado.
   * [ ] Mercado Pago e Evolution novamente comprovados no runtime do servidor.
 
 ---
 
-## 🔄 Fluxo de Retomada na Próxima Sessão
+## 🔄 Fluxo de Retomada e Estado Atual
 
-### Ponto exato da interrupção — 2026-09-02 01:20 BRT
+### Ponto consolidado — 2026-09-02 01:38 BRT
 
-- Commits publicados na branch `feat/mercado-pago-pix-receivables`: `052a696` (produto, integrações, documentação e infraestrutura) e `bc4e198` (restore fail-closed).
-- Servidor: pasta exclusiva `/home/servidor/Área de trabalho/Sistemas/novex finance` atualizada com o código e `.env.production` protegido; domínio canônico configurado como `https://www.app.novexfinance.com.br`.
-- Projeto Docker criado: `novexfinance-prod`. Somente `db` e `redis` estão ativos e saudáveis; app, worker, Evolution, migrator e backup ainda não foram iniciados.
-- Restore principal concluído e comprovado: 18 workspaces, 167 `external_transactions`, 167 `ledger_entries` e 10 migrations.
-- Restore Evolution concluído e comprovado: 37 tabelas no schema `public`.
-- Não executar novamente `scripts/restore-fresh-server.sh`: ele deve abortar porque os bancos já não estão vazios.
-- Containers Master e Oficina permaneceram saudáveis e não foram parados, recriados ou conectados a redes/volumes do Finance.
-- Próximo passo seguro: capturar snapshot dos containers/redes/volumes vizinhos, executar migrations/build e subir os serviços restantes do Compose; depois provar health, login, worker, saldo/extrato, Evolution `open`, backup e invariância dos outros sistemas.
-
-1. **Passo 1:** Ler este arquivo (`docs/TAREFAS_A_FAZER.md`) e o documento [docs/20_AUDITORIA_ESTADO_ATUAL.md](20_AUDITORIA_ESTADO_ATUAL.md).
-2. **Passo 2:** Iniciar pela **Tarefa 1** (conferência visual do saldo oficial do mesmo corte no app Mercado Pago; última âncora importada: R$ 59,68 em 01/09/2026 23:59:59 BRT).
-3. **Passo 3:** Executar a **Tarefa 2** (teste real da cobrança Pix de ponta a ponta).
-4. **Passo 4:** Executar a **Tarefa 3** (escanear QR Code da Evolution e testar o bot de cobrança).
-5. **Passo 5:** Executar a **Tarefa 5** (deploy no servidor de produção).
+- **Infraestrutura documentada:** [docs/INFRAESTRUTURA_E_ACESSO_SERVIDOR.md](INFRAESTRUTURA_E_ACESSO_SERVIDOR.md) contém todos os dados de SSH (`192.168.4.12`), Cloudflare Tunnel ID (`658e11b9-3278-4908-a602-fa15fcc34530`), Account Tag (`820b26ab31089eb3d67b2c9ffb0cebcd`), matriz de portas e runbooks de diagnóstico.
+- **Servidor:** pasta `/home/servidor/Área de trabalho/Sistemas/novex finance` sincronizada com o HEAD `9fc7087`.
+- **Imagens compiladas no servidor:** `novexfinance-prod-migrate`, `novexfinance-prod-app` e `novexfinance-prod-worker`.
+- **Bancos restaurados:** 18 workspaces, 167 transações externas, 167 lançamentos de ledger, 10 migrations e 37 tabelas na Evolution.
+- **Sistemas vizinhos:** *Master* e *Oficina* permanecem 100% saudáveis e intocados.
+- **Próximos passos:**
+  1. Concluir a troca de nameservers na Hostinger para ativação do DNS Cloudflare.
+  2. Executar `docker compose up -d` para inicializar a stack `novexfinance-prod`.
+  3. Validar `curl http://127.0.0.1:3001/api/health`, Evolution `open` e backup verificado.
