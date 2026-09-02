@@ -549,4 +549,27 @@ Status: RESOLVIDO
   - Imagem Docker compilada e container `novexfinance-prod-app-1` recriado com healthcheck `{"status":"ok"}`.
 - **Commit:** 3d55e3b
 
+### ERR-071 — Saldo desatualizado por ausência de captura intradiária de Pix e falso positivo de horário
+Status: RESOLVIDO
+- **Data:** 2026-09-02
+- **Área:** Mercado Pago / Pagamentos Intradiários / Tempo Real / Observabilidade Temporal
+- **Sintoma:** O painel exibia saldo de R$ 59,71 com o carimbo *"Atualizado por fontes oficiais até 02/09/2026, 12:14:14"*, quando o usuário havia recebido um Pix de R$ 75,00 às 12:04:41 (elevando a conta real para R$ 134,71).
+- **Causa confirmada:**
+  1. O sistema dependia exclusivamente do Relatório Dinheiro em Conta (lote assíncrono CSV). O último lote disponível havia sido gerado às 08:16:00 BRT e continha transações apenas até às 01:17:43 BRT.
+  2. Como a API do Mercado Pago impôs cota restritiva (`HTTP 429 Max number of reports achieved`), o sistema não conseguia emitir novo lote para o mesmo dia e reutilizava o lote matinal.
+  3. No cálculo do resumo do dashboard, `mercadoPagoOfficialBalanceAt` recebia a data/hora em que a sincronização executou (`12:14:14`), criando um falso positivo temporal de que os dados estavam apurados até aquele segundo.
+- **Correção aplicada:**
+  1. Implementada ingestão intradiária de pagamentos Pix via `/v1/payments/search` em `MercadoPagoPaymentsClient.searchRecentApprovedPayments` e `syncRecentMercadoPagoPayments`.
+  2. O identificador composto `${payment.id}_SETTLEMENT_CREDIT_${amountCents}` garante 100% de idempotência, sendo herdado e conciliado perfeitamente quando o arquivo do relatório oficial for gerado posteriormente pelo provedor.
+  3. O Worker Daemon de background passou a executar a checagem leve de pagamentos intradiários a cada ciclo, sem exigir cliques manuais do usuário.
+  4. O cálculo de `mercadoPagoOfficialBalanceAt` foi corrigido para usar a data/hora real da última movimentação confirmada (`lastEntry.occurredAt`), eliminando projeções fictícias de horários futuros.
+- **Evidência:**
+  - Pagamento `176866825828` de R$ 75,00 (Itaú Unibanco -> Mercado Pago) importado com sucesso em `external_transactions` e `ledger_entries`.
+  - Saldo oficial recalculado com precisão matemática em **R$ 134,71** (`59,68 + 0,03 + 75,00`).
+  - Data/hora oficial fixada exatamente em `02/09/2026, 12:04:41` (momento exato do Pix recebido).
+  - 121 testes unitários aprovados localmente e build Next.js com código 0.
+  - Imagem Docker compilada e container `app` em produção saudável (`{"status":"ok"}`).
+- **Commit:** b90080c
+
+
 
