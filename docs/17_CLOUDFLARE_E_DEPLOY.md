@@ -31,6 +31,8 @@ Apagar a pasta do Finance não apaga volumes Docker automaticamente. Remover a s
 8. subir Evolution, app, worker e backup;
 9. aguardar healthcheck;
 10. provar containers, redes, volumes, logs, migrações, login e integrações;
+
+Em instalação nova com migração do runtime local, `scripts/restore-fresh-server.sh` restaura os bancos principal e Evolution somente se ambos estiverem vazios. O script aborta diante de qualquer tabela existente e nunca usa `--clean`.
 11. somente então configurar ou trocar proxy/DNS.
 
 ## Domínio e HTTPS
