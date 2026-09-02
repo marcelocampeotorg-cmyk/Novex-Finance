@@ -164,10 +164,21 @@ export class MercadoPagoReleaseReportsClient {
     const reports = Array.isArray(data) ? data : Array.isArray(data?.results) ? data.results : [];
     const beginMs = beginDate.getTime();
     const endMs = endDate.getTime();
-    const matches = reports.filter((item: any) => {
+
+    // 1. Prioridade absoluta: correspondência exata de timestamp
+    const exactMatches = reports.filter((item: any) => {
       const itemBegin = new Date(String(item?.begin_date || "")).getTime();
       const itemEnd = new Date(String(item?.end_date || "")).getTime();
       return Number.isFinite(itemBegin) && Number.isFinite(itemEnd) && itemBegin === beginMs && itemEnd === endMs;
+    });
+
+    const matches = exactMatches.length > 0 ? exactMatches : reports.filter((item: any) => {
+      const itemBegin = new Date(String(item?.begin_date || "")).getTime();
+      const itemEnd = new Date(String(item?.end_date || "")).getTime();
+      if (!Number.isFinite(itemBegin) || !Number.isFinite(itemEnd)) return false;
+      const coversStart = itemBegin <= beginMs || (itemBegin - beginMs) <= 24 * 3600 * 1000;
+      const coversEnd = itemEnd >= endMs || (endMs - itemEnd) <= 24 * 3600 * 1000;
+      return coversStart && coversEnd;
     });
     if (matches.length === 0) return null;
     matches.sort((left: any, right: any) => {

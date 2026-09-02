@@ -228,6 +228,27 @@ export class MercadoPagoReportsClient {
     try {
       await this.ensureReportConfig();
 
+      // 1. Verificação prévia de relatórios existentes que cubram a janela (evita estourar limite assíncrono de relatórios)
+      try {
+        const listRes = await fetch("https://api.mercadopago.com/v1/account/settlement_report/list", {
+          headers: { Authorization: `Bearer ${this.accessToken}` },
+        });
+        if (listRes.ok) {
+          const list = await listRes.json();
+          const existing = findMatchingSettlementReport(list, beginDate, endDate);
+          if (existing && ["processed", "ready", "available"].includes(String(existing.status || "").toLowerCase()) && existing.file_name) {
+            return {
+              success: true,
+              taskId: String(existing.id),
+              status: "READY",
+              fileName: existing.file_name,
+            };
+          }
+        }
+      } catch (checkErr) {
+        console.warn("[ReportsClient] Verificação prévia de relatórios existentes falhou:", checkErr);
+      }
+
       const begin = this.formatIsoWithoutMs(beginDate);
       const end = this.formatIsoWithoutMs(endDate);
 
@@ -258,7 +279,6 @@ export class MercadoPagoReportsClient {
       const errMsg = String(errData.message || errData.error || "");
 
       // Resiliência: se o Mercado Pago atingiu o limite de relatórios gerados simultâneos (HTTP 400 Max number of reports)
-      // SOMENTE reutilizar se o relatório na lista corresponder determinística e estritamente às datas solicitadas
       if (response.status === 400 || errMsg.toLowerCase().includes("max number of reports")) {
         try {
           const listRes = await fetch("https://api.mercadopago.com/v1/account/settlement_report/list", {
@@ -266,18 +286,9 @@ export class MercadoPagoReportsClient {
           });
           if (listRes.ok) {
             const list = await listRes.json();
-            const requestedBeginIso = new Date(begin).toISOString().replace(/\.\d{3}Z$/, "Z");
-            const requestedEndIso = new Date(end).toISOString().replace(/\.\d{3}Z$/, "Z");
+            const matchingReport = findMatchingSettlementReport(list, beginDate, endDate);
 
-            const matchingReport = Array.isArray(list) ? list.find((r: any) => {
-              if (r.status !== "processed" || !r.file_name) return false;
-              if (!r.begin_date || !r.end_date) return false;
-              const repBeginIso = new Date(r.begin_date).toISOString().replace(/\.\d{3}Z$/, "Z");
-              const repEndIso = new Date(r.end_date).toISOString().replace(/\.\d{3}Z$/, "Z");
-              return repBeginIso === requestedBeginIso && repEndIso === requestedEndIso;
-            }) : null;
-
-            if (matchingReport) {
+            if (matchingReport && matchingReport.file_name) {
               return {
                 success: true,
                 taskId: String(matchingReport.id),
@@ -536,3 +547,81 @@ export class MercadoPagoReportsClient {
     };
   }
 }
+
+/**
+ * Seleciona o melhor relatório de liquidação existente na lista do Mercado Pago:
+ * 1. Correspondência exata ISO (preserva testes e chamadas estritas);
+ * 2. Relatório processado que cobre a janela solicitada (arredondamento diário do MP);
+ * 3. Relatório em processamento que cobre a janela solicitada.
+ */
+export function findMatchingSettlementReport(
+  list: any[],
+  beginDate: Date,
+  endDate: Date
+): any | null {
+  if (!Array.isArray(list) || list.length === 0) return null;
+
+  const reqBeginIso = new Date(beginDate).toISOString().replace(/\.\d{3}Z$/, "Z");
+  const reqEndIso = new Date(endDate).toISOString().replace(/\.\d{3}Z$/, "Z");
+  const reqBeginTime = new Date(beginDate).getTime();
+  const reqEndTime = new Date(endDate).getTime();
+
+  // 1. Prioridade absoluta: correspondência exata de ISO strings
+  const exactMatch = list.find((r: any) => {
+    if (!r.begin_date || !r.end_date) return false;
+    const isReady = ["processed", "ready", "available"].includes(String(r.status || "").toLowerCase()) && Boolean(r.file_name);
+    if (!isReady) return false;
+    const repBeginIso = new Date(r.begin_date).toISOString().replace(/\.\d{3}Z$/, "Z");
+    const repEndIso = new Date(r.end_date).toISOString().replace(/\.\d{3}Z$/, "Z");
+    return repBeginIso === reqBeginIso && repEndIso === reqEndIso;
+  });
+  if (exactMatch) return exactMatch;
+
+  // 2. Relatório processado que engloba a janela solicitada (arredondamento diário do Mercado Pago)
+  const coveringReports = list.filter((r: any) => {
+    if (!r.begin_date || !r.end_date) return false;
+    const isReady = ["processed", "ready", "available"].includes(String(r.status || "").toLowerCase()) && Boolean(r.file_name);
+    if (!isReady) return false;
+
+    const repBeginTime = new Date(r.begin_date).getTime();
+    const repEndTime = new Date(r.end_date).getTime();
+
+    const coversStart = repBeginTime <= reqBeginTime || (repBeginTime - reqBeginTime) <= 24 * 3600 * 1000;
+    const coversEnd = repEndTime >= reqEndTime || (reqEndTime - repEndTime) <= 24 * 3600 * 1000;
+
+    return coversStart && coversEnd;
+  });
+
+  if (coveringReports.length > 0) {
+    coveringReports.sort((a, b) => {
+      const dateA = new Date(a.date_created || a.last_modified || 0).getTime();
+      const dateB = new Date(b.date_created || b.last_modified || 0).getTime();
+      if (dateB !== dateA) return dateB - dateA;
+      return (Number(b.id) || 0) - (Number(a.id) || 0);
+    });
+    return coveringReports[0];
+  }
+
+  // 3. Relatório em processamento na mesma janela
+  const pendingReports = list.filter((r: any) => {
+    if (!r.begin_date || !r.end_date) return false;
+    const isPending = ["processing", "pending", "in_progress"].includes(String(r.status || "").toLowerCase());
+    if (!isPending) return false;
+
+    const repBeginTime = new Date(r.begin_date).getTime();
+    const repEndTime = new Date(r.end_date).getTime();
+
+    const coversStart = repBeginTime <= reqBeginTime || (repBeginTime - reqBeginTime) <= 24 * 3600 * 1000;
+    const coversEnd = repEndTime >= reqEndTime || (reqEndTime - repEndTime) <= 24 * 3600 * 1000;
+
+    return coversStart && coversEnd;
+  });
+
+  if (pendingReports.length > 0) {
+    pendingReports.sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
+    return pendingReports[0];
+  }
+
+  return null;
+}
+

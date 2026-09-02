@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { requireAuthenticatedWorkspace } from "@/server/auth-context";
 import { getActiveMercadoPagoIntegrationForWorkspace } from "@/server/services/mercado-pago-integration";
 import { parseMercadoPagoCredentials } from "@/lib/server/credentials-crypto";
-import { MercadoPagoReportsClient, MercadoPagoRawTransaction } from "@/integrations/mercado-pago/reports-client";
+import { MercadoPagoReportsClient, MercadoPagoRawTransaction, findMatchingSettlementReport } from "@/integrations/mercado-pago/reports-client";
 import { MercadoPagoPaymentsClient } from "@/integrations/mercado-pago/payments-client";
 import { categorizeTransactionDescription, reconcileWorkspace } from "@/server/services/reconciliation-service";
 import { INTERNAL_WORKER_CONTEXT } from "@/server/internal-context";
@@ -484,7 +484,7 @@ export async function continueMercadoPagoSyncRun(
 
       const timeSinceFailure = Date.now() - failureTime;
 
-      if (timeSinceFailure < cooldownMs) {
+      if (timeSinceFailure < cooldownMs && !isForce) {
         const remainingSec = Math.ceil((cooldownMs - timeSinceFailure) / 1000);
         return {
           success: false,
@@ -636,15 +636,7 @@ export async function continueMercadoPagoSyncRun(
         });
         if (listRes.ok) {
           const list = await listRes.json();
-          const requestedBeginIso = new Date(beginDate).toISOString().replace(/\.\d{3}Z$/, "Z");
-          const requestedEndIso = new Date(endDate).toISOString().replace(/\.\d{3}Z$/, "Z");
-
-          const existingReport = Array.isArray(list) ? list.find((r: any) => {
-            if (!r.begin_date || !r.end_date) return false;
-            const repBeginIso = new Date(r.begin_date).toISOString().replace(/\.\d{3}Z$/, "Z");
-            const repEndIso = new Date(r.end_date).toISOString().replace(/\.\d{3}Z$/, "Z");
-            return repBeginIso === requestedBeginIso && repEndIso === requestedEndIso;
-          }) : null;
+          const existingReport = findMatchingSettlementReport(list, beginDate, endDate);
 
           if (existingReport) {
             const isReady = existingReport.status === "processed" && Boolean(existingReport.file_name);
