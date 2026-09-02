@@ -107,13 +107,6 @@ export class WorkerDaemonService {
           });
 
           for (const integration of mpIntegrations) {
-            // Ingestão em tempo real de pagamentos Pix recentes (sem consumir cota de relatórios em lote)
-            try {
-              await syncRecentMercadoPagoPayments(ws.id, INTERNAL_WORKER_CONTEXT);
-            } catch (realtimeErr: any) {
-              console.warn(`[WorkerDaemon] Ingestão em tempo real para workspace ${ws.id} falhou:`, realtimeErr.message);
-            }
-
             // Verificar se já existe um SyncRun PROCESSING ativo para esta integração
             const activeSync = await db.syncRun.findFirst({
               where: {

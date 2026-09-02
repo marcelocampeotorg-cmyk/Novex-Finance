@@ -237,8 +237,16 @@ export async function getWorkspaceSummary() {
             workspaceId,
             financialAccountId: mercadoPagoAccount.id,
             excludedFromReports: false,
-            occurredAt: { gt: anchorAt! },
-            OR: [{ externalTransaction: null }, { externalTransaction: { quarantinedAt: null } }],
+            occurredAt: { gt: anchorAt!, lte: mpContinuousCoverageEnd! },
+            OR: [
+              { externalTransaction: null },
+              {
+                externalTransaction: {
+                  quarantinedAt: null,
+                  source: { not: "MERCADO_PAGO_API" },
+                },
+              },
+            ],
           },
           select: { direction: true, amountCents: true, occurredAt: true },
           orderBy: { occurredAt: "asc" },

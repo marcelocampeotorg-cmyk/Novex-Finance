@@ -483,13 +483,6 @@ export async function continueMercadoPagoSyncRun(
     }
   }
 
-  // Sincronizar pagamentos intradiários recentes em tempo real para refletir entradas Pix imediatamente
-  try {
-    await syncRecentMercadoPagoPayments(workspaceId, isInternalWorker ? INTERNAL_WORKER_CONTEXT : undefined);
-  } catch (recentErr) {
-    console.warn("[continueMercadoPagoSyncRun] Sincronização de pagamentos recentes intradiários falhou:", recentErr);
-  }
-
   // 1. Verificar se existe SyncRun em andamento (PROCESSING) ou criar novo
   let syncRun = syncRunId ? await db.syncRun.findFirst({
     where: { id: syncRunId, workspaceId, integrationAccountId: account.id, status: "PROCESSING" },
