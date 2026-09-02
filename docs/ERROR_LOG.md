@@ -528,3 +528,25 @@ Status: RESOLVIDO
   - `curl -sI https://finance.novexbr.com.br/login` respondeu `HTTP/1.1 200 OK`.
 - **Commit:** bd86ead, 895b7ec
 
+### ERR-070 — Falha no Sync por 'Max number of reports achieved' e bloqueio por cooldown estrito
+Status: RESOLVIDO
+- **Data:** 2026-09-02
+- **Área:** Mercado Pago / Relatórios Assíncronos / Sincronização / Resiliência de Rate Limit
+- **Sintoma:** Botão de sincronização no painel exibia `Falha no Sync: Max number of reports achieved` e o clique manual do usuário não conseguia forçar a sincronização.
+- **Causa confirmada:**
+  1. A API do Mercado Pago normaliza as datas de início e fim dos relatórios assíncronos (`settlement_report`) para marcos diários (ex: `03:00:00Z` e `02:59:59Z`).
+  2. As rotinas de busca de relatórios existentes (`findExistingReport` e verificação prévia no `transactions-service`) exigiam igualdade estrita de strings ISO até os segundos (`repBeginIso === requestedBeginIso && repEndIso === requestedEndIso`). Como a janela calculada continha frações horárias (ex: `11:15:57Z`), o sistema considerava que nenhum relatório existia, mesmo com o arquivo `novex-settlement-manual-2026-09-02-071658.csv` (ID `103021711`) já processado e disponível no Mercado Pago.
+  3. Com isso, o sistema emitia novos `POST /v1/account/settlement_report`, atingindo o limite de relatórios simultâneos da API (`Max number of reports achieved`).
+  4. Além disso, o cooldown de 60 minutos bloqueava inclusive chamadas manuais com `isForce=true`.
+- **Correção aplicada:**
+  1. Implementada a função `findMatchingSettlementReport` com prioridade absoluta para match exato (preservando testes) e tolerância de dia civil / cobertura horária para arredondamentos do provedor.
+  2. Implementada verificação prévia em `MercadoPagoReportsClient.requestSettlementReport` antes do `POST` para reaproveitar relatórios já prontos sem consumir quota da API.
+  3. Atualizada a correspondência de relatórios em `ReleaseReportsClient.findExistingReport`.
+  4. Ajustada a verificação de cooldown em `transactions-service`: chamadas com `isForce=true` (acionamento explícito pelo usuário no painel) bypassam o cooldown de erro e tentam reaproveitar relatórios existentes imediatamente.
+- **Evidência:**
+  - 124 testes unitários e de integração aprovados localmente (121 aprovados, 3 skipped).
+  - Teste do endpoint do worker daemon via loopback autenticado retornou `{"success":true, "failedSyncRunsCount":0}`.
+  - Imagem Docker compilada e container `novexfinance-prod-app-1` recriado com healthcheck `{"status":"ok"}`.
+- **Commit:** 3d55e3b
+
+
