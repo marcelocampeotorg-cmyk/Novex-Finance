@@ -195,6 +195,7 @@ export default function ContasAReceberPage() {
         }}
         editItem={editingItem}
         defaultDirection="RECEIVABLE"
+        lockDirection={true}
       />
     </div>
   );

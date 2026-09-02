@@ -268,6 +268,7 @@ export default function ContasAPagarPage() {
         }}
         editItem={editingItem}
         defaultDirection="PAYABLE"
+        lockDirection={true}
       />
     </div>
   );

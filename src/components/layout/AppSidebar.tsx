@@ -59,23 +59,38 @@ export const AppSidebar: React.FC = () => {
     >
       {/* Topo da Sidebar / Logo Oficial NOVEXBR */}
       <div className="flex h-16 items-center justify-between border-b border-novex-border px-4">
-        <Link href="/" className="flex items-center gap-3 overflow-hidden">
+        <Link href="/" className="flex items-center gap-3 overflow-hidden group">
           {collapsed ? (
-            <Image
-              src="/brand/novex_symbol_original.png"
-              alt="NOVEXBR"
-              width={32}
-              height={32}
-              className="h-8 w-auto object-contain"
-            />
+            <div className="flex items-center justify-center w-full">
+              <Image
+                src="/brand/novex_symbol_original.png"
+                alt="NOVEXBR"
+                width={32}
+                height={32}
+                className="h-8 w-8 object-contain transition-transform group-hover:scale-105"
+                priority
+              />
+            </div>
           ) : (
-            <Image
-              src="/brand/novex_logo_horizontal_original.png"
-              alt="NOVEXBR Finance"
-              width={160}
-              height={32}
-              className="h-8 w-auto max-w-[160px] object-contain"
-            />
+            <div className="flex items-center gap-2.5">
+              <Image
+                src="/brand/novex_symbol_original.png"
+                alt="NOVEXBR"
+                width={36}
+                height={36}
+                className="h-9 w-9 object-contain shrink-0 transition-transform group-hover:scale-105"
+                priority
+              />
+              <div className="flex flex-col">
+                <div className="flex items-baseline leading-none">
+                  <span className="text-lg font-black tracking-wider text-slate-100">NOVEX</span>
+                  <span className="text-lg font-black tracking-wider text-novex-cyan">BR</span>
+                </div>
+                <span className="text-[9px] font-bold tracking-widest text-novex-cyan/80 uppercase mt-0.5">
+                  Finance
+                </span>
+              </div>
+            </div>
           )}
         </Link>
 

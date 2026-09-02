@@ -7,7 +7,7 @@ import { z } from "zod";
 import { X, QrCode, Info, CheckCircle2 } from "lucide-react";
 
 
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, ArrowDownLeft, ArrowUpRight } from "lucide-react";
 
 const newAccountSchema = z.object({
   direction: z.enum(["PAYABLE", "RECEIVABLE"]),
@@ -33,6 +33,7 @@ interface NewAccountModalProps {
   onClose: () => void;
   editItem?: FinancialItemDTO | null;
   defaultDirection?: "PAYABLE" | "RECEIVABLE";
+  lockDirection?: boolean;
 }
 
 export const NewAccountModal: React.FC<NewAccountModalProps> = ({
@@ -40,6 +41,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
   onClose,
   editItem,
   defaultDirection = "PAYABLE",
+  lockDirection = false,
 }) => {
   const [installmentsList, setInstallmentsList] = useState<
     { sequence: number; amount: number; dueDate: string }[]
@@ -63,7 +65,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
       title: "",
       description: "",
       contactName: "",
-      category: "Moradia",
+      category: defaultDirection === "RECEIVABLE" ? "Serviços Prestados" : "Moradia",
       totalAmount: 0,
       startDate: new Date().toISOString().split("T")[0],
       installmentsCount: 1,
@@ -91,7 +93,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
           title: editItem.title,
           description: editItem.description || "",
           contactName: editItem.contact?.name || "",
-          category: editItem.category || "Moradia",
+          category: editItem.category || (editItem.direction === "RECEIVABLE" ? "Serviços Prestados" : "Moradia"),
           totalAmount: editItem.totalAmountCents / 100,
           startDate: editItem.startDate ? editItem.startDate.split("T")[0] : new Date().toISOString().split("T")[0],
           installmentsCount: editItem.installments?.length || 1,
@@ -116,7 +118,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
           title: "",
           description: "",
           contactName: "",
-          category: "Moradia",
+          category: defaultDirection === "RECEIVABLE" ? "Serviços Prestados" : "Moradia",
           totalAmount: 0,
           startDate: new Date().toISOString().split("T")[0],
           installmentsCount: 1,
@@ -255,12 +257,18 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
 
         <div className="border-b border-novex-border pb-4 mb-6">
           <h2 className="text-xl font-bold text-novex-text-primary">
-            {editItem ? "Editar Conta / Compromisso" : "Cadastrar Nova Conta / Compromisso"}
+            {editItem
+              ? direction === "RECEIVABLE"
+                ? "Editar Conta a Receber"
+                : "Editar Conta a Pagar"
+              : direction === "RECEIVABLE"
+              ? "Cadastrar Nova Conta a Receber"
+              : "Cadastrar Nova Conta a Pagar"}
           </h2>
           <p className="text-xs text-novex-text-secondary mt-0.5">
-            {editItem
-              ? "Altere os dados da conta ou compromisso selecionado."
-              : "Cadastre compromissos a pagar ou a receber com vinculação de Chave Pix para cobranças e pagamentos automáticos."}
+            {direction === "RECEIVABLE"
+              ? "Cadastre recebimentos e direitos a receber com acompanhamento de vencimentos e cobrança Pix."
+              : "Cadastre compromissos a pagar com vencimentos, parcelas e chave Pix do favorecido."}
           </p>
         </div>
 
@@ -280,30 +288,56 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-5 text-xs">
           {/* Seletor Pagar vs Receber */}
-          <div className="grid grid-cols-2 gap-3 p-1 rounded-lg bg-novex-surface2 border border-novex-border">
-            <button
-              type="button"
-              onClick={() => setValue("direction", "PAYABLE")}
-              className={`py-2.5 rounded-md font-semibold text-center transition-all ${
-                direction === "PAYABLE"
-                  ? "bg-red-500/20 text-red-400 border border-red-500/40 shadow-sm"
-                  : "text-novex-text-muted hover:text-novex-text-primary"
-              }`}
-            >
-              Conta a Pagar (Saída / Despesa)
-            </button>
-            <button
-              type="button"
-              onClick={() => setValue("direction", "RECEIVABLE")}
-              className={`py-2.5 rounded-md font-semibold text-center transition-all ${
+          {lockDirection ? (
+            <div
+              className={`p-3 rounded-lg border flex items-center justify-between ${
                 direction === "RECEIVABLE"
-                  ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm"
-                  : "text-novex-text-muted hover:text-novex-text-primary"
+                  ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                  : "bg-red-500/10 border-red-500/30 text-red-400"
               }`}
             >
-              Conta a Receber (Entrada / Receita)
-            </button>
-          </div>
+              <div className="flex items-center gap-2">
+                {direction === "RECEIVABLE" ? (
+                  <ArrowDownLeft className="h-4 w-4 shrink-0 text-emerald-400" />
+                ) : (
+                  <ArrowUpRight className="h-4 w-4 shrink-0 text-red-400" />
+                )}
+                <span className="font-semibold text-xs">
+                  {direction === "RECEIVABLE"
+                    ? "Fluxo de Entrada: Conta a Receber (Receita / Crédito Previsto)"
+                    : "Fluxo de Saída: Conta a Pagar (Despesa / Débito Previsto)"}
+                </span>
+              </div>
+              <span className="text-[10px] uppercase font-bold tracking-wider opacity-80 px-2 py-0.5 rounded bg-novex-surface2 border border-novex-border">
+                {direction === "RECEIVABLE" ? "A Receber" : "A Pagar"}
+              </span>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3 p-1 rounded-lg bg-novex-surface2 border border-novex-border">
+              <button
+                type="button"
+                onClick={() => setValue("direction", "PAYABLE")}
+                className={`py-2.5 rounded-md font-semibold text-center transition-all ${
+                  direction === "PAYABLE"
+                    ? "bg-red-500/20 text-red-400 border border-red-500/40 shadow-sm"
+                    : "text-novex-text-muted hover:text-novex-text-primary"
+                }`}
+              >
+                Conta a Pagar (Saída / Despesa)
+              </button>
+              <button
+                type="button"
+                onClick={() => setValue("direction", "RECEIVABLE")}
+                className={`py-2.5 rounded-md font-semibold text-center transition-all ${
+                  direction === "RECEIVABLE"
+                    ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm"
+                    : "text-novex-text-muted hover:text-novex-text-primary"
+                }`}
+              >
+                Conta a Receber (Entrada / Receita)
+              </button>
+            </div>
+          )}
 
           {/* Tipo de Obrigação */}
           <div className="grid grid-cols-3 gap-3">

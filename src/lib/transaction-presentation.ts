@@ -52,6 +52,12 @@ export function formatTransactionDisplay(tx: TransactionPresentationInput): Tran
   const isYield = /\b(rendimento|rentabilidade|yield)\b/i.test(evidenceText);
   const isTax = /\b(imposto|tributo|reten[cç][aã]o|irrf|iof|tax)\b/i.test(evidenceText);
 
+  const fallbackRef = (raw.EXTERNAL_REFERENCE && String(raw.EXTERNAL_REFERENCE).trim())
+    ? `Ref: ${String(raw.EXTERNAL_REFERENCE).trim()}`
+    : (raw.SOURCE_ID && String(raw.SOURCE_ID).trim()
+      ? `ID: ${String(raw.SOURCE_ID).trim()}`
+      : "Não informado pelo provedor");
+
   // 1. Ajuste Manual da Conta Geral
   if (isManual) {
     return {
@@ -66,13 +72,13 @@ export function formatTransactionDisplay(tx: TransactionPresentationInput): Tran
     if (direction === "DEBIT") {
       return {
         title: "Transferência ou retirada registrada",
-        subtitle: counterpart || "Não informado pelo provedor",
+        subtitle: counterpart || fallbackRef,
         isKnownCounterpart: Boolean(counterpart),
       };
     } else {
       return {
         title: "Crédito de transferência ou retirada cancelada",
-        subtitle: counterpart || "Não informado pelo provedor",
+        subtitle: counterpart || fallbackRef,
         isKnownCounterpart: Boolean(counterpart),
       };
     }
@@ -107,13 +113,13 @@ export function formatTransactionDisplay(tx: TransactionPresentationInput): Tran
     if (direction === "CREDIT") {
       return {
         title: counterpart ? `Entrada - ${counterpart}` : "Entrada na conta Mercado Pago",
-        subtitle: counterpart || "Não informado pelo provedor",
+        subtitle: counterpart || fallbackRef,
         isKnownCounterpart: Boolean(counterpart),
       };
     } else {
       return {
         title: counterpart ? `Saída - ${counterpart}` : "Saída da conta Mercado Pago",
-        subtitle: counterpart || "Não informado pelo provedor",
+        subtitle: counterpart || fallbackRef,
         isKnownCounterpart: Boolean(counterpart),
       };
     }
