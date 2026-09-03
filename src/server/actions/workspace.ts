@@ -475,7 +475,119 @@ export async function getDashboardData() {
       });
     }
 
-    return { success: true as const, summary, recentTransactions, chartData, payables, debtorsCount };
+    // 1. Previsão de Parcelamentos Futuros e Compromissos Recorrentes (próximos 4 meses)
+    const activeRecurringExpenses = await db.financialItem.findMany({
+      where: {
+        workspaceId,
+        direction: "PAYABLE",
+        status: "ACTIVE",
+        kind: "RECURRING",
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        totalAmountCents: true,
+        startDate: true,
+        recurrenceRule: {
+          select: { endsAt: true, active: true },
+        },
+      },
+    });
+
+    const installmentsForecast = [];
+    for (let i = 0; i < 4; i++) {
+      const forecastMonth = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      const nextMonth = new Date(now.getFullYear(), now.getMonth() + i + 1, 1);
+      const monthLabel = forecastMonth.toLocaleString("pt-BR", { month: "short" });
+
+      const pendingInstallments = await db.installment.findMany({
+        where: {
+          financialItem: { workspaceId, direction: "PAYABLE", status: "ACTIVE", deletedAt: null },
+          status: { notIn: ["SETTLED", "CANCELED"] },
+          dueDate: { gte: forecastMonth, lt: nextMonth },
+        },
+        select: { id: true, financialItemId: true, amountCents: true, settledAmountCents: true },
+      });
+
+      let totalCents = 0;
+      pendingInstallments.forEach((inst: any) => {
+        const remaining = Number(inst.amountCents) - Number(inst.settledAmountCents);
+        if (remaining > 0) totalCents += remaining;
+      });
+
+      let totalCount = pendingInstallments.length;
+
+      // Projetar despesas recorrentes ativas que ainda não geraram parcela materializada neste mês futuro
+      for (const rec of activeRecurringExpenses) {
+        const started = new Date(rec.startDate) < nextMonth;
+        const notEnded = !rec.recurrenceRule?.endsAt || new Date(rec.recurrenceRule.endsAt) >= forecastMonth;
+        const ruleActive = rec.recurrenceRule ? rec.recurrenceRule.active : true;
+
+        if (started && notEnded && ruleActive) {
+          const alreadyHasInst = pendingInstallments.some((inst: any) => inst.financialItemId === rec.id);
+          if (!alreadyHasInst) {
+            totalCents += Number(rec.totalAmountCents);
+            totalCount++;
+          }
+        }
+      }
+
+      installmentsForecast.push({
+        month: monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1).replace(".", ""),
+        year: forecastMonth.getFullYear(),
+        totalCents,
+        count: totalCount,
+      });
+    }
+
+    // 2. Raio-X Mensal: Distribuição de Despesas por Categoria (Mês Atual)
+    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const currentMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+    const monthLedgerExpenses = await db.ledgerEntry.findMany({
+      where: {
+        workspaceId,
+        direction: "DEBIT",
+        excludedFromReports: false,
+        occurredAt: { gte: currentMonthStart, lt: currentMonthEnd },
+      },
+      include: { category: true },
+    });
+
+    const categoryMap = new Map<string, { name: string; color: string; totalCents: number }>();
+    let totalExpenseMonthCents = 0;
+
+    monthLedgerExpenses.forEach((entry: any) => {
+      const amount = Number(entry.amountCents);
+      totalExpenseMonthCents += amount;
+      const catName = entry.category?.name || "Outras Despesas";
+      const catColor = entry.category?.colorToken || "#64748B";
+
+      const current = categoryMap.get(catName) || { name: catName, color: catColor, totalCents: 0 };
+      current.totalCents += amount;
+      categoryMap.set(catName, current);
+    });
+
+    const expensesByCategory = Array.from(categoryMap.values())
+      .map((cat) => ({
+        name: cat.name,
+        color: cat.color,
+        amountCents: cat.totalCents,
+        percentage: totalExpenseMonthCents > 0 ? Math.round((cat.totalCents / totalExpenseMonthCents) * 100) : 0,
+      }))
+      .sort((a, b) => b.amountCents - a.amountCents)
+      .slice(0, 5);
+
+    return {
+      success: true as const,
+      summary,
+      recentTransactions,
+      chartData,
+      payables,
+      debtorsCount,
+      installmentsForecast,
+      expensesByCategory,
+    };
   } catch (error: any) {
     console.error("Erro ao carregar dashboard:", error);
     return { success: false as const, error: error.message || String(error) };

@@ -1,10 +1,10 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { X, Search, Link2, CheckCircle2, AlertCircle, Calendar } from "lucide-react";
+import { X, Search, Link2, CheckCircle2, AlertCircle, Calendar, PlusCircle, ArrowRight } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import { getFinancialItems } from "@/server/actions/financial-items";
-import { matchReconciliation } from "@/server/actions/transactions";
+import { matchReconciliation, reconcileWithNewItem } from "@/server/actions/transactions";
 
 interface ExternalTx {
   id: string;
@@ -25,14 +25,31 @@ interface ManualMatchModalProps {
 }
 
 export function ManualMatchModal({ isOpen, externalTx, onClose, onSuccess }: ManualMatchModalProps) {
+  const [activeTab, setActiveTab] = useState<"EXISTING" | "NEW">("EXISTING");
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(false);
   const [installments, setInstallments] = useState<any[]>([]);
   const [matchingId, setMatchingId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // Estados do formulário de novo item para conciliação direta
+  const [newTitle, setNewTitle] = useState("");
+  const [newContactName, setNewContactName] = useState("");
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [isSubmittingNew, setIsSubmittingNew] = useState(false);
+
   useEffect(() => {
     if (!isOpen || !externalTx) return;
+
+    setActiveTab("EXISTING");
+    setErrorMessage(null);
+    setNewTitle(
+      externalTx.counterpartName
+        ? `${externalTx.direction === "CREDIT" ? "Recebimento Pix" : "Pagamento"} - ${externalTx.counterpartName}`
+        : externalTx.description || (externalTx.direction === "CREDIT" ? "Recebimento Pix" : "Pagamento Avulso")
+    );
+    setNewContactName(externalTx.counterpartName || "");
+    setNewCategoryName(externalTx.direction === "CREDIT" ? "Serviços Prestados" : "Outras Despesas");
 
     const loadCandidates = async () => {
       setLoading(true);
@@ -56,6 +73,9 @@ export function ManualMatchModal({ isOpen, externalTx, onClose, onSuccess }: Man
           }
         }
         setInstallments(flatInstallments);
+        if (flatInstallments.length === 0) {
+          setActiveTab("NEW");
+        }
       } catch (err: any) {
         setErrorMessage("Erro ao carregar parcelas abertas.");
       } finally {
@@ -96,14 +116,43 @@ export function ManualMatchModal({ isOpen, externalTx, onClose, onSuccess }: Man
     }
   };
 
+  const handleCreateAndReconcile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTitle.trim()) {
+      setErrorMessage("Informe um título para o lançamento.");
+      return;
+    }
+    setIsSubmittingNew(true);
+    setErrorMessage(null);
+    try {
+      const res = await reconcileWithNewItem({
+        externalTransactionId: externalTx.id,
+        title: newTitle.trim(),
+        categoryName: newCategoryName.trim(),
+        contactName: newContactName.trim() || undefined,
+      });
+
+      if (res.success) {
+        onSuccess();
+        onClose();
+      } else {
+        setErrorMessage("error" in res && res.error ? res.error : "Erro ao criar lançamento e conciliar.");
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || "Erro de conexão ao conciliar com novo item.");
+    } finally {
+      setIsSubmittingNew(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-full max-w-2xl rounded-2xl border border-novex-border bg-novex-surface1 p-6 shadow-2xl space-y-6">
+      <div className="w-full max-w-2xl rounded-2xl border border-novex-border bg-novex-surface1 p-6 shadow-2xl space-y-5">
         {/* Cabeçalho */}
         <div className="flex items-center justify-between border-b border-novex-border pb-4">
           <div className="flex items-center gap-2">
             <Link2 className="h-5 w-5 text-novex-cyan" />
-            <h2 className="text-lg font-bold text-novex-text-primary">Conciliar Movimentação Manualmente</h2>
+            <h2 className="text-lg font-bold text-novex-text-primary">Conciliar Movimentação</h2>
           </div>
           <button onClick={onClose} className="rounded-lg p-1 text-novex-text-muted hover:bg-novex-surface2 hover:text-white">
             <X className="h-5 w-5" />
@@ -113,10 +162,10 @@ export function ManualMatchModal({ isOpen, externalTx, onClose, onSuccess }: Man
         {/* Resumo da Transação Externa */}
         <div className="rounded-xl border border-novex-border bg-novex-surface2/60 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
           <div>
-            <div className="text-novex-text-muted text-[10px] uppercase font-mono">Movimentação Selecionada</div>
+            <div className="text-novex-text-muted text-[10px] uppercase font-mono">Movimentação no Extrato</div>
             <div className="font-bold text-novex-text-primary text-sm">{externalTx.description}</div>
             <div className="text-novex-text-secondary text-[11px]">
-              {externalTx.counterpartName ? `Favorecido: ${externalTx.counterpartName}` : "Origem bancária"} • {formatDate(externalTx.occurredAt)}
+              {externalTx.counterpartName ? `Pagador/Favorecido: ${externalTx.counterpartName}` : "Identificação via extrato"} • {formatDate(externalTx.occurredAt)}
             </div>
           </div>
           <div className={`text-base font-extrabold font-mono ${externalTx.direction === "CREDIT" ? "text-emerald-400" : "text-red-400"}`}>
@@ -131,74 +180,208 @@ export function ManualMatchModal({ isOpen, externalTx, onClose, onSuccess }: Man
           </div>
         )}
 
-        {/* Campo de Busca */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-novex-text-muted" />
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder={`Buscar por título, contato ou valor de ${externalTx.direction === "DEBIT" ? "Contas a Pagar" : "Contas a Receber"}...`}
-            className="w-full rounded-lg border border-novex-border bg-novex-bg py-2.5 pl-9 pr-4 text-xs text-novex-text-primary placeholder-novex-text-muted focus:border-novex-cyan focus:outline-none"
-          />
+        {/* Abas de Escolha: Vincular a Existente ou Criar e Conciliar */}
+        <div className="flex items-center gap-2 border-b border-novex-border pb-2 text-xs">
+          <button
+            type="button"
+            onClick={() => setActiveTab("EXISTING")}
+            className={`px-3 py-1.5 rounded-lg font-semibold transition-all ${
+              activeTab === "EXISTING"
+                ? "bg-novex-cyan text-novex-bg shadow-sm"
+                : "text-novex-text-secondary hover:text-white bg-novex-surface2/40 border border-novex-border"
+            }`}
+          >
+            Vincular a Conta Existente ({installments.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("NEW")}
+            className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-all ${
+              activeTab === "NEW"
+                ? "bg-novex-cyan text-novex-bg shadow-sm"
+                : "text-novex-text-secondary hover:text-white bg-novex-surface2/40 border border-novex-border"
+            }`}
+          >
+            <PlusCircle className="h-3.5 w-3.5" />
+            <span>{externalTx.direction === "CREDIT" ? "Conciliar como Nova Receita" : "Conciliar como Nova Despesa"}</span>
+          </button>
         </div>
 
-        {/* Lista de Parcelas Elegíveis */}
-        <div className="max-h-64 overflow-y-auto space-y-2 pr-1 text-xs">
-          {loading ? (
-            <div className="py-8 text-center text-novex-text-muted">Carregando parcelas pendentes...</div>
-          ) : filteredInstallments.length === 0 ? (
-            <div className="py-8 text-center text-novex-text-muted">
-              Nenhuma parcela pendente encontrada compatível com {externalTx.direction === "DEBIT" ? "Contas a Pagar" : "Contas a Receber"}.
+        {/* Conteúdo Aba 1: Vincular a Parcela Existente */}
+        {activeTab === "EXISTING" && (
+          <div className="space-y-3">
+            {/* Campo de Busca */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-novex-text-muted" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder={`Buscar por título, contato ou valor de ${externalTx.direction === "DEBIT" ? "Contas a Pagar" : "Contas a Receber"}...`}
+                className="w-full rounded-lg border border-novex-border bg-novex-bg py-2 pl-9 pr-4 text-xs text-novex-text-primary placeholder-novex-text-muted focus:border-novex-cyan focus:outline-none"
+              />
             </div>
-          ) : (
-            filteredInstallments.map((inst) => {
-              const isExactAmount = inst.amountCents === externalTx.amountCents;
-              return (
-                <div
-                  key={inst.id}
-                  className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
-                    isExactAmount
-                      ? "border-emerald-500/50 bg-emerald-500/10 hover:bg-emerald-500/20"
-                      : "border-novex-border bg-novex-surface2/30 hover:bg-novex-surface2"
-                  }`}
-                >
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-novex-text-primary">{inst.itemTitle}</span>
-                      {isExactAmount && (
-                        <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[9px] font-bold px-1.5 py-0.5 rounded">
-                          Valor Exato!
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-novex-text-muted text-[11px] flex items-center gap-2">
-                      <span>{inst.contactName || "Sem contato"}</span>
-                      <span>•</span>
-                      <span className="flex items-center gap-1 font-mono">
-                        <Calendar className="h-3 w-3" /> Venc: {formatDate(inst.dueDate)}
-                      </span>
-                    </div>
-                  </div>
 
-                  <div className="flex items-center gap-3">
-                    <span className="font-bold font-mono text-sm text-novex-text-primary">
-                      {formatCurrency(inst.amountCents)}
-                    </span>
-                    <button
-                      onClick={() => handleConfirmMatch(inst.id)}
-                      disabled={matchingId === inst.id}
-                      className="flex items-center gap-1 rounded-lg bg-novex-cyan hover:bg-novex-cyan/90 text-novex-bg font-bold px-3 py-1.5 text-xs transition-colors disabled:opacity-50"
-                    >
-                      <Link2 className="h-3.5 w-3.5" />
-                      <span>{matchingId === inst.id ? "Vinculando..." : "Vincular"}</span>
-                    </button>
-                  </div>
+            {/* Lista de Parcelas Elegíveis */}
+            <div className="max-h-60 overflow-y-auto space-y-2 pr-1 text-xs">
+              {loading ? (
+                <div className="py-8 text-center text-novex-text-muted">Carregando parcelas pendentes...</div>
+              ) : filteredInstallments.length === 0 ? (
+                <div className="py-6 text-center space-y-3">
+                  <p className="text-novex-text-muted">
+                    Nenhuma parcela pendente em aberto encontrada para este valor.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("NEW")}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-novex-surface2 hover:bg-novex-border text-novex-cyan px-3 py-1.5 text-xs font-semibold border border-novex-border transition-colors"
+                  >
+                    <span>Conciliar diretamente como nova receita</span>
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </button>
                 </div>
-              );
-            })
-          )}
-        </div>
+              ) : (
+                filteredInstallments.map((inst) => {
+                  const isExactAmount = inst.amountCents === externalTx.amountCents;
+                  return (
+                    <div
+                      key={inst.id}
+                      className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
+                        isExactAmount
+                          ? "border-emerald-500/50 bg-emerald-500/10 hover:bg-emerald-500/20"
+                          : "border-novex-border bg-novex-surface2/30 hover:bg-novex-surface2"
+                      }`}
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-novex-text-primary">{inst.itemTitle}</span>
+                          {isExactAmount && (
+                            <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[9px] font-bold px-1.5 py-0.5 rounded">
+                              Valor Exato!
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-novex-text-muted text-[11px] flex items-center gap-2">
+                          <span>{inst.contactName || "Sem contato"}</span>
+                          <span>•</span>
+                          <span className="flex items-center gap-1 font-mono">
+                            <Calendar className="h-3 w-3" /> Venc: {formatDate(inst.dueDate)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <span className="font-bold font-mono text-sm text-novex-text-primary">
+                          {formatCurrency(inst.amountCents)}
+                        </span>
+                        <button
+                          onClick={() => handleConfirmMatch(inst.id)}
+                          disabled={matchingId === inst.id}
+                          className="flex items-center gap-1 rounded-lg bg-novex-cyan hover:bg-novex-cyan/90 text-novex-bg font-bold px-3 py-1.5 text-xs transition-colors disabled:opacity-50"
+                        >
+                          <Link2 className="h-3.5 w-3.5" />
+                          <span>{matchingId === inst.id ? "Vinculando..." : "Vincular"}</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Conteúdo Aba 2: Criar e Conciliar Novo Lançamento Direto */}
+        {activeTab === "NEW" && (
+          <form onSubmit={handleCreateAndReconcile} className="space-y-3 text-xs">
+            <div className="rounded-lg border border-novex-border bg-novex-surface2/40 p-3 text-novex-text-secondary leading-relaxed">
+              Esta ação criará a conta correspondente já no estado <strong>Baixada / Quitada</strong> e vinculará imediatamente a esta movimentação do extrato bancário.
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="font-semibold text-novex-text-secondary block mb-1">Título do Lançamento *</label>
+                <input
+                  type="text"
+                  value={newTitle}
+                  onChange={(e) => setNewTitle(e.target.value)}
+                  placeholder="Ex: Recebimento Pix Cliente..."
+                  required
+                  className="w-full rounded-lg border border-novex-border bg-novex-bg p-2 text-novex-text-primary focus:border-novex-cyan focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-novex-text-secondary block mb-1">
+                  {externalTx.direction === "CREDIT" ? "Cliente / Pagador" : "Favorecido"}
+                </label>
+                <input
+                  type="text"
+                  value={newContactName}
+                  onChange={(e) => setNewContactName(e.target.value)}
+                  placeholder="Nome da pessoa ou empresa..."
+                  className="w-full rounded-lg border border-novex-border bg-novex-bg p-2 text-novex-text-primary focus:border-novex-cyan focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="font-semibold text-novex-text-secondary block mb-1">Categoria Financeira *</label>
+                <select
+                  value={newCategoryName}
+                  onChange={(e) => setNewCategoryName(e.target.value)}
+                  className="w-full rounded-lg border border-novex-border bg-novex-bg p-2 text-novex-text-primary focus:border-novex-cyan focus:outline-none"
+                >
+                  {externalTx.direction === "CREDIT" ? (
+                    <>
+                      <option value="Serviços Prestados">Serviços Prestados</option>
+                      <option value="Vendas">Vendas</option>
+                      <option value="Transferências & Acertos">Transferências & Acertos</option>
+                      <option value="Pessoal">Pessoal</option>
+                      <option value="Rendimentos">Rendimentos</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="Moradia">Moradia</option>
+                      <option value="Alimentação">Alimentação</option>
+                      <option value="Transporte & Veículo">Transporte & Veículo</option>
+                      <option value="Serviços & Tech">Serviços & Tech</option>
+                      <option value="Contas Básicas">Contas Básicas</option>
+                      <option value="Pessoal">Pessoal</option>
+                      <option value="Outras Despesas">Outras Despesas</option>
+                    </>
+                  )}
+                </select>
+              </div>
+
+              <div>
+                <label className="font-semibold text-novex-text-secondary block mb-1">Valor do Lançamento</label>
+                <div className="rounded-lg border border-novex-border bg-novex-surface2/60 p-2 font-mono font-bold text-sm text-novex-cyan">
+                  {formatCurrency(externalTx.amountCents)} (Definido pelo extrato)
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-novex-border">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 rounded-lg border border-novex-border text-novex-text-secondary hover:bg-novex-surface2"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmittingNew}
+                className="px-5 py-2 rounded-lg bg-novex-cyan text-novex-bg font-bold hover:bg-novex-cyan/90 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                <span>{isSubmittingNew ? "Conciliando..." : "Confirmar e Conciliar Agora"}</span>
+              </button>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   );

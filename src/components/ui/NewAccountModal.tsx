@@ -4,10 +4,17 @@ import React, { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { X, QrCode, Info, CheckCircle2 } from "lucide-react";
+import { X, QrCode, Info, CheckCircle2, Scale } from "lucide-react";
 
 
 import { AlertCircle, ArrowDownLeft, ArrowUpRight } from "lucide-react";
+import {
+  DEFAULT_MINIMUM_WAGE_CENTS,
+  DEFAULT_PENSION_PERCENTAGE,
+  buildPensionIndexerTag,
+  parsePensionIndexerTag,
+  isPensionItem,
+} from "@/domain/pension-indexer";
 
 const newAccountSchema = z.object({
   direction: z.enum(["PAYABLE", "RECEIVABLE"]),
@@ -18,7 +25,7 @@ const newAccountSchema = z.object({
   category: z.string().min(1, "Selecione uma categoria"),
   totalAmount: z.coerce.number().min(0.01, "Informe um valor maior que R$ 0,00"),
   startDate: z.string().min(1, "Selecione a data de vencimento ou início"),
-  installmentsCount: z.coerce.number().min(1).max(60).default(1),
+  installmentsCount: z.coerce.number().min(1).max(480).default(1),
   frequency: z.enum(["DAILY", "WEEKLY", "BIWEEKLY", "MONTHLY", "YEARLY"]).optional(),
   pixKey: z.string().optional(),
   pixKeyType: z.enum(["CPF", "CNPJ", "EMAIL", "PHONE", "EVP"]).optional(),
@@ -49,6 +56,11 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [formErrorMessage, setFormErrorMessage] = useState<string | null>(null);
   const [isCustomCategory, setIsCustomCategory] = useState(false);
+  const [amountMode, setAmountMode] = useState<"PER_INSTALLMENT" | "TOTAL">("PER_INSTALLMENT");
+  const [showAllInstallments, setShowAllInstallments] = useState(false);
+  const [isPensionWageIndexed, setIsPensionWageIndexed] = useState(false);
+  const [minimumWageValue, setMinimumWageValue] = useState(DEFAULT_MINIMUM_WAGE_CENTS / 100);
+  const [pensionPercentage, setPensionPercentage] = useState(DEFAULT_PENSION_PERCENTAGE);
 
   const {
     register,
@@ -77,16 +89,36 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
 
   const direction = watch("direction");
   const kind = watch("kind");
+  const title = watch("title");
   const totalAmount = watch("totalAmount");
   const startDate = watch("startDate");
   const installmentsCount = watch("installmentsCount");
   const frequency = watch("frequency");
 
+  const isPensionCandidate =
+    direction === "PAYABLE" && (isPensionItem(title, editItem?.description) || isPensionWageIndexed);
+
   React.useEffect(() => {
     if (isOpen) {
       setSuccessMessage(null);
       setFormErrorMessage(null);
+      setShowAllInstallments(false);
       if (editItem) {
+        const isInstallmentPlan = editItem.kind === "INSTALLMENT_PLAN";
+        const firstInstAmount = editItem.installments?.[0] ? editItem.installments[0].amountCents / 100 : editItem.totalAmountCents / 100;
+        const initialAmount = isInstallmentPlan && amountMode === "PER_INSTALLMENT" ? firstInstAmount : editItem.totalAmountCents / 100;
+
+        const indexerInfo = parsePensionIndexerTag(editItem.description);
+        if (indexerInfo.isIndexed) {
+          setIsPensionWageIndexed(true);
+          if (indexerInfo.percentage) setPensionPercentage(indexerInfo.percentage);
+          if (indexerInfo.baseWageCents) setMinimumWageValue(indexerInfo.baseWageCents / 100);
+        } else if (isPensionItem(editItem.title, editItem.description)) {
+          setIsPensionWageIndexed(true);
+        } else {
+          setIsPensionWageIndexed(false);
+        }
+
         reset({
           direction: editItem.direction,
           kind: editItem.kind,
@@ -94,7 +126,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
           description: editItem.description || "",
           contactName: editItem.contact?.name || "",
           category: editItem.category || (editItem.direction === "RECEIVABLE" ? "Serviços Prestados" : "Moradia"),
-          totalAmount: editItem.totalAmountCents / 100,
+          totalAmount: initialAmount,
           startDate: editItem.startDate ? editItem.startDate.split("T")[0] : new Date().toISOString().split("T")[0],
           installmentsCount: editItem.installments?.length || 1,
           frequency: "MONTHLY",
@@ -112,6 +144,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
           );
         }
       } else {
+        setIsPensionWageIndexed(false);
         reset({
           direction: defaultDirection,
           kind: "ONE_TIME",
@@ -133,7 +166,10 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
 
   React.useEffect(() => {
     if (!editItem && kind === "INSTALLMENT_PLAN" && totalAmount > 0 && installmentsCount > 0) {
-      const perInstallment = Number((totalAmount / installmentsCount).toFixed(2));
+      const perInstallment =
+        amountMode === "PER_INSTALLMENT"
+          ? Number(totalAmount.toFixed(2))
+          : Number((totalAmount / installmentsCount).toFixed(2));
       const list = [];
       const baseDate = startDate ? new Date(startDate) : new Date();
 
@@ -159,7 +195,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
       }
       setInstallmentsList(list);
     }
-  }, [kind, totalAmount, installmentsCount, startDate, frequency, editItem]);
+  }, [kind, totalAmount, installmentsCount, startDate, frequency, amountMode, editItem]);
 
   const handleCloseModal = () => {
     reset();
@@ -172,6 +208,20 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
   const onSubmit = async (data: NewAccountFormData) => {
     setFormErrorMessage(null);
     try {
+      const computedTotalAmountCents =
+        data.kind === "INSTALLMENT_PLAN" && amountMode === "PER_INSTALLMENT"
+          ? Math.round(data.totalAmount * (data.installmentsCount || 1) * 100)
+          : Math.round(data.totalAmount * 100);
+
+      let finalDescription = data.description?.trim() || "";
+      if (isPensionWageIndexed && data.direction === "PAYABLE") {
+        const tag = buildPensionIndexerTag(pensionPercentage, Math.round(minimumWageValue * 100));
+        const cleanDesc = finalDescription
+          .replace(/\[INDEXER:MINIMUM_WAGE;PERCENT:[0-9.]+;BASE_WAGE:[0-9]+\]/g, "")
+          .trim();
+        finalDescription = cleanDesc ? `${cleanDesc} ${tag}` : tag;
+      }
+
       const finalInstallments =
         data.kind === "INSTALLMENT_PLAN" && installmentsList.length > 0
           ? installmentsList.map((inst) => ({
@@ -194,12 +244,12 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
           direction: data.direction,
           kind: data.kind,
           title: data.title,
-          description: data.description,
+          description: finalDescription,
           contactName: data.contactName,
           pixKey: data.pixKey,
           pixKeyType: data.pixKeyType,
           categoryName: data.category,
-          totalAmountCents: Math.round(data.totalAmount * 100),
+          totalAmountCents: computedTotalAmountCents,
           startDate: data.startDate,
           installments: finalInstallments,
         });
@@ -213,12 +263,12 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
           direction: data.direction,
           kind: data.kind,
           title: data.title,
-          description: data.description,
+          description: finalDescription,
           contactName: data.contactName,
           pixKey: data.pixKey,
           pixKeyType: data.pixKeyType,
           categoryName: data.category,
-          totalAmountCents: Math.round(data.totalAmount * 100),
+          totalAmountCents: computedTotalAmountCents,
           startDate: data.startDate,
           installments: finalInstallments,
         });
@@ -413,9 +463,137 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
             </span>
           </div>
 
+          {/* Seção Exclusiva: Indexação ao Salário Mínimo para Pensão Alimentícia */}
+          {isPensionCandidate && (
+            <div className="rounded-xl border border-novex-cyan/50 bg-novex-surface2/80 p-3.5 space-y-3 shadow-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Scale className="h-4 w-4 text-novex-cyan shrink-0" />
+                  <div>
+                    <span className="font-bold text-xs text-novex-text-primary block">
+                      Indexação ao Salário Mínimo Vigente
+                    </span>
+                    <span className="text-[10px] text-novex-text-muted">
+                      Exclusivo para Pensão Alimentícia (permite reajuste em lote das parcelas futuras)
+                    </span>
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-novex-cyan bg-novex-surface1/80 px-2.5 py-1.5 rounded-lg border border-novex-border hover:border-novex-cyan/60 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={isPensionWageIndexed}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setIsPensionWageIndexed(checked);
+                      if (checked) {
+                        setAmountMode("PER_INSTALLMENT");
+                        const calculatedPerInst = Number((minimumWageValue * (pensionPercentage / 100)).toFixed(2));
+                        setValue("totalAmount", calculatedPerInst, { shouldValidate: true });
+                      }
+                    }}
+                    className="rounded border-novex-border text-novex-cyan focus:ring-novex-cyan"
+                  />
+                  <span>Vincular a % do Salário Mínimo</span>
+                </label>
+              </div>
+
+              {isPensionWageIndexed && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2.5 border-t border-novex-border/60 text-xs">
+                  <div>
+                    <span className="text-novex-text-muted block mb-1 font-medium">Salário Mínimo Base (R$)</span>
+                    <input
+                      type="number"
+                      step="1"
+                      value={minimumWageValue}
+                      onChange={(e) => {
+                        const wage = Number(e.target.value);
+                        setMinimumWageValue(wage);
+                        const calculatedPerInst = Number((wage * (pensionPercentage / 100)).toFixed(2));
+                        setValue("totalAmount", calculatedPerInst, { shouldValidate: true });
+                      }}
+                      className="w-full rounded-lg border border-novex-border bg-novex-bg p-2 font-mono font-bold text-novex-text-primary text-xs focus:border-novex-cyan focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <span className="text-novex-text-muted block mb-1 font-medium">Percentual da Pensão (%)</span>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={pensionPercentage}
+                      onChange={(e) => {
+                        const pct = Number(e.target.value);
+                        setPensionPercentage(pct);
+                        const calculatedPerInst = Number((minimumWageValue * (pct / 100)).toFixed(2));
+                        setValue("totalAmount", calculatedPerInst, { shouldValidate: true });
+                      }}
+                      className="w-full rounded-lg border border-novex-border bg-novex-bg p-2 font-mono font-bold text-novex-cyan text-xs focus:border-novex-cyan focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="flex flex-col justify-center bg-novex-surface1/60 p-2 rounded-lg border border-novex-border/60">
+                    <span className="text-[10px] text-novex-text-muted block font-medium">Parcela Calculada</span>
+                    <span className="font-mono font-bold text-sm text-emerald-400">
+                      R$ {(minimumWageValue * (pensionPercentage / 100)).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                    </span>
+                    <span className="text-[9px] text-novex-text-muted">
+                      ({pensionPercentage}% de R$ {minimumWageValue.toLocaleString("pt-BR", { minimumFractionDigits: 2 })})
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {kind === "INSTALLMENT_PLAN" && (
+            <div className="flex flex-wrap items-center gap-2 p-2 bg-novex-surface2/60 rounded-lg border border-novex-border text-xs">
+              <span className="text-novex-text-muted font-medium">Modo de cálculo do parcelamento:</span>
+              <button
+                type="button"
+                onClick={() => {
+                  if (amountMode !== "PER_INSTALLMENT") {
+                    setAmountMode("PER_INSTALLMENT");
+                    if (totalAmount > 0 && installmentsCount > 1) {
+                      setValue("totalAmount", Number((totalAmount / installmentsCount).toFixed(2)));
+                    }
+                  }
+                }}
+                className={`px-3 py-1 rounded text-xs font-semibold transition-all ${
+                  amountMode === "PER_INSTALLMENT"
+                    ? "bg-novex-cyan text-novex-bg shadow-sm"
+                    : "text-novex-text-secondary hover:text-white bg-novex-surface1/60 border border-novex-border"
+                }`}
+              >
+                Valor por Parcela (Mensal)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (amountMode !== "TOTAL") {
+                    setAmountMode("TOTAL");
+                    if (totalAmount > 0 && installmentsCount > 1) {
+                      setValue("totalAmount", Number((totalAmount * installmentsCount).toFixed(2)));
+                    }
+                  }
+                }}
+                className={`px-3 py-1 rounded text-xs font-semibold transition-all ${
+                  amountMode === "TOTAL"
+                    ? "bg-novex-cyan text-novex-bg shadow-sm"
+                    : "text-novex-text-secondary hover:text-white bg-novex-surface1/60 border border-novex-border"
+                }`}
+              >
+                Valor Total do Contrato
+              </button>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="font-semibold text-novex-text-secondary block mb-1">Valor Total (R$) *</label>
+              <label className="font-semibold text-novex-text-secondary block mb-1">
+                {kind === "INSTALLMENT_PLAN" && amountMode === "PER_INSTALLMENT"
+                  ? "Valor da Parcela (R$) *"
+                  : "Valor Total (R$) *"}
+              </label>
               <input
                 type="text"
                 value={
@@ -431,6 +609,16 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
                 placeholder="0,00"
                 className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 font-mono text-base font-bold text-novex-cyan focus:border-novex-cyan focus:outline-none"
               />
+              {kind === "INSTALLMENT_PLAN" && amountMode === "PER_INSTALLMENT" && totalAmount > 0 && (
+                <span className="text-[11px] text-novex-cyan font-medium block mt-1">
+                  Total do contrato: R$ {(totalAmount * (installmentsCount || 1)).toLocaleString("pt-BR", { minimumFractionDigits: 2 })} ({installmentsCount || 1} parcelas)
+                </span>
+              )}
+              {kind === "INSTALLMENT_PLAN" && amountMode === "TOTAL" && totalAmount > 0 && installmentsCount > 0 && (
+                <span className="text-[11px] text-novex-cyan font-medium block mt-1">
+                  R$ {(totalAmount / installmentsCount).toLocaleString("pt-BR", { minimumFractionDigits: 2 })} por parcela
+                </span>
+              )}
               {errors.totalAmount?.message && <span className="text-red-400 text-[10px] mt-1 block">{String(errors.totalAmount.message)}</span>}
             </div>
 
@@ -504,47 +692,86 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
           {kind === "INSTALLMENT_PLAN" && (
             <div className="rounded-lg border border-novex-border bg-novex-surface2/40 p-4 space-y-3">
               <div className="flex items-center justify-between">
-                <span className="font-semibold text-novex-cyan">Parcelamento Variável</span>
+                <div>
+                  <span className="font-semibold text-novex-cyan block">Parcelamento Configurado</span>
+                  <span className="text-[11px] text-novex-text-muted">
+                    Suporta de 2 até 480 parcelas (ex: pensão alimentícia, financiamentos, parcelamentos longos)
+                  </span>
+                </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-novex-text-muted">Nº de Parcelas:</span>
+                  <span className="text-novex-text-muted text-xs">Nº de Parcelas:</span>
                   <input
                     type="number"
                     min="2"
-                    max="36"
+                    max="480"
                     {...register("installmentsCount")}
-                    className="w-16 rounded border border-novex-border bg-novex-bg p-1 text-center font-bold"
+                    className="w-20 rounded border border-novex-border bg-novex-bg p-1 text-center font-bold text-novex-text-primary focus:border-novex-cyan focus:outline-none"
                   />
                 </div>
               </div>
 
-              <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-                {installmentsList.map((inst, idx) => (
-                  <div key={idx} className="flex items-center gap-2 bg-novex-bg p-2 rounded border border-novex-border/60">
-                    <span className="font-semibold text-novex-text-muted text-[11px] w-20">Parcela {inst.sequence}</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={inst.amount}
-                      onChange={(e) => {
-                        const updated = [...installmentsList];
-                        updated[idx].amount = Number(e.target.value);
-                        setInstallmentsList(updated);
-                      }}
-                      className="w-28 rounded border border-novex-border bg-novex-surface1 p-1 text-right"
-                    />
-                    <input
-                      type="date"
-                      value={inst.dueDate}
-                      onChange={(e) => {
-                        const updated = [...installmentsList];
-                        updated[idx].dueDate = e.target.value;
-                        setInstallmentsList(updated);
-                      }}
-                      className="rounded border border-novex-border bg-novex-surface1 p-1 text-center"
-                    />
+              {installmentsList.length > 12 && !showAllInstallments ? (
+                <div className="rounded-lg border border-novex-border/80 bg-novex-bg p-3 space-y-2">
+                  <div className="text-xs text-novex-text-secondary flex items-center justify-between">
+                    <span>
+                      ✓ <strong className="text-novex-cyan">{installmentsList.length} parcelas</strong> de{" "}
+                      <strong className="text-novex-text-primary">
+                        R$ {installmentsList[0]?.amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                      </strong>
+                    </span>
+                    <span className="text-[11px] text-novex-text-muted">
+                      {installmentsList[0]?.dueDate} até {installmentsList[installmentsList.length - 1]?.dueDate}
+                    </span>
                   </div>
-                ))}
-              </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAllInstallments(true)}
+                    className="text-[11px] text-novex-cyan hover:underline font-medium block"
+                  >
+                    Exibir e editar parcelas individualmente ({installmentsList.length} itens) ↓
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                  {installmentsList.length > 12 && (
+                    <div className="flex justify-end pb-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowAllInstallments(false)}
+                        className="text-[11px] text-novex-cyan hover:underline font-medium"
+                      >
+                        ↑ Ocultar lista expandida
+                      </button>
+                    </div>
+                  )}
+                  {installmentsList.map((inst, idx) => (
+                    <div key={idx} className="flex items-center gap-2 bg-novex-bg p-2 rounded border border-novex-border/60">
+                      <span className="font-semibold text-novex-text-muted text-[11px] w-20">Parcela {inst.sequence}</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={inst.amount}
+                        onChange={(e) => {
+                          const updated = [...installmentsList];
+                          updated[idx].amount = Number(e.target.value);
+                          setInstallmentsList(updated);
+                        }}
+                        className="w-28 rounded border border-novex-border bg-novex-surface1 p-1 text-right text-xs"
+                      />
+                      <input
+                        type="date"
+                        value={inst.dueDate}
+                        onChange={(e) => {
+                          const updated = [...installmentsList];
+                          updated[idx].dueDate = e.target.value;
+                          setInstallmentsList(updated);
+                        }}
+                        className="rounded border border-novex-border bg-novex-surface1 p-1 text-center text-xs"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

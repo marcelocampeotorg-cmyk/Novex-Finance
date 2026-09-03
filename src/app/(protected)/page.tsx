@@ -18,6 +18,8 @@ import {
   ExternalLink,
   ShieldCheck,
   CheckCircle2,
+  CalendarClock,
+  PieChart,
 } from "lucide-react";
 
 import { formatCurrency, formatDate } from "@/lib/formatters";
@@ -44,6 +46,8 @@ export default function DashboardPage() {
   const [recentTxs, setRecentTxs] = useState<any[]>([]);
   const [payables, setPayables] = useState<any[]>([]);
   const [debtorsCount, setDebtorsCount] = useState<number>(0);
+  const [installmentsForecast, setInstallmentsForecast] = useState<any[]>([]);
+  const [expensesByCategory, setExpensesByCategory] = useState<any[]>([]);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [dashboardState, setDashboardState] = useState<"loading" | "error" | "success">("loading");
@@ -102,6 +106,8 @@ export default function DashboardPage() {
       if (res.recentTransactions) setRecentTxs(res.recentTransactions);
       if (res.payables) setPayables(res.payables);
       if (typeof res.debtorsCount === "number") setDebtorsCount(res.debtorsCount);
+      if (res.installmentsForecast) setInstallmentsForecast(res.installmentsForecast);
+      if (res.expensesByCategory) setExpensesByCategory(res.expensesByCategory);
       setDashboardState("success");
     } catch (e) {
       console.error("Erro ao carregar dados do dashboard com auto-sync:", e);
@@ -159,7 +165,7 @@ export default function DashboardPage() {
   const monthRangeLabel = `de 01/${currentMonthNum} a ${String(lastDay).padStart(2, "0")}/${currentMonthNum}`;
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-300">
+    <div className="space-y-5 sm:space-y-8 animate-in fade-in duration-300">
       <PageHeader
         title="Visão Geral das Finanças"
         description="Acompanhamento transparente do seu saldo, fluxo de caixa e conciliação financeira."
@@ -172,7 +178,7 @@ export default function DashboardPage() {
               finally { setIsSyncing(false); }
             }}
             disabled={isSyncing}
-            className={`flex items-center gap-2 text-xs px-3.5 py-2 rounded-lg border transition-all ${
+            className={`flex items-center gap-1.5 sm:gap-2 text-xs px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-lg border transition-all max-w-full ${
               isSyncing || displaySummary.syncSource === "PROCESSANDO"
                 ? "bg-novex-surface1 text-novex-cyan border-novex-cyan/40 cursor-wait shadow-sm"
                 : syncError || displaySummary.syncSource === "FALHA"
@@ -185,32 +191,32 @@ export default function DashboardPage() {
           >
             {isSyncing || displaySummary.syncSource === "PROCESSANDO" ? (
               <>
-                <RefreshCw className="h-4 w-4 animate-spin text-novex-cyan" />
-                <span className="font-semibold text-novex-cyan">Sincronização em andamento...</span>
+                <RefreshCw className="h-4 w-4 animate-spin text-novex-cyan shrink-0" />
+                <span className="font-semibold text-novex-cyan truncate">Sincronizando...</span>
               </>
             ) : syncError || displaySummary.syncSource === "FALHA" ? (
               <>
-                <AlertTriangle className="h-4 w-4 text-red-400" />
-                <span className="font-semibold text-red-300">
-                  {syncError ? `Falha no Sync: ${syncError}` : "Falha na sincronização"}
+                <AlertTriangle className="h-4 w-4 text-red-400 shrink-0" />
+                <span className="font-semibold text-red-300 truncate">
+                  {syncError ? `Falha: ${syncError}` : "Falha na sincronização"}
                 </span>
-                <RefreshCw className="h-3.5 w-3.5 ml-1 opacity-70 hover:opacity-100" />
+                <RefreshCw className="h-3.5 w-3.5 ml-1 opacity-70 hover:opacity-100 shrink-0" />
               </>
             ) : displaySummary.syncSource === "DESCONECTADO" || displaySummary.syncSource === "PENDENTE" ? (
               <>
-                <AlertTriangle className="h-4 w-4 text-amber-400" />
-                <span className="font-semibold text-amber-300">
+                <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
+                <span className="font-semibold text-amber-300 truncate">
                   {displaySummary.syncSource === "DESCONECTADO" ? "Integração Desconectada" : "Atualização pendente"}
                 </span>
-                <RefreshCw className="h-3.5 w-3.5 ml-1 opacity-70 hover:opacity-100" />
+                <RefreshCw className="h-3.5 w-3.5 ml-1 opacity-70 hover:opacity-100 shrink-0" />
               </>
             ) : (
               <>
                 <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                <span className="font-semibold text-emerald-300">
+                <span className="font-semibold text-emerald-300 truncate">
                   Última sincronização: {displaySummary.lastSyncAt ? formatDate(displaySummary.lastSyncAt) : "pendente"}
                 </span>
-                <RefreshCw className="h-3.5 w-3.5 ml-1 opacity-70 hover:opacity-100" />
+                <RefreshCw className="h-3.5 w-3.5 ml-1 opacity-70 hover:opacity-100 shrink-0" />
               </>
             )}
           </button>
@@ -218,7 +224,7 @@ export default function DashboardPage() {
       />
 
       {/* Grid de Cards Métricos Principais - Limpo e Focado */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
         <MetricCard
           title="Saldo Mercado Pago"
           amountCents={displaySummary.mercadoPagoOfficialBalanceCents ?? 0}
@@ -264,16 +270,16 @@ export default function DashboardPage() {
       </div>
 
       {/* Grid de Avisos e Alertas Importantes */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
         {/* Banner Vencimento Crítico */}
-        <div className="lg:col-span-2 rounded-xl border border-novex-border bg-novex-surface1 p-5 flex items-start gap-4 shadow-sm">
-          <div className="rounded-lg bg-novex-cyan/10 p-2.5 text-novex-cyan border border-novex-cyan/30 shrink-0">
-            <AlertTriangle className="h-6 w-6" />
+        <div className="lg:col-span-2 rounded-xl border border-novex-border bg-novex-surface1 p-4 sm:p-5 flex items-start gap-3.5 sm:gap-4 shadow-sm">
+          <div className="rounded-lg bg-novex-cyan/10 p-2 sm:p-2.5 text-novex-cyan border border-novex-cyan/30 shrink-0">
+            <AlertTriangle className="h-5 w-5 sm:h-6 sm:w-6" />
           </div>
-          <div className="flex-1">
-            <div className="flex items-center justify-between">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between gap-2">
               <h3 className="text-sm font-bold text-novex-text-primary">Seus próximos pagamentos</h3>
-              <span className="text-xs font-bold text-emerald-400">
+              <span className="text-xs font-bold text-emerald-400 shrink-0">
                 {formatCurrency(displaySummary.totalPayableMonthCents || 0)}
               </span>
             </div>
@@ -295,13 +301,13 @@ export default function DashboardPage() {
         </div>
 
         {/* Resumo de Devedores */}
-        <div className="rounded-xl border border-novex-border bg-novex-surface1 p-5 flex flex-col justify-between">
+        <div className="rounded-xl border border-novex-border bg-novex-surface1 p-4 sm:p-5 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-semibold text-novex-text-secondary">Pessoas que Devem</span>
               <Users className="h-4 w-4 text-novex-cyan" />
             </div>
-            <div className="text-2xl font-bold text-emerald-400">
+            <div className="text-xl sm:text-2xl font-bold text-emerald-400">
               {formatCurrency(displaySummary.totalDebtorsOwedCents)}
             </div>
             <p className="text-xs text-novex-text-muted mt-1">
@@ -310,7 +316,7 @@ export default function DashboardPage() {
           </div>
           <a
             href="/contas-a-receber"
-            className="mt-4 flex items-center justify-between text-xs font-semibold text-novex-cyan hover:underline"
+            className="mt-3 sm:mt-4 flex items-center justify-between text-xs font-semibold text-novex-cyan hover:underline"
           >
             <span>Ver detalhes de cobrança</span>
             <ArrowRight className="h-4 w-4" />
@@ -318,23 +324,115 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Seção Inteligente: Faturas Futuras & Raio-X de Gastos */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+        {/* Card 1: Previsão de Parcelamentos Futuros */}
+        <div className="rounded-xl border border-novex-border bg-novex-surface1 p-4 sm:p-5 flex flex-col justify-between shadow-sm">
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center gap-2">
+                <CalendarClock className="h-4 w-4 text-novex-cyan" />
+                <h3 className="text-sm sm:text-base font-bold text-novex-text-primary">Faturas & Parcelamentos Futuros</h3>
+              </div>
+              <a href="/contas-a-pagar" className="text-[11px] text-novex-cyan hover:underline">
+                Ver detalhes
+              </a>
+            </div>
+            <p className="text-xs text-novex-text-muted mb-4">
+              Total já contratado e comprometido nos próximos meses.
+            </p>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              {installmentsForecast.map((item, idx) => (
+                <div
+                  key={`${item.month}-${item.year}`}
+                  className={`p-3 rounded-xl border flex flex-col justify-between ${
+                    idx === 0
+                      ? "bg-novex-cyan/10 border-novex-cyan/40"
+                      : "bg-novex-surface2/40 border-novex-border/70"
+                  }`}
+                >
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-bold text-novex-text-primary">{item.month}/{String(item.year).slice(2)}</span>
+                    <span className="text-[10px] text-novex-text-muted">{item.count} parc.</span>
+                  </div>
+                  <div className="mt-2 text-sm sm:text-base font-extrabold text-red-400">
+                    {formatCurrency(item.totalCents)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Card 2: Raio-X Mensal de Gastos por Categoria */}
+        <div className="rounded-xl border border-novex-border bg-novex-surface1 p-4 sm:p-5 flex flex-col justify-between shadow-sm">
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center gap-2">
+                <PieChart className="h-4 w-4 text-emerald-400" />
+                <h3 className="text-sm sm:text-base font-bold text-novex-text-primary">Raio-X: Onde foi o seu dinheiro</h3>
+              </div>
+              <a href="/relatorios" className="text-[11px] text-novex-cyan hover:underline">
+                Ver DRE
+              </a>
+            </div>
+            <p className="text-xs text-novex-text-muted mb-3">
+              Divisão das despesas do mês atual por categoria.
+            </p>
+
+            {expensesByCategory.length === 0 ? (
+              <div className="py-6 text-center text-xs text-novex-text-muted">
+                Sem despesas categorizadas registradas neste mês.
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {expensesByCategory.map((cat) => (
+                  <div key={cat.name} className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: cat.color || "#64748B" }} />
+                        <span className="font-medium text-novex-text-primary truncate">{cat.name}</span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="font-bold text-novex-text-primary">{formatCurrency(cat.amountCents)}</span>
+                        <span className="text-[10px] text-novex-text-muted font-mono w-7 text-right">{cat.percentage}%</span>
+                      </div>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-novex-surface2 overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-500"
+                        style={{
+                          width: `${Math.max(cat.percentage, 3)}%`,
+                          backgroundColor: cat.color || "#00E5FF",
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* Gráfico de Entradas vs Saídas & Movimentações Recentes */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
         {/* Gráfico Recharts de Fluxo Financeiro */}
-        <div className="lg:col-span-2 rounded-xl border border-novex-border bg-novex-surface1 p-6">
-          <div className="flex items-center justify-between mb-6">
+        <div className="lg:col-span-2 rounded-xl border border-novex-border bg-novex-surface1 p-4 sm:p-6">
+          <div className="flex items-center justify-between mb-4 sm:mb-6">
             <div>
-              <h3 className="text-base font-bold text-novex-text-primary">Evolução de Entradas e Saídas</h3>
+              <h3 className="text-sm sm:text-base font-bold text-novex-text-primary">Evolução de Entradas e Saídas</h3>
               <p className="text-xs text-novex-text-muted">Histórico de fluxo de caixa em R$ nos últimos 6 meses.</p>
             </div>
           </div>
 
-          <div className="h-72 w-full">
+          <div className="h-56 sm:h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#2A354D" vertical={false} />
-                <XAxis dataKey="month" stroke="#94A3B8" fontSize={12} tickLine={false} />
-                <YAxis stroke="#94A3B8" fontSize={12} tickLine={false} />
+                <XAxis dataKey="month" stroke="#94A3B8" fontSize={11} tickLine={false} />
+                <YAxis stroke="#94A3B8" fontSize={11} tickLine={false} />
                 <Tooltip
                   contentStyle={{
                     backgroundColor: "#12172B",
@@ -350,7 +448,7 @@ export default function DashboardPage() {
                     "",
                   ]}
                 />
-                <Legend wrapperStyle={{ fontSize: "12px", paddingTop: "10px" }} />
+                <Legend wrapperStyle={{ fontSize: "11px", paddingTop: "8px" }} />
                 <Area type="monotone" dataKey="entradas" stroke="#10B981" fill="#10B98133" name="Entradas" />
                 <Area type="monotone" dataKey="saídas" stroke="#EF4444" fill="#EF444433" name="Saídas" />
               </AreaChart>
@@ -359,9 +457,9 @@ export default function DashboardPage() {
         </div>
 
         {/* Extrato de Movimentações Recentes Importadas */}
-        <div className="rounded-xl border border-novex-border bg-novex-surface1 p-6 flex flex-col">
+        <div className="rounded-xl border border-novex-border bg-novex-surface1 p-4 sm:p-6 flex flex-col">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-base font-bold text-novex-text-primary">Movimentações Mercado Pago</h3>
+            <h3 className="text-sm sm:text-base font-bold text-novex-text-primary">Movimentações Mercado Pago</h3>
             <a href="/movimentacoes" className="text-xs text-novex-cyan hover:underline">
               Ver extrato
             </a>
@@ -407,11 +505,11 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Tabela de Próximos Vencimentos */}
-      <div className="rounded-xl border border-novex-border bg-novex-surface1 p-6">
+      {/* Tabela e Cards de Próximos Vencimentos */}
+      <div className="rounded-xl border border-novex-border bg-novex-surface1 p-4 sm:p-6">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="text-base font-bold text-novex-text-primary">Próximos Vencimentos</h3>
+            <h3 className="text-sm sm:text-base font-bold text-novex-text-primary">Próximos Vencimentos</h3>
             <p className="text-xs text-novex-text-muted">Compromissos agendados para os próximos dias.</p>
           </div>
           <a href="/contas-a-pagar" className="text-xs text-novex-cyan hover:underline">
@@ -419,7 +517,61 @@ export default function DashboardPage() {
           </a>
         </div>
 
-        <div className="overflow-x-auto">
+        {/* Versão Mobile (Cards em smartphones) */}
+        <div className="block sm:hidden space-y-3">
+          {payables.filter((item) => item.installments && item.installments.length > 0).length === 0 ? (
+            <div className="py-6 text-center text-xs text-novex-text-muted">
+              Nenhum pagamento pendente no momento.
+            </div>
+          ) : (
+            payables
+              .filter((item) => item.installments && item.installments.length > 0)
+              .map((item) => {
+                const inst = item.installments[0];
+                if (!inst) return null;
+                return (
+                  <div key={item.id} className="p-3.5 rounded-xl border border-novex-border bg-novex-surface2/40 flex flex-col gap-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-semibold text-xs text-novex-text-primary truncate">{item.title}</div>
+                        <div className="text-[11px] text-novex-text-muted mt-0.5">{item.contact?.name || "Sem contato"}</div>
+                      </div>
+                      <span
+                        className="px-2 py-0.5 rounded text-[10px] font-semibold text-white shrink-0"
+                        style={{ backgroundColor: item.categoryColor || "#3B82F6" }}
+                      >
+                        {item.category}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-2 border-t border-novex-border/50">
+                      <div className="flex flex-col">
+                        <span className="text-[10px] text-novex-text-muted">
+                          Vence: {inst.dueDate ? formatDate(inst.dueDate) : "-"}
+                        </span>
+                        <span className="text-sm font-bold text-red-400">
+                          {formatCurrency(inst.amountCents)}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <StatusBadge status={inst.status} className="text-[10px]" />
+                        <button
+                          onClick={() => handleOpenPayment(item, inst)}
+                          className="rounded-lg bg-novex-cyan px-3 py-1.5 text-xs font-semibold text-novex-bg hover:bg-novex-cyan-hover active:scale-95 transition-all"
+                        >
+                          Pagar Pix
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+          )}
+        </div>
+
+        {/* Versão Desktop (Tabela completa) */}
+        <div className="hidden sm:block overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="border-b border-novex-border bg-novex-surface2/60 text-novex-text-muted uppercase text-[10px]">
               <tr>

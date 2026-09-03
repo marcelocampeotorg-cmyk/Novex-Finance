@@ -8,6 +8,7 @@ export const importCsvExternalTransactions = (rows: MercadoPagoRawTransaction[])
 export const ignoreExternalTransaction = (id: string) => service.ignoreExternalTransaction(id);
 export const getReconciliationSummary = (period = "MONTHLY") => service.getReconciliationSummary(period);
 export const matchReconciliation = (externalTransactionId: string, installmentId: string) => service.matchReconciliation(externalTransactionId, installmentId);
+export const reconcileWithNewItem = (data: { externalTransactionId: string; title: string; categoryName: string; contactName?: string; description?: string }) => service.reconcileWithNewItem(data);
 export const syncMercadoPagoStatement = (force = false) => service.continueMercadoPagoSyncRun(force);
 export const enrichMercadoPagoTransactions = () => service.enrichAllMercadoPagoTransactions();
 

@@ -486,3 +486,98 @@ export async function getOrCreatePaymentIntention(installmentId: string) {
     return { success: false, error: error.message || String(error) };
   }
 }
+
+export async function adjustPensionMinimumWage(data: {
+  financialItemId: string;
+  newMinimumWageCents: number;
+  percentage: number;
+  effectiveFromDate?: string;
+}) {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+    const { calculatePensionInstallmentCents, buildPensionIndexerTag, isPensionItem } = await import("@/domain/pension-indexer");
+
+    const item = await db.financialItem.findFirst({
+      where: { id: data.financialItemId, workspaceId, deletedAt: null, direction: "PAYABLE" },
+      include: { installments: true },
+    });
+
+    if (!item) {
+      return { success: false, error: "Conta a pagar não encontrada." };
+    }
+
+    if (!isPensionItem(item.title, item.description)) {
+      return {
+        success: false,
+        error: "Esta operação é exclusiva para obrigações de Pensão Alimentícia.",
+      };
+    }
+
+    const newAmountCents = calculatePensionInstallmentCents(data.newMinimumWageCents, data.percentage);
+    if (newAmountCents <= 0) {
+      return { success: false, error: "Valor calculado de parcela inválido." };
+    }
+
+    return await db.$transaction(async (tx) => {
+      const effectiveDate = data.effectiveFromDate ? new Date(data.effectiveFromDate) : new Date(0);
+
+      // 1. Atualizar apenas parcelas em aberto / vencidas que atendem à data efetiva
+      const pendingInsts = await tx.installment.findMany({
+        where: {
+          financialItemId: item.id,
+          status: { in: ["SCHEDULED", "OVERDUE"] },
+          dueDate: { gte: effectiveDate },
+        },
+      });
+
+      if (pendingInsts.length === 0) {
+        return { success: false, error: "Nenhuma parcela futura em aberto para reajustar." };
+      }
+
+      await tx.installment.updateMany({
+        where: {
+          id: { in: pendingInsts.map((i) => i.id) },
+        },
+        data: {
+          amountCents: BigInt(newAmountCents),
+        },
+      });
+
+      // 2. Recalcular o totalAmountCents do item pai (preservando parcelas já quitadas no passado)
+      const allInsts = await tx.installment.findMany({
+        where: { financialItemId: item.id },
+        select: { amountCents: true },
+      });
+
+      const totalContractCents = allInsts.reduce((acc, curr) => acc + curr.amountCents, 0n);
+
+      // 3. Atualizar descrição com tag de indexação oficial
+      const indexerTag = buildPensionIndexerTag(data.percentage, data.newMinimumWageCents);
+      const cleanDesc = (item.description || "")
+        .replace(/\[INDEXER:MINIMUM_WAGE;PERCENT:[0-9.]+;BASE_WAGE:[0-9]+\]/g, "")
+        .trim();
+      const updatedDescription = cleanDesc ? `${cleanDesc} ${indexerTag}` : indexerTag;
+
+      await tx.financialItem.update({
+        where: { id: item.id },
+        data: {
+          totalAmountCents: totalContractCents,
+          description: updatedDescription,
+        },
+      });
+
+      revalidatePath("/");
+      revalidatePath("/contas-a-pagar");
+      revalidatePath("/relatorios");
+
+      return {
+        success: true,
+        updatedCount: pendingInsts.length,
+        newInstallmentAmountCents: newAmountCents,
+      };
+    });
+  } catch (error: any) {
+    console.error("Erro ao reajustar pensão por salário mínimo:", error);
+    return { success: false, error: error.message || String(error) };
+  }
+}

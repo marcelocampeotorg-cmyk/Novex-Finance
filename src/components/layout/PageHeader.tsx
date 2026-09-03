@@ -12,9 +12,9 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
   actions,
 }) => {
   return (
-    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between pb-6 border-b border-novex-border/60 mb-6">
+    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between pb-4 sm:pb-6 border-b border-novex-border/60 mb-4 sm:mb-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-novex-text-primary">
+        <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-novex-text-primary">
           {title}
         </h1>
         {description && (
@@ -23,7 +23,7 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
           </p>
         )}
       </div>
-      {actions && <div className="flex items-center gap-3 mt-4 md:mt-0">{actions}</div>}
+      {actions && <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-3 md:mt-0 w-full md:w-auto">{actions}</div>}
     </div>
   );
 };

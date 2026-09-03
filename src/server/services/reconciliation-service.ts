@@ -98,7 +98,7 @@ export async function calculateReconciliationScore(
   }
 
   let recommendation: "MATCHED" | "SUGGESTED" | "UNMATCHED" = "UNMATCHED";
-  if (score >= 100 && isExactAmount) {
+  if (score >= 90 && isExactAmount) {
     recommendation = "MATCHED";
   } else if (score >= 50) {
     recommendation = "SUGGESTED";
@@ -367,11 +367,13 @@ export async function categorizeTransactionDescription(description: string, work
 /**
  * Executar motor de conciliação automática para movimentações pendentes
  */
-export async function reconcileWorkspace(internalContext?: symbol, targetWorkspaceId?: string) {
+export async function reconcileWorkspace(internalContext?: symbol | string, targetWorkspaceId?: string) {
   try {
-    const workspaceId = internalContext === INTERNAL_WORKER_CONTEXT && targetWorkspaceId
-      ? targetWorkspaceId
-      : (await requireAuthenticatedWorkspace()).workspaceId;
+    const workspaceId = typeof internalContext === "string"
+      ? internalContext
+      : (internalContext === INTERNAL_WORKER_CONTEXT && targetWorkspaceId
+        ? targetWorkspaceId
+        : (await requireAuthenticatedWorkspace()).workspaceId);
 
     const unmatchedTxs = await db.externalTransaction.findMany({
       where: {
@@ -696,4 +698,343 @@ export async function unmatchTransaction(reconciliationId: string) {
     console.error("Erro ao desconciliar transação:", error);
     return { success: false, error: error.message };
   }
+}
+
+/**
+ * Mapeamento inicial de termos populares brasileiros para semente de regras inteligentes
+ */
+const DEFAULT_BRAZILIAN_PATTERNS: { categoryTarget: string; patterns: string[] }[] = [
+  {
+    categoryTarget: "Alimentação & Mercado",
+    patterns: [
+      "ifood", "rappi", "mcdonald", "burger king", "habibs", "subway", "padaria", "restaurante",
+      "pizzaria", "lanchonete", "churrascaria", "carrefour", "pao de acucar", "assai", "atacadao",
+      "extra", "dia", "supermercado", "mercado", "hortifruti", "acougue", "sams club", "doceria", "sorveteria"
+    ]
+  },
+  {
+    categoryTarget: "Transporte & Mobilidade",
+    patterns: [
+      "uber", "99app", "99pop", "taxi", "estacionamento", "pedagio", "sem parar", "veloe",
+      "conectcar", "moovit", "metro", "autopass", "posto", "shell", "ipiranga", "petrobras",
+      "br distribuidora", "ale", "gasolina", "combustivel", "abastecimento", "estapar"
+    ]
+  },
+  {
+    categoryTarget: "Saúde & Farmácia",
+    patterns: [
+      "droga raia", "drogasil", "pacheco", "pague menos", "panvel", "farmacia", "drogaria",
+      "laboratorio", "hospital", "clinica", "unimed", "dentista", "otica", "consulta medica"
+    ]
+  },
+  {
+    categoryTarget: "Assinaturas & Lazer",
+    patterns: [
+      "netflix", "spotify", "youtube", "prime video", "disney", "max", "deezer", "apple",
+      "globo", "twitch", "crunchyroll", "cinema", "ingresso", "sympla", "eventim"
+    ]
+  },
+  {
+    categoryTarget: "Telecom & Internet",
+    patterns: [
+      "claro", "vivo", "tim", "oi", "net virtua", "starlink", "algar", "telefonia", "internet"
+    ]
+  },
+  {
+    categoryTarget: "Serviços & Softwares",
+    patterns: [
+      "google", "aws", "digitalocean", "github", "chatgpt", "openai", "anthropic", "cursor",
+      "canva", "adobe", "microsoft", "hostinger", "godaddy", "vercel", "slack", "zoom", "notion"
+    ]
+  },
+  {
+    categoryTarget: "Compras & E-commerce",
+    patterns: [
+      "mercado livre", "shopee", "amazon", "shein", "aliexpress", "magalu", "magazine luiza",
+      "casas bahia", "americanas", "zara", "renner", "riachuelo", "centauro", "netshoes", "relogio"
+    ]
+  },
+  {
+    categoryTarget: "Moradia & Utilidades",
+    patterns: [
+      "enel", "sabesp", "copel", "cemig", "cpfl", "luz", "agua", "energia", "aluguel",
+      "imobiliaria", "condominio", "iptu", "comgas"
+    ]
+  },
+  {
+    categoryTarget: "Rendimentos & Tarifas MP",
+    patterns: [
+      "settlement", "rendimento", "tarifa", "iof", "taxa", "tarifa bancaria"
+    ]
+  },
+  {
+    categoryTarget: "Transferências & Carteiras",
+    patterns: [
+      "payouts", "saque", "retirada", "99pay", "picpay", "c6", "santander", "nu pagamentos",
+      "nubank", "inter", "pagseguro", "itau", "bradesco", "banco do brasil", "caixa", "bancoob", "asaas"
+    ]
+  }
+];
+
+/**
+ * Semear regras iniciais no banco de dados para um workspace
+ */
+export async function seedWorkspaceCategoryRules(workspaceId: string) {
+  const categories = await db.category.findMany({
+    where: { workspaceId },
+  });
+
+  if (categories.length === 0) return { seededCount: 0 };
+
+  let seededCount = 0;
+
+  for (const group of DEFAULT_BRAZILIAN_PATTERNS) {
+    // Encontrar a categoria correspondente mais próxima
+    const matchedCategory = categories.find((c) =>
+      c.name.toLowerCase().includes(group.categoryTarget.toLowerCase()) ||
+      group.categoryTarget.toLowerCase().includes(c.name.toLowerCase())
+    );
+
+    if (!matchedCategory) continue;
+
+    for (const pattern of group.patterns) {
+      try {
+        await db.categoryRule.upsert({
+          where: {
+            workspaceId_pattern: {
+              workspaceId,
+              pattern: pattern.toLowerCase().trim(),
+            },
+          },
+          update: {
+            categoryId: matchedCategory.id,
+            confidenceScore: 90,
+            isEnabled: true,
+          },
+          create: {
+            workspaceId,
+            pattern: pattern.toLowerCase().trim(),
+            categoryId: matchedCategory.id,
+            confidenceScore: 90,
+            source: "SYSTEM",
+            isEnabled: true,
+          },
+        });
+        seededCount++;
+      } catch (e) {
+        // Ignora duplicidades silenciosamente
+      }
+    }
+  }
+
+  return { seededCount };
+}
+
+/**
+ * Aprender uma nova regra a partir da ação do usuário e aplicar retroativamente
+ */
+export async function learnCategoryRule(params: {
+  workspaceId: string;
+  pattern: string;
+  categoryId: string;
+  applyToPast?: boolean;
+}) {
+  const { workspaceId, categoryId, applyToPast = true } = params;
+  const cleanPattern = params.pattern.toLowerCase().trim();
+
+  if (!cleanPattern || cleanPattern.length < 2) {
+    throw new Error("Padrão de reconhecimento inválido (mínimo de 2 caracteres).");
+  }
+
+  // 1. Gravar a regra no banco de dados com pontuação máxima
+  const rule = await db.categoryRule.upsert({
+    where: {
+      workspaceId_pattern: {
+        workspaceId,
+        pattern: cleanPattern,
+      },
+    },
+    update: {
+      categoryId,
+      confidenceScore: 95,
+      isEnabled: true,
+      source: "USER",
+    },
+    create: {
+      workspaceId,
+      pattern: cleanPattern,
+      categoryId,
+      confidenceScore: 95,
+      source: "USER",
+      isEnabled: true,
+    },
+    include: { category: true },
+  });
+
+  let updatedPastCount = 0;
+
+  // 2. Se applyToPast estiver ativo, atualizar retroativamente todas as transações que contenham esse texto
+  if (applyToPast) {
+    const matchingTxs = await db.externalTransaction.findMany({
+      where: {
+        workspaceId,
+        OR: [
+          { description: { contains: cleanPattern, mode: "insensitive" } },
+          { counterpartName: { contains: cleanPattern, mode: "insensitive" } },
+        ],
+      },
+      select: { id: true },
+    });
+
+    if (matchingTxs.length > 0) {
+      const txIds = matchingTxs.map((t) => t.id);
+      const res = await db.ledgerEntry.updateMany({
+        where: {
+          workspaceId,
+          externalTransactionId: { in: txIds },
+        },
+        data: {
+          categoryId,
+        },
+      });
+      updatedPastCount = res.count;
+    }
+  }
+
+  revalidatePath("/movimentacoes");
+  revalidatePath("/relatorios");
+  revalidatePath("/");
+
+  return {
+    success: true,
+    ruleId: rule.id,
+    pattern: rule.pattern,
+    categoryName: rule.category.name,
+    updatedPastCount,
+  };
+}
+
+/**
+ * Atualizar a categoria de uma transação específica e opcionalmente criar regra de aprendizado
+ */
+export async function updateTransactionCategory(params: {
+  workspaceId: string;
+  transactionId: string;
+  categoryId: string;
+  learnPattern?: string;
+}) {
+  const { workspaceId, transactionId, categoryId, learnPattern } = params;
+
+  // 1. Atualizar o LedgerEntry da transação
+  await db.ledgerEntry.updateMany({
+    where: {
+      workspaceId,
+      externalTransactionId: transactionId,
+    },
+    data: {
+      categoryId,
+    },
+  });
+
+  // 2. Se foi informado um padrão para aprender, salva no banco e aplica às demais
+  let learnedRuleResult = null;
+  if (learnPattern && learnPattern.trim().length >= 2) {
+    learnedRuleResult = await learnCategoryRule({
+      workspaceId,
+      pattern: learnPattern,
+      categoryId,
+      applyToPast: true,
+    });
+  }
+
+  revalidatePath("/movimentacoes");
+  revalidatePath("/relatorios");
+  revalidatePath("/");
+
+  return {
+    success: true,
+    learnedRule: learnedRuleResult,
+  };
+}
+
+/**
+ * Executar varredura completa de Auto-Categorização e Auto-Conciliação
+ */
+export async function runFullCategorizationAndReconciliation(workspaceId: string) {
+  // 1. Garantir que o workspace tenha as regras semeadas
+  const existingRulesCount = await db.categoryRule.count({ where: { workspaceId } });
+  if (existingRulesCount < 10) {
+    await seedWorkspaceCategoryRules(workspaceId);
+  }
+
+  // 2. Buscar todas as regras ativas ordenadas por score
+  const rules = await db.categoryRule.findMany({
+    where: { workspaceId, isEnabled: true },
+    orderBy: { confidenceScore: "desc" },
+  });
+
+  // 2.5. Enriquecer transações pendentes de dados de contraparte
+  try {
+    const { enrichAllMercadoPagoTransactions } = await import("@/server/services/transactions-service");
+    await enrichAllMercadoPagoTransactions(INTERNAL_WORKER_CONTEXT, workspaceId);
+  } catch (enrichErr: any) {
+    console.warn("[runFullCategorizationAndReconciliation] Aviso ao enriquecer transações:", enrichErr.message);
+  }
+
+  // 3. Buscar transações externas e verificar seus ledgerEntries
+  const txs = await db.externalTransaction.findMany({
+    where: { workspaceId, quarantinedAt: null },
+    include: { ledgerEntries: true },
+  });
+
+  let categorizedCount = 0;
+
+  for (const tx of txs) {
+    const textToMatch = `${tx.description || ""} ${tx.counterpartName || ""}`.toLowerCase();
+    const matchedRule = rules.find((r) => textToMatch.includes(r.pattern.toLowerCase().trim()));
+
+    if (matchedRule) {
+      for (const entry of tx.ledgerEntries) {
+        if (!entry.categoryId || entry.categoryId !== matchedRule.categoryId) {
+          await db.ledgerEntry.update({
+            where: { id: entry.id },
+            data: { categoryId: matchedRule.categoryId },
+          });
+          categorizedCount++;
+        }
+      }
+    }
+  }
+
+  // 4. Executar o motor de auto-conciliação
+  const reconResult = await reconcileWorkspace(workspaceId);
+
+  revalidatePath("/movimentacoes");
+  revalidatePath("/contas-a-pagar");
+  revalidatePath("/contas-a-receber");
+  revalidatePath("/relatorios");
+  revalidatePath("/");
+
+  return {
+    success: true,
+    categorizedCount,
+    autoMatchedCount: reconResult.autoMatchedCount,
+  };
+}
+
+/**
+ * Listar categorias disponíveis no workspace
+ */
+export async function getWorkspaceCategories(workspaceId: string) {
+  return db.category.findMany({
+    where: { workspaceId },
+    orderBy: { name: "asc" },
+    select: {
+      id: true,
+      name: true,
+      colorToken: true,
+      icon: true,
+      direction: true,
+    },
+  });
 }

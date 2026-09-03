@@ -545,15 +545,15 @@ export async function continueMercadoPagoSyncRun(
       }
     }
 
-    // Rate limit central de 60 segundos mesmo com isForce para evitar tempestades de chamadas
+    // Rate limit central de 180 segundos mesmo com isForce para evitar tempestades de chamadas e preservar cota
     if (isForce && account.lastSyncAt) {
       const now = new Date();
       const diffInSeconds = (now.getTime() - account.lastSyncAt.getTime()) / 1000;
-      if (diffInSeconds < 60) {
+      if (diffInSeconds < 180) {
         return {
           success: true,
           cached: true,
-          message: "Sincronização recente (menos de 1 min). Retornando dados locais.",
+          message: "Sincronização recente (menos de 3 min). Retornando dados locais para preservar cota.",
           insertedCount: 0,
           updatedCount: 0,
           skippedCount: 0,
@@ -562,8 +562,8 @@ export async function continueMercadoPagoSyncRun(
       }
     }
 
-    // Cache de 15 minutos para chamadas automáticas/não forçadas
-    const CACHE_MINUTES = 15;
+    // Cache de 60 minutos (cadência horária) para chamadas automáticas/não forçadas
+    const CACHE_MINUTES = 60;
     if (!isForce && account.lastSyncAt && account.historyBackfillStatus === "COMPLETE") {
       const now = new Date();
       const diffInMinutes = (now.getTime() - account.lastSyncAt.getTime()) / (1000 * 60);
@@ -571,7 +571,7 @@ export async function continueMercadoPagoSyncRun(
         return {
           success: true,
           cached: true,
-          message: "Sincronização recente (menos de 15 min). Retornando dados locais.",
+          message: "Sincronização recente (menos de 1 hora). Retornando dados locais.",
           insertedCount: 0,
           updatedCount: 0,
           skippedCount: 0,
@@ -1123,6 +1123,136 @@ export async function matchReconciliation(externalTransactionId: string, install
   }
 }
 
+export async function reconcileWithNewItem(data: {
+  externalTransactionId: string;
+  title: string;
+  categoryName: string;
+  contactName?: string;
+  description?: string;
+}) {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+
+    return await db.$transaction(async (tx) => {
+      const extTx = await tx.externalTransaction.findFirst({
+        where: {
+          id: data.externalTransactionId,
+          workspaceId,
+          reconciliations: { none: { status: "MATCHED" } },
+        },
+      });
+      if (!extTx) throw new Error("Movimentação inválida ou já conciliada.");
+
+      const direction: "PAYABLE" | "RECEIVABLE" = extTx.direction === "DEBIT" ? "PAYABLE" : "RECEIVABLE";
+
+      // 1. Localizar ou criar contato
+      let finalContactId: string | null = null;
+      const contactName = (data.contactName || extTx.counterpartName || "").trim();
+      if (contactName) {
+        let contact = await tx.contact.findFirst({
+          where: { workspaceId, name: contactName },
+        });
+        if (!contact) {
+          contact = await tx.contact.create({
+            data: {
+              workspaceId,
+              name: contactName,
+              type: "PERSON",
+              isPayee: direction === "PAYABLE",
+              isDebtor: direction === "RECEIVABLE",
+            },
+          });
+        }
+        finalContactId = contact.id;
+      }
+
+      // 2. Localizar ou criar categoria
+      let categoryId: string | null = null;
+      const catName = (data.categoryName || (direction === "RECEIVABLE" ? "Serviços Prestados" : "Outras Despesas")).trim();
+      let category = await tx.category.findFirst({
+        where: { workspaceId, name: catName },
+      });
+      if (!category) {
+        category = await tx.category.create({
+          data: {
+            workspaceId,
+            name: catName,
+            direction: direction === "PAYABLE" ? "EXPENSE" : "INCOME",
+            colorToken: "#00F0FF",
+          },
+        });
+      }
+      categoryId = category.id;
+
+      // 3. Criar FinancialItem já quitado
+      const title = data.title.trim() || (direction === "RECEIVABLE" ? "Recebimento Pix" : "Pagamento");
+      const financialItem = await tx.financialItem.create({
+        data: {
+          workspaceId,
+          direction,
+          kind: "ONE_TIME",
+          title,
+          description: data.description || extTx.description,
+          contactId: finalContactId,
+          categoryId,
+          totalAmountCents: extTx.amountCents,
+          startDate: extTx.occurredAt,
+          status: "ACTIVE",
+        },
+      });
+
+      // 4. Criar Installment já liquidado
+      const uniqueSuffix = crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
+      const installment = await tx.installment.create({
+        data: {
+          financialItemId: financialItem.id,
+          sequence: 1,
+          amountCents: extTx.amountCents,
+          settledAmountCents: extTx.amountCents,
+          dueDate: extTx.occurredAt,
+          status: "SETTLED",
+          settlementDate: extTx.occurredAt,
+          uniqueReference: `NOVEX-${direction.slice(0, 3)}-AUTO-${uniqueSuffix}-1`,
+        },
+      });
+
+      // 5. Criar registro de conciliação MATCHED
+      const reconciliation = await tx.reconciliation.create({
+        data: {
+          workspaceId,
+          externalTransactionId: extTx.id,
+          installmentId: installment.id,
+          status: "MATCHED",
+          score: 100,
+          reasons: ["Conciliação direta manual como nova receita/despesa"],
+          matchedBy: "USER",
+          matchedAt: new Date(),
+        },
+      });
+
+      // 6. Atualizar LedgerEntry existente
+      await tx.ledgerEntry.updateMany({
+        where: { workspaceId, externalTransactionId: extTx.id },
+        data: {
+          installmentId: installment.id,
+          categoryId,
+        },
+      });
+
+      revalidatePath("/movimentacoes");
+      revalidatePath("/contas-a-pagar");
+      revalidatePath("/contas-a-receber");
+      revalidatePath("/relatorios");
+      revalidatePath("/");
+
+      return { success: true, reconciliation };
+    });
+  } catch (error: any) {
+    console.error("Erro ao conciliar movimentação com novo item:", error);
+    return { success: false, error: error.message };
+  }
+}
+
 /**
  * Enriquece retroativamente todas as transações importadas do Mercado Pago no workspace
  * com nomes reais de pagadores, bancos, descrições e auto-categorização.
@@ -1149,7 +1279,6 @@ export async function enrichAllMercadoPagoTransactions(internalContext?: symbol,
         workspaceId,
         integrationAccountId: account.id,
         quarantinedAt: null,
-        type: "SETTLEMENT",
         OR: [
           { description: "SETTLEMENT" },
           { counterpartName: null },
@@ -1165,7 +1294,7 @@ export async function enrichAllMercadoPagoTransactions(internalContext?: symbol,
     let enrichedCount = 0;
     for (const tx of txsToEnrich) {
       // 2. Extrair o ID oficial do provedor (SOURCE_ID / EXTERNAL_ID original) e NUNCA usar chave interna composta
-      const rawSourceId = String((tx.rawProviderData as any)?.SOURCE_ID || (tx.rawProviderData as any)?.EXTERNAL_ID || "").trim();
+      const rawSourceId = String((tx.rawProviderData as any)?.SOURCE_ID || (tx.rawProviderData as any)?.EXTERNAL_ID || tx.externalId || "").trim();
       const isNumericPaymentId = /^\d{5,18}$/.test(rawSourceId);
       const isTaxOrYield = tx.description?.toLowerCase().includes("imposto") ||
         tx.description?.toLowerCase().includes("retenção") ||

@@ -87,6 +87,14 @@ export class WorkerDaemonService {
           console.warn(`[WorkerDaemon] Erro ao processar alertas para workspace ${ws.id}:`, e.message);
         }
 
+        // 2.5. Sincronizar pagamentos intradiários recentes e enriquecer transações para conciliação
+        try {
+          await syncRecentMercadoPagoPayments(ws.id, INTERNAL_WORKER_CONTEXT);
+          await enrichAllMercadoPagoTransactions(INTERNAL_WORKER_CONTEXT, ws.id);
+        } catch (syncRecentErr: any) {
+          console.warn(`[WorkerDaemon] Aviso ao sincronizar pagamentos recentes para workspace ${ws.id}:`, syncRecentErr.message);
+        }
+
         // 3. Executar motor de conciliação automática do workspace
         try {
           const reconRes = await reconcileWorkspace(INTERNAL_WORKER_CONTEXT, ws.id);
@@ -136,7 +144,26 @@ export class WorkerDaemonService {
                 console.error(`[WorkerDaemon] SyncRun ${activeSync.id} falhou:`, syncErr.message);
               }
             } else {
-              // 2. Se NÃO existe SyncRun ativo, avaliamos a política de cadência e backoff progressivo antes de iniciar um novo
+              // 2. Se NÃO existe SyncRun ativo, avaliamos a janela operacional ativa (07h às 01h) e a cadência horária
+              const brasiliaHour = parseInt(
+                new Intl.DateTimeFormat("pt-BR", {
+                  timeZone: "America/Sao_Paulo",
+                  hour: "numeric",
+                  hour12: false,
+                }).format(new Date()),
+                10,
+              );
+              // Janela de pico ativa acordada: das 07:00 da manhã até a 01:00 da madrugada (19 horas)
+              // Pausa noturna das 02:00 às 06:59 para permitir reset completo da cota de 24 requisições do Mercado Pago
+              const isWithinActiveWindow = brasiliaHour >= 7 || brasiliaHour === 0 || brasiliaHour === 1;
+
+              const isBackfill = ["NOT_STARTED", "IN_PROGRESS"].includes(integration.historyBackfillStatus);
+
+              // Durante a madrugada (02:00 às 06:59), suspende novas requisições de rotina para preservar cota
+              if (!isWithinActiveWindow && !isBackfill) {
+                continue;
+              }
+
               const now = Date.now();
               const lastRun = await db.syncRun.findFirst({
                 where: { integrationAccountId: integration.id },
@@ -162,25 +189,24 @@ export class WorkerDaemonService {
                 }
               }
 
-              const isBackfill = ["NOT_STARTED", "IN_PROGRESS"].includes(integration.historyBackfillStatus);
               const isMaxReports = Boolean(lastRun?.errorMessage && lastRun.errorMessage.includes("Max number of reports"));
               const isRateLimit = Boolean(lastRun?.errorMessage && (lastRun.errorMessage.includes("429") || lastRun.errorMessage.includes("Rate limit")));
 
-              // Backoff progressivo real:
-              // - Em Max Reports / 429: 15 min (1ª falha) -> 30 min (2ª) -> 60 min (3ª+)
-              // - Em falha geral: 5 min (1ª falha) -> 15 min (2ª) -> 30 min (3ª+)
-              // - Em operação normal: 60s em backfill, 5 min em incremental saudável
+              // Cadência de requisições:
+              // - Operação normal de pico: 1 sincronização a cada 60 minutos (máximo de 19 requisições/dia, cota segura < 24)
+              // - Em erro 429 ou Max Reports: aguardar no mínimo 60 minutos
+              // - Em falhas gerais: 15 min -> 30 min -> 60 min
               let minIntervalMs: number;
               if (isMaxReports || isRateLimit) {
                 minIntervalMs = consecutiveFailures >= 3 ? 60 * 60 * 1000 : (consecutiveFailures === 2 ? 30 * 60 * 1000 : 15 * 60 * 1000);
               } else if (consecutiveFailures >= 3) {
-                minIntervalMs = 30 * 60 * 1000;
+                minIntervalMs = 60 * 60 * 1000;
               } else if (consecutiveFailures === 2) {
-                minIntervalMs = 15 * 60 * 1000;
+                minIntervalMs = 30 * 60 * 1000;
               } else if (consecutiveFailures === 1) {
-                minIntervalMs = 5 * 60 * 1000;
+                minIntervalMs = 15 * 60 * 1000;
               } else {
-                minIntervalMs = isBackfill ? 60 * 1000 : 15 * 60 * 1000;
+                minIntervalMs = isBackfill ? 60 * 1000 : 60 * 60 * 1000;
               }
 
               if (now - lastEventTime >= minIntervalMs) {

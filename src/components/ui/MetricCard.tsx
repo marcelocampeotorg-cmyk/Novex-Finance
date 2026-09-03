@@ -55,32 +55,32 @@ export const MetricCard: React.FC<MetricCardProps> = ({
   return (
     <div
       className={cn(
-        "relative overflow-hidden rounded-xl border p-5 transition-all hover:border-novex-cyan/50 flex flex-col justify-between",
+        "relative overflow-hidden rounded-xl border p-3.5 sm:p-5 transition-all hover:border-novex-cyan/50 flex flex-col justify-between",
         getVariantStyles(),
         className
       )}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="flex flex-col gap-1">
-          <span className="text-sm font-medium text-novex-text-secondary leading-tight">{title}</span>
+        <div className="flex flex-col gap-1 min-w-0">
+          <span className="text-xs sm:text-sm font-medium text-novex-text-secondary leading-tight truncate">{title}</span>
           {badgeText && (
-            <span className="inline-self-start self-start rounded bg-novex-cyan/10 px-2 py-0.5 text-[10px] font-semibold text-novex-cyan border border-novex-cyan/30 mt-0.5">
+            <span className="inline-self-start self-start rounded bg-novex-cyan/10 px-1.5 sm:px-2 py-0.5 text-[9px] sm:text-[10px] font-semibold text-novex-cyan border border-novex-cyan/30 mt-0.5">
               {badgeText}
             </span>
           )}
         </div>
 
-        <div className="rounded-lg bg-novex-surface2/80 p-2 text-current border border-novex-border/50 shrink-0">
-          <Icon className="h-5 w-5" />
+        <div className="rounded-lg bg-novex-surface2/80 p-1.5 sm:p-2 text-current border border-novex-border/50 shrink-0">
+          <Icon className="h-4 w-4 sm:h-5 sm:w-5" />
         </div>
       </div>
 
-      <div className="mt-4">
-        <div className={cn("text-2xl font-bold tracking-tight", getValueColorClass())}>
+      <div className="mt-3 sm:mt-4">
+        <div className={cn("text-xl sm:text-2xl font-bold tracking-tight break-words", getValueColorClass())}>
           {overrideText || formatCurrency(amountCents)}
         </div>
         {subtitle && (
-          <p className="mt-1 text-xs text-novex-text-secondary flex items-center gap-1">
+          <p className="mt-1 text-[11px] sm:text-xs text-novex-text-secondary flex items-center gap-1 leading-normal">
             {subtitle}
           </p>
         )}

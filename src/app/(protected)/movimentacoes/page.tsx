@@ -3,13 +3,14 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { Search, Filter, RefreshCw, CheckCircle2, Link2, Tag, Upload, ArrowUpRight, ArrowDownLeft, XCircle, ShieldCheck, Plus } from "lucide-react";
+import { Search, Filter, RefreshCw, CheckCircle2, Link2, Tag, Upload, ArrowUpRight, ArrowDownLeft, XCircle, ShieldCheck, Plus, Sparkles } from "lucide-react";
 import { formatCurrency, formatDateTime } from "@/lib/formatters";
 import { formatTransactionDisplay } from "@/lib/transaction-presentation";
 import { getExternalTransactions, getReconciliationSummary, ignoreExternalTransaction } from "@/server/actions/transactions";
-import { runAutomaticReconciliationEngine, confirmSuggestedMatch, unmatchTransaction } from "@/server/actions/reconciliation";
+import { runAutomaticReconciliationEngine, confirmSuggestedMatch, unmatchTransaction, runFullCategorizationAndReconciliationAction } from "@/server/actions/reconciliation";
 import { ImportStatementModal } from "@/components/modals/ImportStatementModal";
 import { ManualMatchModal } from "@/components/modals/ManualMatchModal";
+import { CategoryLearnModal } from "@/components/modals/CategoryLearnModal";
 import { createManualTransaction, quarantineTransaction } from "@/server/actions/financial-accounts";
 
 export default function MovimentacoesPage() {
@@ -20,6 +21,7 @@ export default function MovimentacoesPage() {
   const [loading, setLoading] = useState(true);
   const [runningEngine, setRunningEngine] = useState(false);
   const [txs, setTxs] = useState<any[]>([]);
+  const [selectedTxForCategory, setSelectedTxForCategory] = useState<any | null>(null);
   const [summary, setSummary] = useState<any>({
     totalCount: 0,
     matchedCount: 0,
@@ -61,13 +63,19 @@ export default function MovimentacoesPage() {
 
   const handleRunReconciliationEngine = async () => {
     setRunningEngine(true);
+    setSyncMessage(null);
     try {
-      const res = await runAutomaticReconciliationEngine();
+      const res = await runFullCategorizationAndReconciliationAction();
       if (res.success) {
+        setSyncMessage({
+          type: "success",
+          text: `Varredura Concluída: ${res.categorizedCount} movimentação(ões) categorizada(s) e ${res.autoMatchedCount} conciliada(s) automaticamente!`,
+        });
         await loadData();
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Erro ao executar conciliação:", err);
+      setSyncMessage({ type: "error", text: err.message || "Erro ao executar motor inteligente." });
     } finally {
       setRunningEngine(false);
     }
@@ -202,10 +210,11 @@ export default function MovimentacoesPage() {
               <button
                 onClick={handleRunReconciliationEngine}
                 disabled={runningEngine}
-                className="flex items-center gap-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold px-4 py-2 text-xs transition-colors border border-purple-500/40 disabled:opacity-50"
+                className="flex items-center gap-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold px-4 py-2 text-xs transition-all border border-purple-500/40 disabled:opacity-50 shadow-md glow-cyan-subtle"
+                title="Executa auto-categorização inteligente e auto-conciliação bancária"
               >
-                <RefreshCw className={`h-4 w-4 ${runningEngine ? "animate-spin" : ""}`} />
-                <span>{runningEngine ? "Processando..." : "Rodar Conciliação"}</span>
+                <Sparkles className={`h-4 w-4 ${runningEngine ? "animate-spin text-cyan-300" : "text-yellow-300"}`} />
+                <span>{runningEngine ? "Processando..." : "Auto-Categorizar & Conciliar"}</span>
               </button>
             </div>
             {syncMessage && (
@@ -368,15 +377,19 @@ export default function MovimentacoesPage() {
                         </span>
                       </td>
                     <td className="py-4 px-4">
-                      <span
-                        className={`px-2.5 py-1 rounded-md text-[10px] font-semibold inline-block ${
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTxForCategory(tx)}
+                        className={`px-2.5 py-1 rounded-md text-[10px] font-semibold inline-flex items-center gap-1.5 transition-all hover:scale-105 active:scale-95 cursor-pointer ${
                           tx.category === "Não categorizada"
-                            ? "bg-zinc-800 text-amber-300 border border-amber-500/30"
-                            : "bg-blue-500/20 text-blue-300 border border-blue-500/30"
+                            ? "bg-zinc-800 text-amber-300 border border-amber-500/30 hover:border-amber-400 shadow-sm"
+                            : "bg-blue-500/20 text-blue-300 border border-blue-500/30 hover:border-blue-400 shadow-sm"
                         }`}
+                        title="Clique para alterar a categoria ou ensinar regra automática"
                       >
-                        {tx.category}
-                      </span>
+                        <span>{tx.category}</span>
+                        <Tag className="h-2.5 w-2.5 opacity-60" />
+                      </button>
                     </td>
                     <td
                       className={`py-4 px-4 font-bold ${
@@ -453,6 +466,13 @@ export default function MovimentacoesPage() {
         isOpen={!!selectedTxForMatch}
         externalTx={selectedTxForMatch}
         onClose={() => setSelectedTxForMatch(null)}
+        onSuccess={loadData}
+      />
+
+      <CategoryLearnModal
+        isOpen={!!selectedTxForCategory}
+        onClose={() => setSelectedTxForCategory(null)}
+        transaction={selectedTxForCategory}
         onSuccess={loadData}
       />
     </div>
