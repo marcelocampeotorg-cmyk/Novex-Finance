@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { formatTransactionDisplay } from "../src/lib/transaction-presentation.ts";
 
-test("Apresentação de Transações: PAYOUTS não inventa que a saída foi Pix", () => {
+test("Apresentação de Transações: PAYOUTS com banco mostra transferência bancária limpa", () => {
   const result = formatTransactionDisplay({
     type: "PAYOUTS",
     description: "PAYOUTS",
@@ -11,8 +11,8 @@ test("Apresentação de Transações: PAYOUTS não inventa que a saída foi Pix"
     rawProviderData: { POI_BANK_NAME: "BRADESCO" },
   });
 
-  assert.equal(result.title, "Transferência ou retirada registrada");
-  assert.equal(result.subtitle, "BRADESCO");
+  assert.equal(result.title, "BRADESCO");
+  assert.equal(result.subtitle, "Transferência para BRADESCO");
   assert.equal(result.isKnownCounterpart, true);
 });
 
@@ -31,7 +31,7 @@ test("Apresentação de Transações: Extrato oficial mostra favorecido confirma
   });
 
   assert.equal(result.title, "FACEBOOK SERVICOS ONLINE DO BRASIL LTDA");
-  assert.equal(result.subtitle, "Pagamento com Pix");
+  assert.equal(result.subtitle, "Pagamento com QR Pix");
   assert.equal(result.isKnownCounterpart, true);
   assert.equal(result.identificationStatus, "OFFICIAL");
 });
@@ -57,19 +57,22 @@ test("Apresentação de Transações: Regra inferida por histórico gera status 
   assert.equal(result.identificationStatus, "INFERRED");
 });
 
-test("Apresentação de Transações: Saída sem qualquer evidência fica UNIDENTIFIED", () => {
+test("Apresentação de Transações: Saída sem qualquer evidência detecta operação por referência", () => {
   const result = formatTransactionDisplay({
     direction: "DEBIT",
     type: "PAYOUTS",
     description: "PAYOUTS",
     counterpartName: null,
+    rawProviderData: { EXTERNAL_REFERENCE: "QR260902200429" },
   });
 
+  assert.equal(result.title, "Pagamento com QR Pix");
+  assert.equal(result.subtitle, "Ref: QR260902200429");
   assert.equal(result.isKnownCounterpart, false);
   assert.equal(result.identificationStatus, "UNIDENTIFIED");
 });
 
-test("Apresentação de Transações: rendimento exige descrição oficial explícita", () => {
+test("Apresentação de Transações: rendimento do saldo exibe título amigável de CDI", () => {
   const result = formatTransactionDisplay({
     type: "SETTLEMENT",
     description: "Rendimento do saldo",
@@ -78,12 +81,26 @@ test("Apresentação de Transações: rendimento exige descrição oficial expl�
     counterpartName: null,
   });
 
-  assert.equal(result.title, "Rendimento da conta Mercado Pago");
-  assert.equal(result.subtitle, "Identificado no relatório oficial");
-  assert.equal(result.isKnownCounterpart, false);
+  assert.equal(result.title, "Rendimento do saldo");
+  assert.equal(result.subtitle, "Mercado Pago (CDI)");
+  assert.equal(result.isKnownCounterpart, true);
 });
 
-test("Apresentação de Transações: imposto exige descrição oficial explícita", () => {
+test("Apresentação de Transações: centavos na madrugada sem descrição viram rendimento do saldo", () => {
+  const result = formatTransactionDisplay({
+    type: "SETTLEMENT",
+    description: "",
+    direction: "CREDIT",
+    amountCents: 4,
+    counterpartName: null,
+  });
+
+  assert.equal(result.title, "Rendimento do saldo");
+  assert.equal(result.subtitle, "Mercado Pago (CDI)");
+  assert.equal(result.isKnownCounterpart, true);
+});
+
+test("Apresentação de Transações: imposto sobre rendimento exibe retenção oficial", () => {
   const result = formatTransactionDisplay({
     type: "SETTLEMENT",
     description: "Retenção de imposto de renda sobre rendimento",
@@ -92,12 +109,12 @@ test("Apresentação de Transações: imposto exige descrição oficial explíci
     counterpartName: null,
   });
 
-  assert.equal(result.title, "Imposto / Retenção sobre rendimento");
-  assert.equal(result.subtitle, "Identificado no relatório oficial");
-  assert.equal(result.isKnownCounterpart, false);
+  assert.equal(result.title, "Imposto sobre rendimento");
+  assert.equal(result.subtitle, "Retenção oficial Mercado Pago");
+  assert.equal(result.isKnownCounterpart, true);
 });
 
-test("Apresentação de Transações: Pix Recebido com banco preserva nome e contraparte", () => {
+test("Apresentação de Transações: Pix Recebido com banco indica origem de forma limpa", () => {
   const result = formatTransactionDisplay({
     type: "regular_payment",
     description: "Pix Recebido - NU PAGAMENTOS S.A. - INSTITUIÇÃO DE PAGAMENTO",
@@ -106,8 +123,8 @@ test("Apresentação de Transações: Pix Recebido com banco preserva nome e con
     counterpartName: "NU PAGAMENTOS S.A. - INSTITUIÇÃO DE PAGAMENTO",
   });
 
-  assert.equal(result.title, "Pix Recebido - NU PAGAMENTOS S.A. - INSTITUIÇÃO DE PAGAMENTO");
-  assert.equal(result.subtitle, "NU PAGAMENTOS S.A. - INSTITUIÇÃO DE PAGAMENTO");
+  assert.equal(result.title, "Pix recebido");
+  assert.equal(result.subtitle, "Origem: NU PAGAMENTOS S.A. - INSTITUIÇÃO DE PAGAMENTO");
   assert.equal(result.isKnownCounterpart, true);
 });
 
@@ -129,7 +146,7 @@ test("Apresentação de Transações: REFUND e DISPUTE são convertidos com tít
   assert.equal(dispute.title, "Contestação de pagamento");
 });
 
-test("Apresentação de Transações: valor pequeno sem evidência não vira rendimento nem imposto", () => {
+test("Apresentação de Transações: centavos do relatório de conciliação são identificados como rendimento e imposto do MP", () => {
   const credit = formatTransactionDisplay({
     type: "SETTLEMENT",
     description: "SETTLEMENT",
@@ -143,8 +160,8 @@ test("Apresentação de Transações: valor pequeno sem evidência não vira ren
     amountCents: 1,
   });
 
-  assert.equal(credit.title, "Entrada na conta Mercado Pago");
-  assert.equal(debit.title, "Saída da conta Mercado Pago");
-  assert.equal(credit.subtitle, "Não informado pelo provedor");
-  assert.equal(debit.subtitle, "Não informado pelo provedor");
+  assert.equal(credit.title, "Rendimento do saldo");
+  assert.equal(credit.subtitle, "Mercado Pago (CDI)");
+  assert.equal(debit.title, "Imposto sobre rendimento");
+  assert.equal(debit.subtitle, "Retenção oficial Mercado Pago");
 });

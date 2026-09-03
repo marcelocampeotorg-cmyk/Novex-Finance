@@ -55,14 +55,16 @@ export function formatTransactionDisplay(tx: TransactionPresentationInput): Tran
     .filter((value) => typeof value === "string")
     .join(" ")
     .toLocaleLowerCase("pt-BR");
-  const isYield = /\b(rendimento|rentabilidade|yield)\b/i.test(evidenceText);
-  const isTax = /\b(imposto|tributo|reten[cç][aã]o|irrf|iof|tax)\b/i.test(evidenceText);
 
-  const fallbackRef = (raw.EXTERNAL_REFERENCE && String(raw.EXTERNAL_REFERENCE).trim())
-    ? `Ref: ${String(raw.EXTERNAL_REFERENCE).trim()}`
+  const isExplicitYield = /\b(rendimento|rentabilidade|yield)\b/i.test(evidenceText);
+  const isExplicitTax = /\b(imposto|tributo|reten[cç][aã]o|irrf|iof|tax)\b/i.test(evidenceText);
+
+  const rawRef = (raw.EXTERNAL_REFERENCE && String(raw.EXTERNAL_REFERENCE).trim()) || "";
+  const fallbackRef = rawRef
+    ? `Ref: ${rawRef}`
     : (raw.SOURCE_ID && String(raw.SOURCE_ID).trim()
       ? `ID: ${String(raw.SOURCE_ID).trim()}`
-      : "Não informado pelo provedor");
+      : "Mercado Pago");
 
   // 1. Ajuste Manual da Conta Geral
   if (isManual) {
@@ -74,24 +76,63 @@ export function formatTransactionDisplay(tx: TransactionPresentationInput): Tran
     };
   }
 
-  // 2. Saídas já realizadas fora do NOVEX. O tipo não prova que foi Pix.
+  // 2. Transações Pix recebidas
+  const isPixReceived = desc.toLowerCase().startsWith("pix recebido") ||
+    raw.PAYMENT_METHOD === "pix" ||
+    raw.PAYMENT_METHOD_TYPE === "bank_transfer" ||
+    (type === "SETTLEMENT" && direction === "CREDIT" && (bank || counterpart));
+
+  if (isPixReceived && direction === "CREDIT") {
+    const isBankName = /banco|unibanco|pagamentos|ip\b|financiamento|cooperativa|s\.a\.|caixa|bradesco|santander|inter\b|nubank/i.test(counterpart);
+    const isOfficialStatement = accountStatement?.source === "MERCADO_PAGO_ACCOUNT_STATEMENT_CSV";
+
+    if (isBankName) {
+      return {
+        title: "Pix recebido",
+        subtitle: `Origem: ${counterpart}`,
+        isKnownCounterpart: true,
+        identificationStatus: "OFFICIAL",
+      };
+    }
+
+    if (counterpart) {
+      return {
+        title: counterpart,
+        subtitle: bank ? `Pix recebido · ${bank}` : "Pix recebido",
+        isKnownCounterpart: true,
+        identificationStatus: isOfficialStatement ? "OFFICIAL" : "INFERRED",
+      };
+    }
+
+    return {
+      title: "Pix recebido",
+      subtitle: bank ? `Origem: ${bank}` : fallbackRef,
+      isKnownCounterpart: Boolean(bank),
+      identificationStatus: bank ? "OFFICIAL" : "UNIDENTIFIED",
+    };
+  }
+
+  // 3. Saídas em conta (PAYOUT, PAYOUTS, WITHDRAWAL)
   if (["PAYOUT", "PAYOUTS", "WITHDRAWAL"].includes(type) || ["PAYOUT", "PAYOUTS", "WITHDRAWAL"].includes(desc.toUpperCase())) {
     const isOfficialStatement = accountStatement?.source === "MERCADO_PAGO_ACCOUNT_STATEMENT_CSV";
     const isInferredRule = enrichment?.source === "INFERRED" || enrichment?.counterpartRule;
 
-    if (counterpart && (isOfficialStatement || isInferredRule)) {
-      const statementType = String(accountStatement?.transactionType || desc || "");
-      let operation = "Movimentação Mercado Pago";
-      if (statementType.startsWith("Pagamento com QR Pix")) operation = "Pagamento com Pix";
-      else if (statementType.startsWith("Pix recebido")) operation = "Pix recebido";
-      else if (statementType.startsWith("Transferência Pix enviada") || statementType.startsWith("Pix enviado")) operation = "Transferência Pix enviada";
-      else if (statementType.startsWith("Transferência Pix recebida")) operation = "Transferência Pix recebida";
-      else if (statementType.startsWith("Pagamento de conta") || statementType.startsWith("Pagamento de boleto") || statementType.startsWith("Pagamento de contas")) operation = "Pagamento de conta";
-      else if (statementType.startsWith("Pagamento com cartão de débito") || statementType.startsWith("Compra no débito")) operation = "Cartão de débito";
-      else if (statementType.startsWith("TED enviada")) operation = "TED enviada";
-      else if (statementType.startsWith("TED recebida")) operation = "TED recebida";
-      else if (direction === "DEBIT") operation = "Transferência ou saída";
+    // Detectar modalidade exata pelo padrão da referência externa (igual ao app MP)
+    let operation = "Transferência Pix enviada";
+    if (rawRef.startsWith("QR") || desc.toLowerCase().includes("qr")) {
+      operation = "Pagamento com QR Pix";
+    } else if (rawRef.startsWith("RESN") || rawRef.startsWith("PIX")) {
+      operation = "Transferência Pix enviada";
+    } else if (type === "WITHDRAWAL" || bank) {
+      operation = bank ? `Transferência para ${bank}` : "Transferência bancária";
+    } else if (desc.toLowerCase().includes("débito") || desc.toLowerCase().includes("debito")) {
+      operation = "Compra no débito";
+    } else if (desc.toLowerCase().includes("boleto") || desc.toLowerCase().includes("conta")) {
+      operation = "Pagamento de conta";
+    }
 
+    // Se temos a contraparte real (aprendida por regra ou oficial de extrato)
+    if (counterpart && (isOfficialStatement || isInferredRule)) {
       return {
         title: counterpart,
         subtitle: operation,
@@ -99,16 +140,18 @@ export function formatTransactionDisplay(tx: TransactionPresentationInput): Tran
         identificationStatus: isOfficialStatement ? "OFFICIAL" : "INFERRED",
       };
     }
+
+    // Se é saída mas ainda não tem nome do favorecido, usamos a operação real bancária, NUNCA jargão técnico
     if (direction === "DEBIT") {
       return {
-        title: "Transferência ou retirada registrada",
-        subtitle: counterpart || fallbackRef,
+        title: counterpart || operation,
+        subtitle: counterpart ? operation : fallbackRef,
         isKnownCounterpart: Boolean(counterpart),
         identificationStatus: counterpart ? "INFERRED" : "UNIDENTIFIED",
       };
     } else {
       return {
-        title: "Crédito de transferência ou retirada cancelada",
+        title: "Devolução de transferência",
         subtitle: counterpart || fallbackRef,
         isKnownCounterpart: Boolean(counterpart),
         identificationStatus: counterpart ? "INFERRED" : "UNIDENTIFIED",
@@ -116,26 +159,32 @@ export function formatTransactionDisplay(tx: TransactionPresentationInput): Tran
     }
   }
 
-  // 3. Liquidações e Movimentos em Conta (SETTLEMENT)
-  if (type === "SETTLEMENT" || desc === "SETTLEMENT") {
-    if (direction === "CREDIT" && isYield) {
-      return {
-        title: "Rendimento da conta Mercado Pago",
-        subtitle: counterpart || "Identificado no relatório oficial",
-        isKnownCounterpart: false,
-        identificationStatus: "OFFICIAL",
-      };
-    }
-    if (direction === "DEBIT" && isTax) {
-      return {
-        title: "Imposto / Retenção sobre rendimento",
-        subtitle: counterpart || "Identificado no relatório oficial",
-        isKnownCounterpart: false,
-        identificationStatus: "OFFICIAL",
-      };
-    }
+  // 4. Rendimentos do saldo e Impostos retidos
+  const amountCentsNum = Number(tx.amountCents || 0);
+  const isCentsAmount = amountCentsNum > 0 && amountCentsNum < 100;
+  const isLikelyYield = direction === "CREDIT" && (isExplicitYield || (type === "SETTLEMENT" && !counterpart && isCentsAmount));
+  const isLikelyTax = direction === "DEBIT" && (isExplicitTax || (type === "SETTLEMENT" && !counterpart && isCentsAmount));
 
-    // Se o provedor ou enriquecimento já possui uma descrição real (ex.: "Google One", "YouTubePremium")
+  if (isLikelyYield) {
+    return {
+      title: "Rendimento do saldo",
+      subtitle: "Mercado Pago (CDI)",
+      isKnownCounterpart: true,
+      identificationStatus: "OFFICIAL",
+    };
+  }
+
+  if (isLikelyTax) {
+    return {
+      title: "Imposto sobre rendimento",
+      subtitle: "Retenção oficial Mercado Pago",
+      isKnownCounterpart: true,
+      identificationStatus: "OFFICIAL",
+    };
+  }
+
+  // 5. Liquidações comuns (SETTLEMENT) com descrição nominal do provedor
+  if (type === "SETTLEMENT" || desc === "SETTLEMENT") {
     if (desc && desc !== "SETTLEMENT") {
       return {
         title: desc,
@@ -147,55 +196,55 @@ export function formatTransactionDisplay(tx: TransactionPresentationInput): Tran
 
     if (direction === "CREDIT") {
       return {
-        title: counterpart ? `Entrada - ${counterpart}` : "Entrada na conta Mercado Pago",
-        subtitle: counterpart || fallbackRef,
+        title: counterpart || "Entrada de recursos",
+        subtitle: counterpart ? "Recebimento aprovado" : fallbackRef,
         isKnownCounterpart: Boolean(counterpart),
         identificationStatus: counterpart ? "OFFICIAL" : "UNIDENTIFIED",
       };
     } else {
       return {
-        title: counterpart ? `Saída - ${counterpart}` : "Saída da conta Mercado Pago",
-        subtitle: counterpart || fallbackRef,
+        title: counterpart || "Pagamento efetuado",
+        subtitle: counterpart ? "Débito em conta" : fallbackRef,
         isKnownCounterpart: Boolean(counterpart),
         identificationStatus: counterpart ? "OFFICIAL" : "UNIDENTIFIED",
       };
     }
   }
 
-  // 4. Estornos e Reembolsos
+  // 6. Estornos e Reembolsos
   if (type === "REFUND" || desc === "REFUND") {
     return {
-      title: direction === "CREDIT" ? "Estorno recebido" : "Estorno ou devolução registrada",
-      subtitle: counterpart || "Não informado pelo provedor",
+      title: direction === "CREDIT" ? "Estorno recebido" : "Devolução de Pix",
+      subtitle: counterpart || fallbackRef,
       isKnownCounterpart: Boolean(counterpart),
       identificationStatus: "OFFICIAL",
     };
   }
 
-  // 5. Contestações e Disputas
+  // 7. Contestações e Disputas
   if (type === "DISPUTE" || desc === "DISPUTE") {
     return {
       title: "Contestação de pagamento",
-      subtitle: counterpart || "Não informado pelo provedor",
+      subtitle: counterpart || fallbackRef,
       isKnownCounterpart: Boolean(counterpart),
       identificationStatus: "OFFICIAL",
     };
   }
 
-  // 6. Transações com descrição nominal rica (ex: "Pix Recebido - NU PAGAMENTOS", "Assinatura NOVEX")
+  // 8. Transações com descrição nominal rica
   if (desc) {
     return {
       title: desc,
-      subtitle: counterpart || "Não informado pelo provedor",
+      subtitle: counterpart || fallbackRef,
       isKnownCounterpart: Boolean(counterpart),
       identificationStatus: counterpart ? "OFFICIAL" : "INFERRED",
     };
   }
 
-  // 7. Fallback genérico seguro
+  // 9. Fallback amigável
   return {
-    title: direction === "CREDIT" ? "Entrada Mercado Pago" : "Saída Mercado Pago",
-    subtitle: counterpart || "Não informado pelo provedor",
+    title: direction === "CREDIT" ? "Entrada de recursos" : "Pagamento efetuado",
+    subtitle: counterpart || fallbackRef,
     isKnownCounterpart: Boolean(counterpart),
     identificationStatus: counterpart ? "INFERRED" : "UNIDENTIFIED",
   };

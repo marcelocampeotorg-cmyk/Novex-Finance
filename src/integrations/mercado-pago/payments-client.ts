@@ -27,15 +27,15 @@ export class MercadoPagoPaymentsClient {
     const bankPayer = p.point_of_interaction?.transaction_data?.bank_info?.payer?.long_name;
     const bankCollector = p.point_of_interaction?.transaction_data?.bank_info?.collector?.long_name;
     const personName = p.payer?.first_name ? `${p.payer.first_name} ${p.payer.last_name || ""}`.trim() : "";
-    const counterpartName = bankPayer || personName || (bankCollector && !bankCollector.includes("MERCADO PAGO") ? bankCollector : undefined) || undefined;
+    const counterpartName = personName || bankPayer || (bankCollector && !bankCollector.includes("MERCADO PAGO") ? bankCollector : undefined) || undefined;
     const counterpartDocument = p.payer?.identification?.number || undefined;
 
     let description = p.description;
     if (!description || description.trim() === "") {
       if (p.payment_method_id === "pix" || p.payment_method?.id === "pix") {
-        description = counterpartName ? `Pix Recebido - ${counterpartName}` : "Pix Recebido";
+        description = personName ? `Pix Recebido - ${personName}` : (bankPayer ? "Pix Recebido" : "Pix Recebido");
       } else if (p.operation_type === "account_fund") {
-        description = counterpartName ? `Entrada Pix - ${counterpartName}` : "Entrada de Recursos";
+        description = personName ? `Entrada Pix - ${personName}` : "Entrada Pix";
       } else if (counterpartName) {
         description = `Pagamento - ${counterpartName}`;
       } else {
