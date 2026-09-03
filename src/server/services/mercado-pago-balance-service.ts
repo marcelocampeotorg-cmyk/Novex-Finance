@@ -153,8 +153,6 @@ export async function continueMercadoPagoBalanceSync(options: BalanceSyncOptions
           remoteTaskId: requested.taskId,
           remoteReportId: requested.reportId || null,
           remoteFileName: requested.fileName || null,
-          beginDate: requested.beginDate ? new Date(requested.beginDate) : run.beginDate,
-          endDate: requested.endDate ? new Date(requested.endDate) : run.endDate,
           requestedAt: new Date(),
         },
       });
@@ -164,21 +162,27 @@ export async function continueMercadoPagoBalanceSync(options: BalanceSyncOptions
       }
     }
 
-    const task = await client.getTask(run.remoteTaskId!);
-    const normalizedBeginDate = task.beginDate ? new Date(task.beginDate) : run.beginDate;
-    const normalizedEndDate = task.endDate ? new Date(task.endDate) : run.endDate;
-    if (normalizedBeginDate.getTime() !== run.beginDate.getTime() || normalizedEndDate.getTime() !== run.endDate.getTime()) {
-      run = await db.balanceSyncRun.update({
-        where: { id: run.id },
-        data: { beginDate: normalizedBeginDate, endDate: normalizedEndDate },
-      });
+    let fileName = run.remoteFileName;
+    let normalizedEndDate = run.endDate;
+    let remoteReportId = run.remoteReportId;
+
+    if (!fileName) {
+      const task = await client.getTask(run.remoteTaskId!);
+      if (task.status === "PROCESSING") {
+        return { success: true as const, status: "PROCESSING" as const, runId: run.id, retainedBalanceCents: financialAccount.officialBalanceCents };
+      }
+      if (task.status === "FAILED") throw new Error("Mercado Pago marcou a tarefa do Relatório Liberações como falha.");
+      fileName = task.fileName || run.remoteFileName;
+      if (!fileName) throw new Error("Tarefa concluída sem file_name para baixar o Relatório Liberações.");
+      if (task.endDate) normalizedEndDate = new Date(task.endDate);
+      if (task.reportId) remoteReportId = task.reportId;
+      if (remoteReportId || fileName) {
+        await db.balanceSyncRun.update({
+          where: { id: run.id },
+          data: { remoteReportId, remoteFileName: fileName },
+        });
+      }
     }
-    if (task.status === "PROCESSING") {
-      return { success: true as const, status: "PROCESSING" as const, runId: run.id, retainedBalanceCents: financialAccount.officialBalanceCents };
-    }
-    if (task.status === "FAILED") throw new Error("Mercado Pago marcou a tarefa do Relatório Liberações como falha.");
-    const fileName = task.fileName || run.remoteFileName;
-    if (!fileName) throw new Error("Tarefa concluída sem file_name para baixar o Relatório Liberações.");
 
     const csv = await client.download(fileName);
     const evidence = client.parseBalance(csv);
@@ -201,7 +205,7 @@ export async function continueMercadoPagoBalanceSync(options: BalanceSyncOptions
         data: {
           status: "CONFIRMED",
           activeKey: null,
-          remoteReportId: task.reportId || run!.remoteReportId,
+          remoteReportId: remoteReportId || run!.remoteReportId,
           remoteFileName: fileName,
           balanceCents: BigInt(evidence.balanceCents!),
           evidenceSummary: {
@@ -224,7 +228,7 @@ export async function continueMercadoPagoBalanceSync(options: BalanceSyncOptions
           action: "MERCADO_PAGO_BALANCE_CONFIRMED",
           entityType: "FinancialAccount",
           entityId: financialAccount.id,
-          metadata: { balanceSyncRunId: run!.id, cutAt: normalizedEndDate.toISOString(), latestBalanceRecordAt: evidence.balanceAt, reportId: task.reportId || null },
+          metadata: { balanceSyncRunId: run!.id, cutAt: normalizedEndDate.toISOString(), latestBalanceRecordAt: evidence.balanceAt, reportId: remoteReportId || null },
         },
       });
     });

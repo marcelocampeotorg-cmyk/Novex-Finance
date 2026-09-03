@@ -4,6 +4,12 @@ import { db } from "@/server/db";
 import { revalidatePath } from "next/cache";
 import { requireAuthenticatedWorkspace } from "@/server/auth-context";
 import { INTERNAL_WORKER_CONTEXT } from "@/server/internal-context";
+import {
+  classifyTransactionDescription,
+  EXPENSE_CATEGORY_DEFINITIONS,
+  matchesCategoryPattern,
+  normalizeTransactionText,
+} from "@/domain/transaction-classification";
 
 export interface ReconciliationScoreResult {
   score: number;
@@ -116,7 +122,7 @@ export async function calculateReconciliationScore(
  * Regra de categorização automática utilizando banco (CategoryRule) com fallback normalizado inteligente
  */
 export async function categorizeTransactionDescription(description: string, workspaceId?: string): Promise<string> {
-  const descLower = (description || "").toLowerCase().trim();
+  const descLower = normalizeTransactionText(description);
 
   if (workspaceId) {
     const dbRules = await db.categoryRule.findMany({
@@ -125,8 +131,27 @@ export async function categorizeTransactionDescription(description: string, work
       orderBy: { confidenceScore: "desc" },
     });
 
-    for (const rule of dbRules) {
-      if (descLower.includes(rule.pattern.toLowerCase().trim())) {
+    for (const rule of dbRules.filter((item) => item.source === "USER")) {
+      if (matchesCategoryPattern(descLower, rule.pattern)) {
+        return rule.category.name;
+      }
+    }
+  }
+
+  const deterministicClassification = classifyTransactionDescription(description);
+  if (deterministicClassification.suggestedCategory) {
+    return deterministicClassification.suggestedCategory;
+  }
+
+  if (workspaceId) {
+    const systemRules = await db.categoryRule.findMany({
+      where: { workspaceId, isEnabled: true, source: "SYSTEM" },
+      include: { category: true },
+      orderBy: { confidenceScore: "desc" },
+    });
+
+    for (const rule of systemRules) {
+      if (matchesCategoryPattern(descLower, rule.pattern)) {
         return rule.category.name;
       }
     }
@@ -173,7 +198,6 @@ export async function categorizeTransactionDescription(description: string, work
   // 3. Serviços & Softwares (Cloud, IA, Hospedagem e Ferramentas)
   if (
     descLower.includes("google one") ||
-    descLower.includes("google") ||
     descLower.includes("aws") ||
     descLower.includes("hetzner") ||
     descLower.includes("vultr") ||
@@ -361,7 +385,7 @@ export async function categorizeTransactionDescription(description: string, work
     return "Transferências & Carteiras";
   }
 
-  return "Outros";
+  return "Não categorizada";
 }
 
 /**
@@ -705,6 +729,14 @@ export async function unmatchTransaction(reconciliationId: string) {
  */
 const DEFAULT_BRAZILIAN_PATTERNS: { categoryTarget: string; patterns: string[] }[] = [
   {
+    categoryTarget: "Marketing & Anúncios",
+    patterns: ["google ads", "adwords", "meta ads", "facebook ads", "facebk", "fb ads"]
+  },
+  {
+    categoryTarget: "Infraestrutura & Hospedagem",
+    patterns: ["google cloud", "gcp", "aws", "hetzner", "vultr", "digitalocean", "cloudflare", "vercel", "hostinger"]
+  },
+  {
     categoryTarget: "Alimentação & Mercado",
     patterns: [
       "ifood", "rappi", "mcdonald", "burger king", "habibs", "subway", "padaria", "restaurante",
@@ -741,9 +773,9 @@ const DEFAULT_BRAZILIAN_PATTERNS: { categoryTarget: string; patterns: string[] }
     ]
   },
   {
-    categoryTarget: "Serviços & Softwares",
+    categoryTarget: "Softwares & Ferramentas",
     patterns: [
-      "google", "aws", "digitalocean", "github", "chatgpt", "openai", "anthropic", "cursor",
+      "google workspace", "google one", "github", "chatgpt", "openai", "anthropic", "cursor",
       "canva", "adobe", "microsoft", "hostinger", "godaddy", "vercel", "slack", "zoom", "notion"
     ]
   },
@@ -780,9 +812,22 @@ const DEFAULT_BRAZILIAN_PATTERNS: { categoryTarget: string; patterns: string[] }
  * Semear regras iniciais no banco de dados para um workspace
  */
 export async function seedWorkspaceCategoryRules(workspaceId: string) {
-  const categories = await db.category.findMany({
-    where: { workspaceId },
-  });
+  for (const category of EXPENSE_CATEGORY_DEFINITIONS) {
+    const existing = await db.category.findFirst({ where: { workspaceId, name: category.name } });
+    if (!existing) {
+      await db.category.create({
+        data: {
+          workspaceId,
+          name: category.name,
+          direction: "EXPENSE",
+          colorToken: category.colorToken,
+          isSystem: true,
+        },
+      });
+    }
+  }
+
+  const categories = await db.category.findMany({ where: { workspaceId } });
 
   if (categories.length === 0) return { seededCount: 0 };
 
@@ -922,8 +967,9 @@ export async function updateTransactionCategory(params: {
   transactionId: string;
   categoryId: string;
   learnPattern?: string;
+  applyRuleToPast?: boolean;
 }) {
-  const { workspaceId, transactionId, categoryId, learnPattern } = params;
+  const { workspaceId, transactionId, categoryId, learnPattern, applyRuleToPast = false } = params;
 
   // 1. Atualizar o LedgerEntry da transação
   await db.ledgerEntry.updateMany({
@@ -943,7 +989,7 @@ export async function updateTransactionCategory(params: {
       workspaceId,
       pattern: learnPattern,
       categoryId,
-      applyToPast: true,
+      applyToPast: applyRuleToPast,
     });
   }
 
@@ -972,6 +1018,7 @@ export async function runFullCategorizationAndReconciliation(workspaceId: string
     where: { workspaceId, isEnabled: true },
     orderBy: { confidenceScore: "desc" },
   });
+  const categories = await db.category.findMany({ where: { workspaceId } });
 
   // 2.5. Enriquecer transações pendentes de dados de contraparte
   try {
@@ -990,15 +1037,21 @@ export async function runFullCategorizationAndReconciliation(workspaceId: string
   let categorizedCount = 0;
 
   for (const tx of txs) {
-    const textToMatch = `${tx.description || ""} ${tx.counterpartName || ""}`.toLowerCase();
-    const matchedRule = rules.find((r) => textToMatch.includes(r.pattern.toLowerCase().trim()));
+    const textToMatch = normalizeTransactionText(tx.description, tx.counterpartName);
+    const userRule = rules.find((rule) => rule.source === "USER" && matchesCategoryPattern(textToMatch, rule.pattern));
+    const classification = classifyTransactionDescription(tx.description, tx.counterpartName);
+    const classifiedCategory = classification.suggestedCategory
+      ? categories.find((category) => category.name === classification.suggestedCategory)
+      : null;
+    const systemRule = rules.find((rule) => rule.source === "SYSTEM" && matchesCategoryPattern(textToMatch, rule.pattern));
+    const matchedCategoryId = userRule?.categoryId || classifiedCategory?.id || systemRule?.categoryId;
 
-    if (matchedRule) {
+    if (matchedCategoryId) {
       for (const entry of tx.ledgerEntries) {
-        if (!entry.categoryId || entry.categoryId !== matchedRule.categoryId) {
+        if (!entry.categoryId || entry.categoryId !== matchedCategoryId) {
           await db.ledgerEntry.update({
             where: { id: entry.id },
-            data: { categoryId: matchedRule.categoryId },
+            data: { categoryId: matchedCategoryId },
           });
           categorizedCount++;
         }

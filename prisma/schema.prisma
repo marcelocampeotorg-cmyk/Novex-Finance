@@ -247,6 +247,7 @@ model Workspace {
   balanceSyncRuns      BalanceSyncRun[]
   paymentIntentions    PaymentIntention[]
   categoryRules        CategoryRule[]
+  counterpartRules     CounterpartRule[]
   whatsAppLogs         WhatsAppDeliveryLog[]
   notificationEvents   NotificationEvent[]
   financialAccounts    FinancialAccount[]
@@ -345,6 +346,7 @@ model Category {
   financialItems FinancialItem[]
   ledgerEntries  LedgerEntry[]
   categoryRules  CategoryRule[]
+  counterpartRules CounterpartRule[]
 
   @@map("categories")
 }
@@ -684,6 +686,26 @@ model CategoryRule {
 
   @@unique([workspaceId, pattern])
   @@map("category_rules")
+}
+
+model CounterpartRule {
+  id                String    @id @default(uuid())
+  workspaceId       String    @map("workspace_id")
+  pattern           String
+  canonicalName     String    @map("canonical_name")
+  defaultCategoryId String?   @map("default_category_id")
+  confidenceScore   Int       @default(85) @map("confidence_score")
+  source            String    @default("OFFICIAL_STATEMENT") // OFFICIAL_STATEMENT, USER_CONFIRMED, INFERRED
+  isEnabled         Boolean   @default(true) @map("is_enabled")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  defaultCategory   Category? @relation(fields: [defaultCategoryId], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId, pattern])
+  @@index([workspaceId, isEnabled])
+  @@map("counterpart_rules")
 }
 
 model WhatsAppDeliveryLog {

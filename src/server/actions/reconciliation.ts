@@ -14,9 +14,14 @@ export async function learnCategoryRuleAction(pattern: string, categoryId: strin
   return service.learnCategoryRule({ workspaceId, pattern, categoryId, applyToPast });
 }
 
-export async function updateTransactionCategoryAction(transactionId: string, categoryId: string, learnPattern?: string) {
+export async function updateTransactionCategoryAction(
+  transactionId: string,
+  categoryId: string,
+  learnPattern?: string,
+  applyRuleToPast = false,
+) {
   const { workspaceId } = await requireAuthenticatedWorkspace();
-  return service.updateTransactionCategory({ workspaceId, transactionId, categoryId, learnPattern });
+  return service.updateTransactionCategory({ workspaceId, transactionId, categoryId, learnPattern, applyRuleToPast });
 }
 
 export async function runFullCategorizationAndReconciliationAction() {
@@ -33,4 +38,3 @@ export async function seedWorkspaceCategoryRulesAction() {
   const { workspaceId } = await requireAuthenticatedWorkspace();
   return service.seedWorkspaceCategoryRules(workspaceId);
 }
-

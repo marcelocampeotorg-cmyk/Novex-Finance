@@ -11,6 +11,19 @@ import { categorizeTransactionDescription, reconcileWorkspace } from "@/server/s
 import { INTERNAL_WORKER_CONTEXT } from "@/server/internal-context";
 import { selectMercadoPagoSyncWindow } from "@/domain/mercado-pago-sync-window";
 import { validateAccessToken } from "@/integrations/mercado-pago/credentials-validator";
+import { classifyTransactionDescription, extractCounterpartPattern } from "@/domain/transaction-classification";
+import { parseMercadoPagoAccountStatementCsv, toTitleCaseCounterpart } from "@/domain/mercado-pago-account-statement";
+
+function brazilianCivilDate(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value || "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
 
 export async function getExternalTransactions(period: string = "MONTHLY") {
   try {
@@ -74,9 +87,24 @@ export async function getExternalTransactions(period: string = "MONTHLY") {
       orderBy: { occurredAt: "desc" },
     });
 
+    const counterpartRules = await db.counterpartRule.findMany({
+      where: { workspaceId, isEnabled: true },
+      select: { pattern: true, canonicalName: true, defaultCategoryId: true, confidenceScore: true, source: true, isEnabled: true },
+    });
+
     const results = await Promise.all(txs.map(async (tx) => {
       const activeRec = tx.reconciliations[0];
       const category = await categorizeTransactionDescription(tx.description, workspaceId);
+      const classification = classifyTransactionDescription(tx.description, tx.counterpartName, counterpartRules);
+      const isOfficial = Boolean(
+        (tx.rawEnrichmentData as Record<string, any> | null)?.accountStatement?.source === "MERCADO_PAGO_ACCOUNT_STATEMENT_CSV" ||
+        ((tx.rawEnrichmentData as Record<string, any> | null)?.source === "OFFICIAL")
+      );
+      const effectiveCounterpart = tx.counterpartName || classification.merchantName || undefined;
+      const identificationStatus: "OFFICIAL" | "INFERRED" | "UNIDENTIFIED" = isOfficial
+        ? "OFFICIAL"
+        : (effectiveCounterpart ? "INFERRED" : "UNIDENTIFIED");
+
       return {
         id: tx.id,
         source: tx.source,
@@ -89,17 +117,25 @@ export async function getExternalTransactions(period: string = "MONTHLY") {
         feeCents: Number(tx.feeCents),
         netAmountCents: Number(tx.netAmountCents),
         occurredAt: tx.occurredAt.toISOString(),
-        counterpartName: tx.counterpartName || undefined,
+        counterpartName: effectiveCounterpart,
         counterpartDocument: tx.counterpartDocument || undefined,
         description: tx.description,
         txid: tx.txid || undefined,
         rawReference: tx.rawReference || undefined,
         rawProviderData: tx.rawProviderData,
+        rawEnrichmentData: tx.rawEnrichmentData,
         reconciliationStatus: activeRec ? activeRec.status : "UNMATCHED",
         matchedInstallmentId: activeRec?.installmentId || undefined,
         reconciliationId: activeRec?.id || undefined,
         reconciliationReasons: activeRec?.reasons || [],
         category,
+        identifiedMerchant: classification.merchantName || undefined,
+        identifiedProduct: classification.productName || undefined,
+        identificationStatus,
+        categoryConfidence: classification.suggestedCategory ? classification.confidence : (category === "Não categorizada" ? "LOW" : "MEDIUM"),
+        categoryReason: classification.suggestedCategory
+          ? classification.reason
+          : (category === "Não categorizada" ? classification.reason : "Categoria obtida por regra configurada ou palavra-chave"),
         confidenceScore: activeRec?.score || undefined,
       };
     }));
@@ -933,6 +969,149 @@ export async function importCsvExternalTransactions(rawTransactions: MercadoPago
 }
 
 /**
+ * Enriquece transações Mercado Pago já importadas do Relatório Dinheiro em Conta
+ * usando o CSV "Extrato de conta" exportado pelo usuário. Não cria fatos
+ * financeiros, não altera valores e não concilia automaticamente.
+ */
+export async function enrichMercadoPagoAccountStatementCsv(csvText: string) {
+  try {
+    const { workspaceId, userId } = await requireAuthenticatedWorkspace();
+    const parsed = parseMercadoPagoAccountStatementCsv(csvText);
+    if (parsed.errors.length > 0 || parsed.records.length === 0) {
+      return {
+        success: false,
+        error: parsed.errors[0] || "O Extrato de conta não possui movimentações utilizáveis.",
+        rejectedCount: parsed.rejectedCount,
+      };
+    }
+
+    const transactions = await db.externalTransaction.findMany({
+      where: { workspaceId, source: "MERCADO_PAGO_API", quarantinedAt: null },
+      select: {
+        id: true, occurredAt: true, direction: true, netAmountCents: true,
+        counterpartName: true, rawProviderData: true, rawEnrichmentData: true,
+      },
+    });
+    const bySourceId = new Map<string, typeof transactions>();
+    for (const transaction of transactions) {
+      const sourceId = String((transaction.rawProviderData as Record<string, unknown> | null)?.SOURCE_ID || "").trim();
+      if (sourceId) bySourceId.set(sourceId, [...(bySourceId.get(sourceId) || []), transaction]);
+    }
+
+    let enrichedCount = 0;
+    let unchangedCount = 0;
+    let unmatchedCount = 0;
+    let conflictCount = 0;
+
+    for (const record of parsed.records) {
+      const candidates = bySourceId.get(record.referenceId) || [];
+      if (candidates.length === 0) {
+        unmatchedCount++;
+        continue;
+      }
+      const statementCivilDate = brazilianCivilDate(new Date(record.releaseDate));
+      const matching = candidates.filter((candidate) =>
+        candidate.direction === record.direction &&
+        Number(candidate.netAmountCents) === record.netAmountCents &&
+        brazilianCivilDate(candidate.occurredAt) === statementCivilDate,
+      );
+      if (matching.length !== 1) {
+        conflictCount++;
+        continue;
+      }
+
+      const transaction = matching[0];
+      const existingStatement = (transaction.rawEnrichmentData as Record<string, any> | null)?.accountStatement;
+      if (existingStatement?.referenceId === record.referenceId && existingStatement?.transactionType === record.transactionType) {
+        unchangedCount++;
+        continue;
+      }
+
+      const rawEnrichmentData = {
+        ...((transaction.rawEnrichmentData && typeof transaction.rawEnrichmentData === "object") ? transaction.rawEnrichmentData : {}),
+        accountStatement: {
+          source: "MERCADO_PAGO_ACCOUNT_STATEMENT_CSV",
+          referenceId: record.referenceId,
+          releaseDate: record.releaseDate,
+          transactionType: record.transactionType,
+          netAmountCents: record.netAmountCents,
+          direction: record.direction,
+          importedAt: new Date().toISOString(),
+        },
+      };
+
+      await db.$transaction(async (tx) => {
+        await tx.externalTransaction.update({
+          where: { id: transaction.id },
+          data: {
+            description: record.transactionType,
+            counterpartName: record.counterpartName || transaction.counterpartName || null,
+            rawEnrichmentData: rawEnrichmentData as any,
+          },
+        });
+        await tx.auditLog.create({
+          data: {
+            workspaceId,
+            actorType: "USER",
+            actorId: userId,
+            action: "MERCADO_PAGO_ACCOUNT_STATEMENT_ENRICHED",
+            entityType: "ExternalTransaction",
+            entityId: transaction.id,
+            metadata: {
+              referenceId: record.referenceId,
+              transactionType: record.transactionType,
+              direction: record.direction,
+              netAmountCents: record.netAmountCents,
+              source: "MERCADO_PAGO_ACCOUNT_STATEMENT_CSV",
+            },
+          },
+        });
+      });
+      if (record.counterpartName) {
+        const cleanName = toTitleCaseCounterpart(record.counterpartName);
+        const pattern = extractCounterpartPattern(record.counterpartName);
+        if (pattern && pattern.length >= 2 && cleanName) {
+          try {
+            await db.counterpartRule.upsert({
+              where: {
+                workspaceId_pattern: { workspaceId, pattern },
+              },
+              update: {
+                canonicalName: cleanName,
+                confidenceScore: 90,
+                source: "OFFICIAL_STATEMENT",
+                isEnabled: true,
+              },
+              create: {
+                workspaceId,
+                pattern,
+                canonicalName: cleanName,
+                confidenceScore: 90,
+                source: "OFFICIAL_STATEMENT",
+                isEnabled: true,
+              },
+            });
+          } catch (ruleErr) {
+            console.warn("Aviso ao aprender regra de contraparte do extrato:", ruleErr);
+          }
+        }
+      }
+      enrichedCount++;
+    }
+
+    await applyCounterpartMemoryToTransactions(workspaceId);
+
+    revalidatePath("/movimentacoes");
+    revalidatePath("/relatorios");
+    revalidatePath("/");
+    return { success: true, enrichedCount, unchangedCount, unmatchedCount, conflictCount, rejectedCount: parsed.rejectedCount };
+  } catch (error: any) {
+    console.error("Erro ao enriquecer transações pelo Extrato de conta Mercado Pago:", error);
+    return { success: false, error: error.message || String(error) };
+  }
+}
+
+/**
  * Marcar movimentação como ignorada no motor de conciliação
  */
 export async function ignoreExternalTransaction(externalTransactionId: string) {
@@ -1360,5 +1539,233 @@ export async function enrichAllMercadoPagoTransactions(internalContext?: symbol,
   } catch (error: any) {
     console.error("Erro ao enriquecer transações do Mercado Pago:", error);
     return { success: false, error: error.message || String(error) };
+  }
+}
+
+/**
+ * Aplica o catálogo de memória de fornecedores (CounterpartRule) em transações elegíveis
+ */
+export async function applyCounterpartMemoryToTransactions(targetWorkspaceId?: string, internalContext?: symbol) {
+  try {
+    const workspaceId = internalContext === INTERNAL_WORKER_CONTEXT && targetWorkspaceId
+      ? targetWorkspaceId
+      : (await requireAuthenticatedWorkspace()).workspaceId;
+
+    const rules = await db.counterpartRule.findMany({
+      where: { workspaceId, isEnabled: true },
+      select: { pattern: true, canonicalName: true, defaultCategoryId: true, confidenceScore: true, source: true, isEnabled: true },
+    });
+    if (rules.length === 0) return { success: true, updatedCount: 0 };
+
+    const eligibleTxs = await db.externalTransaction.findMany({
+      where: {
+        workspaceId,
+        quarantinedAt: null,
+        counterpartName: null,
+      },
+      select: {
+        id: true,
+        description: true,
+        rawProviderData: true,
+        rawEnrichmentData: true,
+      },
+      take: 100,
+    });
+
+    let updatedCount = 0;
+    for (const tx of eligibleTxs) {
+      const raw = typeof tx.rawProviderData === "object" && tx.rawProviderData !== null
+        ? (tx.rawProviderData as Record<string, unknown>)
+        : {};
+      const evidence = [
+        tx.description,
+        raw?.DESCRIPTION,
+        raw?.SALE_DETAIL,
+        raw?.OPERATION_TAGS,
+        raw?.EXTERNAL_REFERENCE,
+      ].filter((v): v is string => typeof v === "string").join(" ");
+
+      const classification = classifyTransactionDescription(evidence, null, rules);
+      if (classification.merchantName && (classification.confidence === "HIGH" || classification.confidence === "MEDIUM")) {
+        const enrichment = typeof tx.rawEnrichmentData === "object" && tx.rawEnrichmentData !== null
+          ? (tx.rawEnrichmentData as Record<string, unknown>)
+          : {};
+
+        await db.externalTransaction.update({
+          where: { id: tx.id },
+          data: {
+            counterpartName: classification.merchantName,
+            rawEnrichmentData: {
+              ...enrichment,
+              source: "INFERRED",
+              counterpartRule: {
+                pattern: classification.matchedPattern,
+                canonicalName: classification.merchantName,
+                confidence: classification.confidence,
+                reason: classification.reason,
+                appliedAt: new Date().toISOString(),
+              },
+            } as any,
+          },
+        });
+        updatedCount++;
+      }
+    }
+
+    if (updatedCount > 0) {
+      revalidatePath("/movimentacoes");
+      revalidatePath("/relatorios");
+      revalidatePath("/");
+    }
+
+    return { success: true, updatedCount };
+  } catch (err: any) {
+    console.error("Erro ao aplicar memória de fornecedores:", err);
+    return { success: false, error: err.message || String(err) };
+  }
+}
+
+/**
+ * Confirma ou edita a identidade de um favorecido e opcionalmente gera regra de memória futura
+ */
+export async function confirmTransactionCounterpart(params: {
+  externalTransactionId: string;
+  counterpartName: string;
+  rememberRule?: boolean;
+}) {
+  try {
+    const { workspaceId, userId } = await requireAuthenticatedWorkspace();
+    const cleanName = toTitleCaseCounterpart(params.counterpartName);
+    if (!cleanName || cleanName.length < 2) {
+      return { success: false, error: "Nome do favorecido inválido (mínimo de 2 caracteres)." };
+    }
+
+    const tx = await db.externalTransaction.findFirst({
+      where: { id: params.externalTransactionId, workspaceId },
+    });
+    if (!tx) {
+      return { success: false, error: "Movimentação não encontrada." };
+    }
+
+    const enrichment = typeof tx.rawEnrichmentData === "object" && tx.rawEnrichmentData !== null
+      ? (tx.rawEnrichmentData as Record<string, unknown>)
+      : {};
+
+    await db.$transaction(async (prismaTx) => {
+      await prismaTx.externalTransaction.update({
+        where: { id: tx.id },
+        data: {
+          counterpartName: cleanName,
+          rawEnrichmentData: {
+            ...enrichment,
+            source: "USER_CONFIRMED",
+            userConfirmation: {
+              confirmedAt: new Date().toISOString(),
+              confirmedBy: userId,
+              counterpartName: cleanName,
+            },
+          } as any,
+        },
+      });
+
+      if (params.rememberRule) {
+        const pattern = extractCounterpartPattern(cleanName);
+        if (pattern && pattern.length >= 2) {
+          await prismaTx.counterpartRule.upsert({
+            where: {
+              workspaceId_pattern: { workspaceId, pattern },
+            },
+            update: {
+              canonicalName: cleanName,
+              confidenceScore: 95,
+              source: "USER_CONFIRMED",
+              isEnabled: true,
+            },
+            create: {
+              workspaceId,
+              pattern,
+              canonicalName: cleanName,
+              confidenceScore: 95,
+              source: "USER_CONFIRMED",
+              isEnabled: true,
+            },
+          });
+        }
+      }
+
+      await prismaTx.auditLog.create({
+        data: {
+          workspaceId,
+          actorType: "USER",
+          actorId: userId,
+          action: "COUNTERPART_NAME_CONFIRMED",
+          entityType: "ExternalTransaction",
+          entityId: tx.id,
+          metadata: {
+            counterpartName: cleanName,
+            rememberRule: Boolean(params.rememberRule),
+          },
+        },
+      });
+    });
+
+    if (params.rememberRule) {
+      await applyCounterpartMemoryToTransactions(workspaceId);
+    }
+
+    revalidatePath("/movimentacoes");
+    return { success: true, counterpartName: cleanName };
+  } catch (err: any) {
+    console.error("Erro ao confirmar favorecido:", err);
+    return { success: false, error: err.message || String(err) };
+  }
+}
+
+/**
+ * Consulta regras de contrapartes ativas do workspace
+ */
+export async function getCounterpartRules() {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+    const rules = await db.counterpartRule.findMany({
+      where: { workspaceId },
+      orderBy: { createdAt: "desc" },
+    });
+    return { success: true, rules };
+  } catch (err: any) {
+    return { success: false, error: err.message || String(err), rules: [] };
+  }
+}
+
+/**
+ * Ativa ou desativa uma regra de contraparte
+ */
+export async function toggleCounterpartRule(id: string, isEnabled: boolean) {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+    await db.counterpartRule.updateMany({
+      where: { id, workspaceId },
+      data: { isEnabled },
+    });
+    revalidatePath("/movimentacoes");
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || String(err) };
+  }
+}
+
+/**
+ * Remove uma regra de contraparte
+ */
+export async function deleteCounterpartRule(id: string) {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+    await db.counterpartRule.deleteMany({
+      where: { id, workspaceId },
+    });
+    revalidatePath("/movimentacoes");
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || String(err) };
   }
 }

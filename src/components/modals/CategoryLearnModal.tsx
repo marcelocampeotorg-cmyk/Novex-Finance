@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { X, Sparkles, Tag, Check, ArrowRight } from "lucide-react";
+import { X, Sparkles, Check } from "lucide-react";
 import { formatCurrency } from "@/lib/formatters";
 import { updateTransactionCategoryAction, getWorkspaceCategoriesAction } from "@/server/actions/reconciliation";
 
@@ -20,7 +20,7 @@ export const CategoryLearnModal: React.FC<CategoryLearnModalProps> = ({
 }) => {
   const [categories, setCategories] = useState<{ id: string; name: string; colorToken?: string | null }[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState("");
-  const [shouldLearn, setShouldLearn] = useState(true);
+  const [learningScope, setLearningScope] = useState<"THIS_ONLY" | "FUTURE" | "PAST_AND_FUTURE">("FUTURE");
   const [pattern, setPattern] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +47,7 @@ export const CategoryLearnModal: React.FC<CategoryLearnModalProps> = ({
         ?.trim();
 
       setPattern(cleanWord && cleanWord.length >= 3 ? cleanWord : baseText.slice(0, 20));
-      setShouldLearn(true);
+      setLearningScope("FUTURE");
       setError(null);
     }
   }, [isOpen, transaction]);
@@ -65,8 +65,14 @@ export const CategoryLearnModal: React.FC<CategoryLearnModalProps> = ({
     setError(null);
 
     try {
+      const shouldLearn = learningScope !== "THIS_ONLY";
       const learnPattern = shouldLearn && pattern.trim().length >= 2 ? pattern.trim() : undefined;
-      const res = await updateTransactionCategoryAction(transaction.id, selectedCategoryId, learnPattern);
+      const res = await updateTransactionCategoryAction(
+        transaction.id,
+        selectedCategoryId,
+        learnPattern,
+        learningScope === "PAST_AND_FUTURE",
+      );
       if (!res.success) {
         throw new Error("Falha ao atualizar categoria.");
       }
@@ -149,21 +155,33 @@ export const CategoryLearnModal: React.FC<CategoryLearnModalProps> = ({
             </select>
           </div>
 
-          {/* Opção de Aprendizado Automático */}
+          {/* Escopo explícito do aprendizado */}
           <div className="p-3.5 rounded-xl border border-novex-cyan/20 bg-novex-cyan/5 space-y-2.5">
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={shouldLearn}
-                onChange={(e) => setShouldLearn(e.target.checked)}
-                className="h-4 w-4 rounded border-novex-border bg-novex-bg text-novex-cyan focus:ring-0 focus:ring-offset-0"
-              />
-              <span className="text-xs font-semibold text-novex-text-primary">
-                Salvar regra no banco para categorizar automático
-              </span>
-            </label>
+            <div className="text-xs font-semibold text-novex-text-primary">Onde aplicar esta decisão?</div>
+            <div className="space-y-2">
+              {[
+                ["THIS_ONLY", "Somente este lançamento", "Não cria uma regra automática."],
+                ["FUTURE", "Este termo daqui para frente", "Aprende sem alterar o histórico."],
+                ["PAST_AND_FUTURE", "Histórico e próximos", "Recategoriza também os lançamentos existentes que coincidirem."],
+              ].map(([value, label, help]) => (
+                <label key={value} className="flex items-start gap-2 cursor-pointer select-none">
+                  <input
+                    type="radio"
+                    name="learningScope"
+                    value={value}
+                    checked={learningScope === value}
+                    onChange={() => setLearningScope(value as typeof learningScope)}
+                    className="mt-0.5 h-4 w-4 border-novex-border bg-novex-bg text-novex-cyan focus:ring-0 focus:ring-offset-0"
+                  />
+                  <span>
+                    <span className="block text-xs font-medium text-novex-text-primary">{label}</span>
+                    <span className="block text-[10px] text-novex-text-muted">{help}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
 
-            {shouldLearn && (
+            {learningScope !== "THIS_ONLY" && (
               <div className="pt-1">
                 <label className="block text-[11px] text-novex-text-secondary mb-1">
                   Reconhecer transações que contenham a palavra ou termo:
@@ -176,7 +194,7 @@ export const CategoryLearnModal: React.FC<CategoryLearnModalProps> = ({
                   className="w-full rounded-lg border border-novex-border bg-novex-bg py-2 px-3 text-xs text-novex-text-primary placeholder-novex-text-muted focus:border-novex-cyan focus:outline-none font-mono"
                 />
                 <p className="text-[10px] text-novex-text-muted mt-1">
-                  Todas as movimentações existentes e futuras contendo esse termo serão auto-categorizadas.
+                  A comparação respeita palavras completas para reduzir colisões. Você poderá revisar esta regra depois.
                 </p>
               </div>
             )}

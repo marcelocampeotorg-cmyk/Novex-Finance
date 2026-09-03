@@ -86,6 +86,10 @@ async function main() {
       { name: "Moradia", direction: "EXPENSE", colorToken: "#3B82F6" },
       { name: "Contas Básicas", direction: "EXPENSE", colorToken: "#F59E0B" },
       { name: "Serviços & Tech", direction: "EXPENSE", colorToken: "#10B981" },
+      { name: "Marketing & Anúncios", direction: "EXPENSE", colorToken: "#F97316" },
+      { name: "Infraestrutura & Hospedagem", direction: "EXPENSE", colorToken: "#06B6D4" },
+      { name: "Softwares & Ferramentas", direction: "EXPENSE", colorToken: "#10B981" },
+      { name: "Assinaturas & Lazer", direction: "EXPENSE", colorToken: "#8B5CF6" },
       { name: "Serviços Prestados", direction: "INCOME", colorToken: "#10B981" },
       { name: "Transferências & Acertos", direction: "BOTH", colorToken: "#8B5CF6" },
     ];

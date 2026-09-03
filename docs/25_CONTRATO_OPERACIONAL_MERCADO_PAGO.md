@@ -160,6 +160,12 @@ O glossário não garante nome da pessoa, instituição ou referência em todas 
 
 Não consultar IDs de impostos, tarifas, saques ou eventos contábeis no endpoint de pagamentos. Não inferir pessoa a partir de descrição truncada e não expor documento pessoal desnecessário na interface.
 
+### 4.3 Extrato de conta exportado pelo usuário
+
+O CSV oficial “Extrato de conta”, gerado pelo painel Mercado Pago, pode enriquecer a identificação de uma movimentação já importada pelo Relatório Dinheiro em Conta. Esse arquivo não é uma segunda fonte para criar fatos financeiros, saldo, Ledger ou baixa de parcelas.
+
+O vínculo exige, simultaneamente, `REFERENCE_ID` igual ao `SOURCE_ID` preservado, mesma direção, mesmo valor líquido absoluto e mesma data civil em São Paulo. Ausência, ambiguidade ou divergência preserva a movimentação sem alteração e é retornada para revisão. O enriquecimento registra trilha de auditoria e mantém o payload financeiro original intacto.
+
 ## 5. Cobrança Pix — Orders API
 
 ### 5.1 Criação

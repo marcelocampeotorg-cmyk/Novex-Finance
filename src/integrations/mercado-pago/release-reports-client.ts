@@ -176,8 +176,8 @@ export class MercadoPagoReleaseReportsClient {
       const itemBegin = new Date(String(item?.begin_date || "")).getTime();
       const itemEnd = new Date(String(item?.end_date || "")).getTime();
       if (!Number.isFinite(itemBegin) || !Number.isFinite(itemEnd)) return false;
-      const coversStart = itemBegin <= beginMs || (itemBegin - beginMs) <= 24 * 3600 * 1000;
-      const coversEnd = itemEnd >= endMs || (endMs - itemEnd) <= 24 * 3600 * 1000;
+      const coversStart = itemBegin <= beginMs;
+      const coversEnd = itemEnd >= endMs;
       return coversStart && coversEnd;
     });
     if (matches.length === 0) return null;

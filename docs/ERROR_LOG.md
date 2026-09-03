@@ -571,5 +571,41 @@ Status: RESOLVIDO
   - Imagem Docker compilada e container `app` em produção saudável (`{"status":"ok"}`).
 - **Commit:** b90080c
 
+### ERR-073 — Regra genérica de fornecedor mistura produtos e recategoriza histórico sem escolha explícita
+Status: CORRIGIDO LOCALMENTE, PENDENTE DE QA VISUAL E RUNTIME
+- **Data:** 2026-09-03
+- **Área:** Categorização / Aprendizado / Movimentações
+- **Sintoma:** A regra sistêmica `google` classificava produtos distintos na mesma categoria, e o modal aplicava por padrão uma nova regra a todas as movimentações passadas e futuras.
+- **Causa:** A categorização utilizava correspondência textual por substring sem identidade de produto e não oferecia escopo explícito para o aprendizado.
+- **Correção aplicada:** Foi criada uma camada determinística e testável de normalização que distingue Google Ads, Google Cloud, Google Workspace, Google One, YouTube Premium e Meta Ads. Regras confirmadas pelo usuário têm precedência, regras de sistema genéricas ficam abaixo da identificação específica e a comparação de regras respeita termos completos. O modal agora permite aplicar somente ao lançamento, somente ao futuro ou ao histórico e futuro.
+- **Evidência local:** testes unitários da classificação aprovados; typecheck aprovado. QA visual, build final e teste com banco descartável permanecem como critérios de fechamento.
 
+### ERR-072 — Saldo e extrato congelados no dia anterior por tolerância indevida de 24h e colisão de chave única no Prisma
+Status: RESOLVIDO
+- **Data:** 2026-09-03
+- **Área:** Mercado Pago / Relatórios Oficiais / Balance Anchor / Sincronização Incremental
+- **Sintoma:** O painel exibia "Última sincronização: 03/09/2026", mas o saldo permanecia congelado em R$ 134,71 (atualizado até 02/09/2026, 12:04:41), enquanto a conta real do usuário possuía saldo inferior (R$ 76,22 após 4 payouts realizados no dia 02/09 e rendimentos do dia 03/09).
+- **Causa confirmada:**
+  1. Em `release-reports-client.ts` (`findExistingReport`) e `reports-client.ts` (`findMatchingSettlementReport`), a condição de correspondência aceitava relatórios encerrados no passado se `(endMs - itemEnd) <= 24h` ou `(reqEndTime - repEndTime) <= 24h`.
+  2. Para o saldo oficial (Release Report), o sistema considerou que o relatório de 01/09 -> 02/09 cobria a janela de 02/09 -> 03/09. Quando `mercado-pago-balance-service.ts` tentou atualizar as datas do `BalanceSyncRun` para a janela do relatório matched, o Prisma disparou `Unique constraint failed on the fields: (integration_account_id, begin_date, end_date)`, travando o run em `FAILED` e mantendo a âncora em R$ 59,68.
+  3. Além disso, `mercado-pago-balance-service.ts` tentava chamar `client.getTask(run.remoteTaskId)` mesmo quando `remoteFileName` já estava disponível. Como o ID retornado na listagem era um `reportId` e não um `taskId`, o Mercado Pago retornava `HTTP 403 - Internal Server Error`.
+  4. Para o extrato (Settlement Report), a tolerância de 24h fez o sistema reutilizar continuamente o relatório matinal de ontem (`novex-settlement-manual-2026-09-02-071658.csv`). A cada hora, o worker baixava novamente os 13 eventos de ontem, reportava 0 inseridos e carimbava a sincronização como sucesso hoje, sem jamais solicitar novo relatório à API para capturar as saídas de ontem à tarde/noite e os eventos de hoje.
+- **Correção aplicada:**
+  1. Em `release-reports-client.ts`: removida tolerância de 24h. Um relatório só cobre se `itemBegin <= beginMs` e `itemEnd >= endMs`.
+  2. Em `reports-client.ts`: removida tolerância de 24h e adicionada verificação de frescor (`isIncrementalLive`), impedindo a reutilização de relatórios gerados há mais de 15 minutos para janelas que chegam ao presente.
+  3. Em `mercado-pago-balance-service.ts`: prevenidas colisões de chave única no Prisma e eliminado o polling redundante de `getTask` quando o arquivo já está disponível para download.
+- **Evidência:**
+  - 132 testes automatizados aprovados (0 falhas).
+  - Release Report `reserve-novex-release-manual-2026-09-03-102315.csv` processado com sucesso: âncora oficial do saldo confirmada em **R$ 76,19** na data de corte `2026-09-03T02:59:59.000Z`.
+  - Settlement Report `novex-settlement-manual-2026-09-03-095119.csv` gerado e baixado com sucesso: 6 novas transações inseridas (4 payouts de 02/09 e 2 movimentações de liquidação de 03/09).
+  - Saldo final apurado e comprovado no dashboard: **R$ 76,22** (`76,19 + 0,04 - 0,01`).
+  - Container de produção `novexfinance-prod-app-1` recompilado e saudável.
 
+### ERR-074 — Extrato oficial continha favorecido, mas PAYOUT permanecia sem identificação no NOVEX
+Status: CORRIGIDO_LOCALMENTE_PENDENTE_DEPLOY
+- **Data:** 2026-09-03
+- **Área:** Mercado Pago / identificação de contrapartes / Movimentações
+- **Sintoma:** operações `PAYOUT` já comprovadas no Relatório Dinheiro em Conta eram mostradas apenas como “Transferência ou retirada registrada”, enquanto o Extrato de conta oficial do Mercado Pago exibia favorecido e operação.
+- **Causa:** o relatório financeiro não fornece contraparte nesses `PAYOUT`; o importador CSV genérico criaria fatos financeiros novos, portanto não podia receber o Extrato de conta sem risco de duplicidade.
+- **Correção:** importar o CSV do Extrato de conta somente como enriquecimento auditável, com vínculo estrito por `REFERENCE_ID`/`SOURCE_ID`, data, direção e valor; sem criar ledger, saldo ou conciliação. A apresentação passa a mostrar o favorecido e “Pagamento com Pix” quando o próprio extrato confirmar ambos.
+- **Validação local:** CSV oficial de agosto processado com 96 registros válidos, 0 rejeitados e 53 contrapartes nominais; testes focados, typecheck e build aprovados. Ainda requer deploy autorizado e upload pelo painel para atualizar dados produtivos.

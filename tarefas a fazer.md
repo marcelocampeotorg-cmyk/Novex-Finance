@@ -139,6 +139,30 @@
 
 ## 🔄 Fluxo de Retomada e Estado Atual
 
+### Tarefa 6: Inteligência de gastos, categorização explicável e painel executivo
+
+* **O que fazer:**
+  1. Concluir a normalização determinística de fornecedores e produtos, preservando a descrição original do provedor.
+  2. Exibir fornecedor, produto, categoria sugerida, origem da regra e confiança em Movimentações.
+  3. Criar gestão de regras visíveis, editáveis, desativáveis e reversíveis, incluindo recategorização em lote com prévia dos itens afetados.
+  4. Separar identificação, categorização e conciliação; fornecedor isolado nunca confirma baixa.
+  5. Implementar indicadores de gastos por categoria, fornecedor, recorrência e período, além de uma fila única de itens que precisam de atenção.
+  6. Acrescentar orçamento, projeção, estornos líquidos, duplicidades e anomalias somente depois de comprovada a qualidade dos dados-base.
+* **Por que fazer:**
+  * As descrições do provedor variam e um mesmo grupo, como Google, representa produtos com finalidades diferentes. A correspondência genérica reduz a qualidade do painel e pode propagar uma correção indevida pelo histórico.
+* **Para que serve (Impacto no MVP):**
+  * Responder com clareza quanto foi gasto, com quem, em qual finalidade e o que ainda precisa de decisão, sem alterar o fato financeiro ou produzir falsa conciliação.
+* **Critérios de Aceite:**
+  * [x] Google Ads, Google Cloud, Google Workspace, Google One, YouTube Premium e Meta Ads possuem identificação determinística testada.
+  * [x] Regra textual não coincide dentro de outra palavra e o usuário escolhe o alcance temporal do aprendizado.
+  * [x] Tela mostra a justificativa e a confiança de cada categorização automática.
+  * [ ] Gestão permite editar, desativar, desfazer e visualizar os lançamentos afetados por uma regra.
+  * [ ] Conciliação ambígua permanece como sugestão e nunca baixa conta apenas pelo fornecedor.
+  * [ ] Dashboard mostra gastos por categoria e fornecedor, comparação temporal, recorrências e pendências sem converter erros em zero.
+  * [ ] Estornos, transferências internas e itens não classificados não inflam artificialmente o total de despesas.
+  * [ ] Testes unitários, integração com PostgreSQL descartável, lint, typecheck, build, QA desktop/mobile e `git diff --check` aprovados.
+
+
 ### Ponto consolidado — 2026-09-02 01:38 BRT
 
 - **Infraestrutura documentada:** [docs/INFRAESTRUTURA_E_ACESSO_SERVIDOR.md](docs/INFRAESTRUTURA_E_ACESSO_SERVIDOR.md) contém todos os dados de SSH (`192.168.4.12`), Cloudflare Tunnel ID (`658e11b9-3278-4908-a602-fa15fcc34530`), Account Tag (`820b26ab31089eb3d67b2c9ffb0cebcd`), matriz de portas e runbooks de diagnóstico.

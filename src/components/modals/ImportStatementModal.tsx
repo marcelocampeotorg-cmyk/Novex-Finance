@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { X, Upload, RefreshCw, FileText, CheckCircle2, AlertCircle } from "lucide-react";
-import { syncMercadoPagoStatement, importCsvExternalTransactions } from "@/server/actions/transactions";
+import { syncMercadoPagoStatement, importCsvExternalTransactions, enrichMercadoPagoAccountStatementCsv } from "@/server/actions/transactions";
 import { parseCSVStatement } from "@/services/csv-statement-parser";
 
 interface ImportStatementModalProps {
@@ -68,6 +68,27 @@ export function ImportStatementModal({ isOpen, onClose, onSuccess }: ImportState
     setErrorMessage(null);
 
     try {
+      const isMercadoPagoAccountStatement = csvText.includes("RELEASE_DATE") &&
+        csvText.includes("TRANSACTION_TYPE") &&
+        csvText.includes("REFERENCE_ID") &&
+        csvText.includes("TRANSACTION_NET_AMOUNT");
+
+      if (isMercadoPagoAccountStatement) {
+        const res = await enrichMercadoPagoAccountStatementCsv(csvText);
+        if (res.success) {
+          setResultMessage(
+            `Extrato Mercado Pago analisado: ${res.enrichedCount} identificação(ões) atualizada(s), ${res.unchangedCount} já existente(s), ${res.unmatchedCount} sem fato financeiro correspondente e ${res.conflictCount} divergência(s) preservada(s) para revisão.`
+          );
+          setTimeout(() => {
+            onSuccess();
+            onClose();
+          }, 2200);
+        } else {
+          setErrorMessage(res.error || "Não foi possível validar o Extrato de conta Mercado Pago.");
+        }
+        return;
+      }
+
       const parsedTxs = parseCSVStatement(csvText);
       if (parsedTxs.length === 0) {
         setErrorMessage("Nenhuma transação válida encontrada no CSV informado.");
@@ -180,7 +201,7 @@ export function ImportStatementModal({ isOpen, onClose, onSuccess }: ImportState
         {activeTab === "CSV" && (
           <div className="space-y-4 text-xs">
             <p className="text-novex-text-secondary">
-              Selecione um arquivo CSV de extrato bancário ou cole seu conteúdo abaixo:
+              Envie o CSV oficial “Extrato de conta” do Mercado Pago para identificar favorecidos sem criar novos lançamentos. Outros CSVs continuam sendo importados como movimentações manuais.
             </p>
 
             <div className="flex items-center justify-center w-full">
@@ -215,7 +236,7 @@ export function ImportStatementModal({ isOpen, onClose, onSuccess }: ImportState
                 className="w-full flex items-center justify-center gap-2 rounded-xl bg-novex-cyan hover:bg-novex-cyan/90 text-novex-bg font-bold py-3 text-xs transition-all disabled:opacity-50"
               >
                 <FileText className="h-4 w-4" />
-                <span>{loading ? "Processando..." : "Processar e Importar CSV"}</span>
+                <span>{loading ? "Processando..." : "Processar CSV"}</span>
               </button>
             </div>
           </div>

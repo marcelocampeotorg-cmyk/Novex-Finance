@@ -11,6 +11,7 @@ import { runAutomaticReconciliationEngine, confirmSuggestedMatch, unmatchTransac
 import { ImportStatementModal } from "@/components/modals/ImportStatementModal";
 import { ManualMatchModal } from "@/components/modals/ManualMatchModal";
 import { CategoryLearnModal } from "@/components/modals/CategoryLearnModal";
+import { CounterpartConfirmModal } from "@/components/modals/CounterpartConfirmModal";
 import { createManualTransaction, quarantineTransaction } from "@/server/actions/financial-accounts";
 
 export default function MovimentacoesPage() {
@@ -22,6 +23,7 @@ export default function MovimentacoesPage() {
   const [runningEngine, setRunningEngine] = useState(false);
   const [txs, setTxs] = useState<any[]>([]);
   const [selectedTxForCategory, setSelectedTxForCategory] = useState<any | null>(null);
+  const [selectedTxForCounterpart, setSelectedTxForCounterpart] = useState<any | null>(null);
   const [summary, setSummary] = useState<any>({
     totalCount: 0,
     matchedCount: 0,
@@ -205,7 +207,7 @@ export default function MovimentacoesPage() {
                 className="flex items-center gap-2 rounded-xl bg-novex-cyan hover:bg-novex-cyan/90 text-novex-bg font-bold px-4 py-2 text-xs transition-all shadow-md"
               >
                 <Upload className="h-4 w-4" />
-                <span>Importar OFX</span>
+                <span>Importar Extrato</span>
               </button>
               <button
                 onClick={handleRunReconciliationEngine}
@@ -368,7 +370,32 @@ export default function MovimentacoesPage() {
                         {formatDateTime(tx.occurredAt)}
                       </td>
                       <td className="py-4 px-4">
-                        <div className="font-semibold text-novex-text-primary">{presentation.title}</div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-semibold text-novex-text-primary">{presentation.title}</span>
+                          {presentation.identificationStatus === "OFFICIAL" && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30" title="Identificação comprovada oficialmente pelo Mercado Pago">
+                              Oficial
+                            </span>
+                          )}
+                          {presentation.identificationStatus === "INFERRED" && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium bg-amber-500/15 text-amber-300 border border-amber-500/30" title="Identificação aprendida pelo histórico de fornecedores">
+                              Sugerido
+                            </span>
+                          )}
+                          {presentation.identificationStatus === "UNIDENTIFIED" && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium bg-zinc-800 text-zinc-400 border border-zinc-700" title="Favorecido pendente de identificação">
+                              Pendente
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedTxForCounterpart(tx)}
+                            className="text-novex-text-muted hover:text-emerald-400 p-0.5 rounded hover:bg-novex-surface2 transition-colors ml-1"
+                            title="Confirmar ou ajustar o nome do favorecido"
+                          >
+                            <Tag className="w-2.5 h-2.5 opacity-60" />
+                          </button>
+                        </div>
                         <div className="text-[10px] text-novex-text-muted font-mono">{tx.externalId}</div>
                       </td>
                       <td className="py-4 px-4 text-novex-text-secondary">
@@ -390,6 +417,19 @@ export default function MovimentacoesPage() {
                         <span>{tx.category}</span>
                         <Tag className="h-2.5 w-2.5 opacity-60" />
                       </button>
+                      {tx.categoryReason && (
+                        <div className="mt-1 max-w-[220px] text-[9px] leading-3 text-novex-text-muted">
+                          {tx.identifiedProduct || tx.identifiedMerchant ? (
+                            <span>{tx.identifiedProduct || tx.identifiedMerchant} · </span>
+                          ) : null}
+                          <span>{tx.categoryReason}</span>
+                          {tx.categoryConfidence && (
+                            <span className="ml-1 font-mono text-novex-text-secondary">
+                              ({tx.categoryConfidence === "HIGH" ? "alta" : tx.categoryConfidence === "MEDIUM" ? "média" : "baixa"})
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td
                       className={`py-4 px-4 font-bold ${
@@ -473,6 +513,13 @@ export default function MovimentacoesPage() {
         isOpen={!!selectedTxForCategory}
         onClose={() => setSelectedTxForCategory(null)}
         transaction={selectedTxForCategory}
+        onSuccess={loadData}
+      />
+
+      <CounterpartConfirmModal
+        isOpen={!!selectedTxForCounterpart}
+        onClose={() => setSelectedTxForCounterpart(null)}
+        transaction={selectedTxForCounterpart}
         onSuccess={loadData}
       />
     </div>

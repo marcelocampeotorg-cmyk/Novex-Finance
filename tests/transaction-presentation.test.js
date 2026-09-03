@@ -16,6 +16,59 @@ test("Apresentação de Transações: PAYOUTS não inventa que a saída foi Pix"
   assert.equal(result.isKnownCounterpart, true);
 });
 
+test("Apresentação de Transações: Extrato oficial mostra favorecido confirmado", () => {
+  const result = formatTransactionDisplay({
+    direction: "DEBIT",
+    type: "PAYOUTS",
+    description: "Pagamento com QR Pix FACEBOOK SERVICOS ONLINE DO BRASIL LTDA",
+    counterpartName: "FACEBOOK SERVICOS ONLINE DO BRASIL LTDA",
+    rawEnrichmentData: {
+      accountStatement: {
+        source: "MERCADO_PAGO_ACCOUNT_STATEMENT_CSV",
+        transactionType: "Pagamento com QR Pix FACEBOOK SERVICOS ONLINE DO BRASIL LTDA",
+      },
+    },
+  });
+
+  assert.equal(result.title, "FACEBOOK SERVICOS ONLINE DO BRASIL LTDA");
+  assert.equal(result.subtitle, "Pagamento com Pix");
+  assert.equal(result.isKnownCounterpart, true);
+  assert.equal(result.identificationStatus, "OFFICIAL");
+});
+
+test("Apresentação de Transações: Regra inferida por histórico gera status INFERRED e operação correta", () => {
+  const result = formatTransactionDisplay({
+    direction: "DEBIT",
+    type: "PAYOUTS",
+    description: "Transferência Pix enviada AUTO PECAS GOIANIA",
+    counterpartName: "Auto Pecas Goiania",
+    rawEnrichmentData: {
+      source: "INFERRED",
+      counterpartRule: {
+        pattern: "auto pecas",
+        canonicalName: "Auto Pecas Goiania",
+      },
+    },
+  });
+
+  assert.equal(result.title, "Auto Pecas Goiania");
+  assert.equal(result.subtitle, "Transferência Pix enviada");
+  assert.equal(result.isKnownCounterpart, true);
+  assert.equal(result.identificationStatus, "INFERRED");
+});
+
+test("Apresentação de Transações: Saída sem qualquer evidência fica UNIDENTIFIED", () => {
+  const result = formatTransactionDisplay({
+    direction: "DEBIT",
+    type: "PAYOUTS",
+    description: "PAYOUTS",
+    counterpartName: null,
+  });
+
+  assert.equal(result.isKnownCounterpart, false);
+  assert.equal(result.identificationStatus, "UNIDENTIFIED");
+});
+
 test("Apresentação de Transações: rendimento exige descrição oficial explícita", () => {
   const result = formatTransactionDisplay({
     type: "SETTLEMENT",

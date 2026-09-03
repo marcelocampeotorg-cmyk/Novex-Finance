@@ -565,6 +565,8 @@ export function findMatchingSettlementReport(
   const reqEndIso = new Date(endDate).toISOString().replace(/\.\d{3}Z$/, "Z");
   const reqBeginTime = new Date(beginDate).getTime();
   const reqEndTime = new Date(endDate).getTime();
+  const nowTime = Date.now();
+  const isIncrementalLive = (nowTime - reqEndTime) < 30 * 60 * 1000;
 
   // 1. Prioridade absoluta: correspondência exata de ISO strings
   const exactMatch = list.find((r: any) => {
@@ -573,11 +575,16 @@ export function findMatchingSettlementReport(
     if (!isReady) return false;
     const repBeginIso = new Date(r.begin_date).toISOString().replace(/\.\d{3}Z$/, "Z");
     const repEndIso = new Date(r.end_date).toISOString().replace(/\.\d{3}Z$/, "Z");
-    return repBeginIso === reqBeginIso && repEndIso === reqEndIso;
+    if (repBeginIso !== reqBeginIso || repEndIso !== reqEndIso) return false;
+    if (isIncrementalLive) {
+      const createdAt = new Date(r.date_created || r.last_modified || 0).getTime();
+      if (nowTime - createdAt > 15 * 60 * 1000) return false;
+    }
+    return true;
   });
   if (exactMatch) return exactMatch;
 
-  // 2. Relatório processado que engloba a janela solicitada (arredondamento diário do Mercado Pago)
+  // 2. Relatório processado que engloba a janela solicitada
   const coveringReports = list.filter((r: any) => {
     if (!r.begin_date || !r.end_date) return false;
     const isReady = ["processed", "ready", "available"].includes(String(r.status || "").toLowerCase()) && Boolean(r.file_name);
@@ -586,10 +593,16 @@ export function findMatchingSettlementReport(
     const repBeginTime = new Date(r.begin_date).getTime();
     const repEndTime = new Date(r.end_date).getTime();
 
-    const coversStart = repBeginTime <= reqBeginTime || (repBeginTime - reqBeginTime) <= 24 * 3600 * 1000;
-    const coversEnd = repEndTime >= reqEndTime || (reqEndTime - repEndTime) <= 24 * 3600 * 1000;
+    const coversStart = repBeginTime <= reqBeginTime;
+    const coversEnd = repEndTime >= reqEndTime;
+    if (!coversStart || !coversEnd) return false;
 
-    return coversStart && coversEnd;
+    if (isIncrementalLive) {
+      const createdAt = new Date(r.date_created || r.last_modified || 0).getTime();
+      if (nowTime - createdAt > 15 * 60 * 1000) return false;
+    }
+
+    return true;
   });
 
   if (coveringReports.length > 0) {
@@ -602,7 +615,7 @@ export function findMatchingSettlementReport(
     return coveringReports[0];
   }
 
-  // 3. Relatório em processamento na mesma janela
+  // 3. Relatório em processamento na mesma janela (recente)
   const pendingReports = list.filter((r: any) => {
     if (!r.begin_date || !r.end_date) return false;
     const isPending = ["processing", "pending", "in_progress"].includes(String(r.status || "").toLowerCase());
@@ -611,10 +624,14 @@ export function findMatchingSettlementReport(
     const repBeginTime = new Date(r.begin_date).getTime();
     const repEndTime = new Date(r.end_date).getTime();
 
-    const coversStart = repBeginTime <= reqBeginTime || (repBeginTime - reqBeginTime) <= 24 * 3600 * 1000;
-    const coversEnd = repEndTime >= reqEndTime || (reqEndTime - repEndTime) <= 24 * 3600 * 1000;
+    const coversStart = repBeginTime <= reqBeginTime;
+    const coversEnd = repEndTime >= reqEndTime;
+    if (!coversStart || !coversEnd) return false;
 
-    return coversStart && coversEnd;
+    const createdAt = new Date(r.date_created || r.last_modified || 0).getTime();
+    if (nowTime - createdAt > 30 * 60 * 1000) return false;
+
+    return true;
   });
 
   if (pendingReports.length > 0) {

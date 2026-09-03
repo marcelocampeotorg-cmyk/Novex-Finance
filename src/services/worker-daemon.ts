@@ -2,7 +2,7 @@ import { db } from "@/server/db";
 import { processActiveRecurrencesForWorkspace } from "@/server/services/recurrence-service";
 import { processAutomaticWhatsAppCollectionsForWorkspace, processNotificationAlertsForWorkspace } from "@/server/services/notification-service";
 import { reconcileWorkspace } from "@/server/services/reconciliation-service";
-import { continueMercadoPagoSyncRun, enrichAllMercadoPagoTransactions, syncRecentMercadoPagoPayments } from "@/server/services/transactions-service";
+import { continueMercadoPagoSyncRun, enrichAllMercadoPagoTransactions, syncRecentMercadoPagoPayments, applyCounterpartMemoryToTransactions } from "@/server/services/transactions-service";
 import { INTERNAL_WORKER_CONTEXT } from "@/server/internal-context";
 import { discoverWorkspaceRecurrences } from "@/services/recurrence-discovery";
 import { continueMercadoPagoBalanceSync } from "@/server/services/mercado-pago-balance-service";
@@ -91,6 +91,7 @@ export class WorkerDaemonService {
         try {
           await syncRecentMercadoPagoPayments(ws.id, INTERNAL_WORKER_CONTEXT);
           await enrichAllMercadoPagoTransactions(INTERNAL_WORKER_CONTEXT, ws.id);
+          await applyCounterpartMemoryToTransactions(ws.id, INTERNAL_WORKER_CONTEXT);
         } catch (syncRecentErr: any) {
           console.warn(`[WorkerDaemon] Aviso ao sincronizar pagamentos recentes para workspace ${ws.id}:`, syncRecentErr.message);
         }
@@ -220,6 +221,7 @@ export class WorkerDaemonService {
                     partialCount++;
                   }
                   await enrichAllMercadoPagoTransactions(INTERNAL_WORKER_CONTEXT, ws.id);
+                  await applyCounterpartMemoryToTransactions(ws.id, INTERNAL_WORKER_CONTEXT);
                   resumedSyncs++;
                 } catch (syncErr: any) {
                   failedCount++;
