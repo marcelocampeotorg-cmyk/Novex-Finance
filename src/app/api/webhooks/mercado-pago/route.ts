@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/server/db";
+import { logger } from "@/lib/logger";
 import { decryptCredentials, parseMercadoPagoCredentials } from "@/lib/server/credentials-crypto";
 import { getOrderById } from "@/integrations/mercado-pago/orders-client";
 import { classifyFixedChargePayment } from "@/domain/pix-receivable";
@@ -62,7 +63,10 @@ function verifyWebhookSignature(req: NextRequest, dataId: string): { valid: bool
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => null);
+    if (!body || typeof body !== "object") {
+      return NextResponse.json({ error: "Payload JSON malformatado ou ausente" }, { status: 400 });
+    }
     const { searchParams } = new URL(req.url);
 
     // Identificar tipo de recurso (Tópico "order" obrigatório)
@@ -81,7 +85,16 @@ export async function POST(req: NextRequest) {
     }
 
     // 1. Validar Assinatura (Exigida obrigatoriamente — sem dev bypass)
+    // Regra RF-03: Rejeitar imediatamente sem tocar no banco se a assinatura for inválida
     const sigVerification = verifyWebhookSignature(req, dataId);
+    if (!sigVerification.valid) {
+      logger.warn("WEBHOOK_INVALID_SIGNATURE", "Rejeitando webhook com assinatura inválida antes do banco", {
+        reason: sigVerification.reason,
+        dataId,
+        ip: req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "unknown",
+      });
+      return NextResponse.json({ error: sigVerification.reason || "Assinatura inválida" }, { status: 401 });
+    }
 
     // Regra 30: Determinar ambiente antes de criar registro idempotente
     if (typeof body.live_mode !== "boolean") {
@@ -95,7 +108,7 @@ export async function POST(req: NextRequest) {
     const notificationId = body?.id ? String(body.id) : (xRequestId || dataId);
     const eventId = `ev_${notificationId}_${dataId}_${body.action || "updated"}`;
 
-    // 2. Inbox Idempotente de Webhook
+    // 2. Inbox Idempotente de Webhook (Apenas alcançado com assinatura validada!)
     const existingEvent = await db.webhookEvent.findUnique({
       where: {
         provider_environment_eventId: {
@@ -110,7 +123,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ received: true, idempotent: true }, { status: 200 });
     }
 
-    // Gravar evento no Inbox
+    // Gravar evento no Inbox com assinatura confirmada válida
     const webhookEvent = await db.webhookEvent.upsert({
       where: {
         provider_environment_eventId: {
@@ -121,7 +134,7 @@ export async function POST(req: NextRequest) {
       },
       update: {
         attempts: { increment: 1 },
-        signatureValid: sigVerification.valid,
+        signatureValid: true,
       },
       create: {
         provider: "MERCADO_PAGO",
@@ -130,18 +143,10 @@ export async function POST(req: NextRequest) {
         resourceType: type || "order",
         resourceId: dataId,
         action: body.action || "updated",
-        signatureValid: sigVerification.valid,
+        signatureValid: true,
         status: "RECEIVED",
       },
     });
-
-    if (!sigVerification.valid) {
-      await db.webhookEvent.update({
-        where: { id: webhookEvent.id },
-        data: { status: "FAILED", lastErrorCode: "INVALID_SIGNATURE" },
-      });
-      return NextResponse.json({ error: sigVerification.reason || "Assinatura inválida" }, { status: 401 });
-    }
 
     // 3. Localizar PixCharge correspondente ao externalOrderId
     const pixCharge = await db.pixCharge.findFirst({

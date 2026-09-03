@@ -11,7 +11,6 @@ export function middleware(request: NextRequest) {
     path.startsWith("/api/webhooks") ||
     path.startsWith("/api/worker") ||
     path.startsWith("/api/health") ||
-    path.startsWith("/api/logs") ||
     path.startsWith("/brand") ||
     path === "/sw.js" ||
     path === "/manifest.json";
@@ -28,6 +27,10 @@ export function middleware(request: NextRequest) {
     request.cookies.get("__Secure-better_auth.session_token");
 
   if (!sessionCookie || !sessionCookie.value) {
+    // Para rotas de API protegidas (ex: /api/logs), retornar 401 JSON em vez de redirect
+    if (path.startsWith("/api/")) {
+      return NextResponse.json({ error: "Acesso não autorizado: sessão necessária." }, { status: 401 });
+    }
     const loginUrl = new URL("/login", request.url);
     return NextResponse.redirect(loginUrl);
   }

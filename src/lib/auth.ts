@@ -24,20 +24,23 @@ export const auth = betterAuth({
     user: {
       create: {
         before: async (user) => {
-          if (process.env.ALLOW_PUBLIC_SIGNUP === "false") {
+          // Regra RF-02: Fail-closed. Cadastro só é permitido se explicitamente autorizado via 'true'
+          const isSignupExplicitlyAllowed = process.env.ALLOW_PUBLIC_SIGNUP === "true";
+          if (!isSignupExplicitlyAllowed) {
             const count = await db.user.count();
             if (count > 0) {
-              throw new Error("Cadastro público desativado no ambiente de produção do NOVEX Finance.");
+              throw new Error("Cadastro público desativado no NOVEX Finance. Contate o administrador.");
             }
           }
           return { data: user };
         },
         after: async (user) => {
-          if (process.env.ALLOW_PUBLIC_SIGNUP === "false") {
+          const isSignupExplicitlyAllowed = process.env.ALLOW_PUBLIC_SIGNUP === "true";
+          if (!isSignupExplicitlyAllowed) {
             const count = await db.user.count();
             if (count > 1) {
               await db.user.delete({ where: { id: user.id } }).catch(() => {});
-              throw new Error("Cadastro público desativado: limite de bootstrap excedido por concorrência.");
+              throw new Error("Cadastro público desativado: limite de bootstrap excedido.");
             }
           }
         },
