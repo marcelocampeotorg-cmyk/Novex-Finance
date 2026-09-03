@@ -164,14 +164,40 @@
   * [ ] Testes unitários, integração com PostgreSQL descartável, lint, typecheck, build, QA desktop/mobile e `git diff --check` aprovados.
 
 
-### Ponto consolidado — 2026-09-02 01:38 BRT
+### Tarefa 7: Enriquecimento Contínuo de Nomes de Fornecedores e Contrapartes Reais (Igual ao Extrato do Mercado Pago)
 
-- **Infraestrutura documentada:** [docs/INFRAESTRUTURA_E_ACESSO_SERVIDOR.md](INFRAESTRUTURA_E_ACESSO_SERVIDOR.md) contém todos os dados de SSH (`192.168.4.12`), Cloudflare Tunnel ID (`658e11b9-3278-4908-a602-fa15fcc34530`), Account Tag (`820b26ab31089eb3d67b2c9ffb0cebcd`), matriz de portas e runbooks de diagnóstico.
-- **Servidor:** pasta `/home/servidor/Área de trabalho/Sistemas/novex finance` sincronizada com o HEAD `9fc7087`.
-- **Imagens compiladas no servidor:** `novexfinance-prod-migrate`, `novexfinance-prod-app` e `novexfinance-prod-worker`.
-- **Bancos restaurados:** 18 workspaces, 167 transações externas, 167 lançamentos de ledger, 10 migrations e 37 tabelas na Evolution.
-- **Sistemas vizinhos:** *Master* e *Oficina* permanecem 100% saudáveis e intocados.
-- **Próximos passos:**
-  1. Concluir a troca de nameservers na Hostinger para ativação do DNS Cloudflare.
-  2. Executar `docker compose up -d` para inicializar a stack `novexfinance-prod`.
-  3. Validar `curl http://127.0.0.1:3001/api/health`, Evolution `open` e backup verificado.
+* **O que fazer:**
+  1. Concluir o preenchimento automático das contrapartes reais das movimentações históricas e recentes, garantindo que o banco de dados armazene o nome da empresa ou pessoa (`counterpart_name`) e não códigos técnicos como `Ref: QR...`, `Ref: RESN...` ou `Ref: CIELO...`.
+  2. Consolidar os nomes comprovados pelo extrato do Mercado Pago:
+     * `176977551400` (-R$ 2,00): **Facebook Servicos Online Do Brasil Ltda**
+     * `175963571301` (-R$ 12,52): **Facebook Servicos Online Do Brasil Ltda**
+     * `176866825828` (+R$ 75,00): **Jovani Rosa Dos Santos** (Origem: Itaú Unibanco S.A.)
+     * `175901588737` (-R$ 22,00): **Drogaria Jaranapolis Ltda**
+     * `176855934846` (-R$ 22,00): **Santos E Peixoto Supermercado Ltda**
+     * `175714580829` (-R$ 9,99): **Google Brasil Pagamentos Ltda.**
+     * `176652347016` (-R$ 20,03): **Posto Pelicano 10 Ltda**
+     * `176650847124` (-R$ 48,00): **N J De Oliveira Ltda**
+     * `175551646863` (-R$ 13,00): **Barao Acessorios Ltda**
+  3. Fortalecer o motor de memória viva (`CounterpartRule` / `applyCounterpartMemoryToTransactions`) para que cada novo lançamento capturado pelo `worker-daemon` a cada 15 segundos seja identificado automaticamente sem intervenção manual.
+  4. Avaliar rota complementar ou ingestor contínuo de extrato para novas contrapartes não catalogadas pela API de relatórios do Mercado Pago.
+* **Por que fazer:**
+  * A API de relatórios públicos do Mercado Pago (`Settlement Report`) omite o nome do favorecido em débitos Pix (`PAYOUTS`) e omite o nome do pagador pessoa física em créditos Pix, fornecendo apenas códigos de referência de transação ou a instituição financeira intermediária.
+  * No aplicativo e portal web do Mercado Pago, esses nomes constam oficialmente. Para que o empresário saiba exatamente de onde veio ou saiu o dinheiro sem ter que ficar inserindo manualmente no dia a dia, o sistema precisa cruzar e memorizar essas entidades no piloto automático.
+* **Para que serve (Impacto no MVP):**
+  * Entrega usabilidade e clareza bancária imediata: o extrato do NOVEX espelha 1:1 o aplicativo do Mercado Pago, permitindo conciliação, categorização e DRE precisos sem retrabalho do usuário.
+* **Critérios de Aceite:**
+  * [ ] Nenhuma movimentação de fornecedor conhecido exibe código técnico genérico (`QR...`, `RESN...`).
+  * [ ] Transações de saída comprovadas vinculadas a `Facebook`, `Drogaria Jaranapolis`, `Santos E Peixoto`, `Google`, `Posto Pelicano`, `N J de Oliveira` e `Barão Acessórios`.
+  * [ ] Pix recebido de R$ 75,00 exibindo `Jovani Rosa Dos Santos` como pagador principal e `Origem: Itaú Unibanco S.A.` no subtítulo.
+  * [ ] Tabela `counterpart_rules` com as regras ativas de memória para o workspace do usuário.
+  * [ ] `WorkerDaemon` executando o enriquecimento por memória viva a cada ciclo intradiário.
+  * [ ] 100% de aprovação na suíte de testes unitários e de apresentação.
+
+---
+
+### Ponto consolidado — 2026-09-03 17:30 BRT
+
+- **Infraestrutura em Produção:** Stack `novexfinance-prod` ativa e saudável no servidor (`192.168.4.12`), acessível via túnel Cloudflare em `https://finance.novexbr.com.br` com healthcheck `{"status":"ok"}`.
+- **Apresentação Bancária Estilo App:** Eliminados títulos genéricos (`Transferência ou retirada registrada`, `Entrada na conta MP`). Lançamentos de centavos mapeados como `Rendimento do saldo` e `Imposto sobre rendimento`. Pix recebido com identificação limpa de banco emissor.
+- **Memória de Fornecedores:** Modelo e tabela `counterpart_rules` criados e migrados no PostgreSQL de produção. Loop de aprendizado integrado ao `worker-daemon`.
+- **Pendência Registrada:** Tarefa 7 anotada para conclusão do mapeamento contínuo de contrapartes.
