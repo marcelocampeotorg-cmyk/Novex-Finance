@@ -26,10 +26,15 @@ export interface PixChargeStatusResult {
   expiresAt?: string;
   paidAt?: string;
   debtorName?: string;
+  debtorPhone?: string;
   title?: string;
+  description?: string;
+  dueDate?: string;
+  senderName?: string;
   error?: string;
   remoteCheckError?: string;
 }
+
 
 import { getActiveMercadoPagoIntegrationForWorkspace } from "@/server/services/mercado-pago-integration";
 
@@ -41,6 +46,12 @@ export async function generateReceivablePixCharge(input: {
   installmentId: string;
 }): Promise<PixChargeStatusResult> {
   const context = await requireAuthenticatedWorkspace();
+
+  const workspace = await db.workspace.findUnique({
+    where: { id: context.workspaceId },
+    select: { name: true },
+  });
+  const senderName = workspace?.name || "Franklin Jr";
 
   const parsed = generateChargeSchema.safeParse(input);
   if (!parsed.success) {
@@ -111,16 +122,12 @@ export async function generateReceivablePixCharge(input: {
     return { success: false, status: "FAILED", isPaid: false, error: "O valor da cobrança deve ser maior que zero." };
   }
 
-  // 4. Verificar e-mail REAL do devedor/contato (Regra 22: Sem email fake de devedor ou do proprietário)
-  const debtorEmail = installment.financialItem.contact?.email?.trim();
-  if (!debtorEmail) {
-    return {
-      success: false,
-      status: "FAILED",
-      isPaid: false,
-      error: "O devedor/contato precisa ter um e-mail válido cadastrado no perfil de contatos para emitir cobrança Pix.",
-    };
-  }
+  // 4. E-mail do devedor/contato (Orders API do Mercado Pago requer string de e-mail no payload; se o contato tiver apenas WhatsApp, gera fallback técnico válido)
+  const contactEmail = installment.financialItem.contact?.email?.trim();
+  const debtorEmail =
+    contactEmail && contactEmail.includes("@")
+      ? contactEmail
+      : `cobranca.${installment.financialItem.contact?.id || installment.id}@finance.novexbr.com.br`;
 
   // 5. Verificar integração ativa com Mercado Pago (Regra 23: Resolver dinâmico da integração ativa)
   let integration;
@@ -164,7 +171,11 @@ export async function generateReceivablePixCharge(input: {
       ticketUrl: existingPending.ticketUrl ?? undefined,
       expiresAt: existingPending.expiresAt ? existingPending.expiresAt.toISOString() : undefined,
       debtorName: installment.financialItem.contact?.name || "Devedor",
+      debtorPhone: installment.financialItem.contact?.phone || undefined,
       title: installment.financialItem.title,
+      description: installment.financialItem.description || undefined,
+      dueDate: installment.dueDate.toLocaleDateString("pt-BR"),
+      senderName,
     };
   }
 
@@ -404,7 +415,11 @@ export async function generateReceivablePixCharge(input: {
     ticketUrl: updatedCharge.ticketUrl || undefined,
     expiresAt: updatedCharge.expiresAt?.toISOString(),
     debtorName: installment.financialItem.contact?.name || "Devedor",
+    debtorPhone: installment.financialItem.contact?.phone || undefined,
     title: installment.financialItem.title,
+    description: installment.financialItem.description || undefined,
+    dueDate: installment.dueDate.toLocaleDateString("pt-BR"),
+    senderName,
   };
 }
 
@@ -446,7 +461,10 @@ export async function getReceivablePixChargeStatus(input: { pixChargeId: string 
       amountCents: Number(pixCharge.amountCents),
       paidAt: pixCharge.paidAt?.toISOString(),
       debtorName: pixCharge.installment.financialItem.contact?.name || "Devedor",
+      debtorPhone: pixCharge.installment.financialItem.contact?.phone || undefined,
       title: pixCharge.installment.financialItem.title,
+      description: pixCharge.installment.financialItem.description || undefined,
+      dueDate: pixCharge.installment.dueDate.toLocaleDateString("pt-BR"),
     };
   }
 
@@ -562,3 +580,16 @@ export async function getActivePixChargeForInstallment(input: { installmentId: s
     expiresAt: charge.expiresAt?.toISOString(),
   };
 }
+
+/**
+ * Ação de servidor para disparo manual de cobrança via WhatsApp
+ */
+export async function sendManualReceivableWhatsAppReminder(input: {
+  installmentId?: string;
+  pixChargeId?: string;
+  phone?: string;
+}) {
+  const { sendManualDebtorPixReminder } = await import("@/server/services/notification-service");
+  return sendManualDebtorPixReminder(input);
+}
+

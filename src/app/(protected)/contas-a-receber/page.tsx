@@ -178,10 +178,12 @@ export default function ContasAReceberPage() {
                             setSelectedInstallment(inst);
                           }}
                           className="flex items-center gap-1 rounded bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-500 transition-colors cursor-pointer"
+                          title="Cobrar via Pix e WhatsApp (Manual Web ou Bot automático)"
                         >
                           <QrCode className="h-3 w-3" />
-                          <span>Cobrar via Pix</span>
+                          <span>Cobrar Pix / WhatsApp</span>
                         </button>
+
                       </div>
                     )}
                   </div>

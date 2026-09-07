@@ -280,22 +280,22 @@ export class EvolutionAPIClient {
     amountCents: number;
     dueDate: string;
     pixCopiaECola?: string;
+    title?: string;
+    description?: string;
+    senderName?: string;
     baseUrl?: string;
     apiKey?: string;
     instanceName?: string;
   }): Promise<EvolutionAPIResponse> {
-    const valorFormatted = (input.amountCents / 100).toLocaleString("pt-BR", {
-      style: "currency",
-      currency: "BRL",
+    const messageText = buildDebtorPixChargeMessage({
+      debtorName: input.debtorName,
+      amountCents: input.amountCents,
+      dueDate: input.dueDate,
+      pixCopiaECola: input.pixCopiaECola,
+      title: input.title,
+      description: input.description,
+      senderName: input.senderName,
     });
-
-    let messageText = `Olá, *${input.debtorName}*! tudo bem?\n\nPassando para lembrar sobre o valor de *${valorFormatted}* com vencimento em *${input.dueDate}*.`;
-
-    if (input.pixCopiaECola) {
-      messageText += `\n\nVocê pode realizar o pagamento diretamente via Pix Copia e Cola:\n\n\`\`\`${input.pixCopiaECola}\`\`\``;
-    }
-
-    messageText += `\n\nAgradecemos a atenção! — *NOVEX Finance*`;
 
     return this.sendTextMessage({
       number: input.debtorPhone,
@@ -307,4 +307,44 @@ export class EvolutionAPIClient {
   }
 }
 
+/**
+ * Constrói a mensagem formatada de cobrança Pix humanizada para envio via WhatsApp ou cópia
+ */
+export function buildDebtorPixChargeMessage(input: {
+  debtorName: string;
+  amountCents: number;
+  dueDate: string;
+  pixCopiaECola?: string;
+  title?: string;
+  description?: string;
+  senderName?: string;
+}): string {
+  const valorFormatted = (input.amountCents / 100).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
+
+  const senderIntro = input.senderName?.trim()
+    ? `Aqui é o *${input.senderName.trim()}*. `
+    : "Aqui é do *NOVEX Finance*. ";
+
+  const motivoSubject = input.title?.trim()
+    ? `referente à cobrança sobre *${input.title.trim()}*`
+    : "referente à cobrança da sua conta";
+
+  const desc = input.description?.trim() ? `\n_Detalhes: ${input.description.trim()}_\n` : "";
+
+  let messageText = `Olá, *${input.debtorName}*! Tudo bem?\n\n${senderIntro}Estou entrando em contato ${motivoSubject}, no valor de *${valorFormatted}* com vencimento em *${input.dueDate}*.${desc}`;
+
+  if (input.pixCopiaECola) {
+    messageText += `\n\nSegue a chave Pix Copia e Cola para pagamento:\n\n\`\`\`${input.pixCopiaECola}\`\`\`\n\n_Após realizar o pagamento no aplicativo do seu banco, o sistema reconhece a baixa automaticamente._`;
+  }
+
+  const signature = input.senderName?.trim() ? `*${input.senderName.trim()}*` : `*NOVEX Finance*`;
+  messageText += `\n\nAgradeço a atenção! — ${signature}`;
+
+  return messageText;
+}
+
 export const evolutionAPIClient = new EvolutionAPIClient();
+

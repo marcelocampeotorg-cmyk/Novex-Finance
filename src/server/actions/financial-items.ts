@@ -91,6 +91,7 @@ export async function createFinancialItem(input: {
   description?: string;
   contactId?: string;
   contactName?: string;
+  contactPhone?: string;
   pixKey?: string;
   pixKeyType?: "CPF" | "CNPJ" | "EMAIL" | "PHONE" | "EVP";
   categoryName?: string;
@@ -125,6 +126,8 @@ export async function createFinancialItem(input: {
 
       // Localizar ou criar Contato
       let finalContactId = input.contactId;
+      const cleanPhone = input.contactPhone?.replace(/\D/g, "");
+
       if (!finalContactId && input.contactName) {
         const existingContact = await tx.contact.findFirst({
           where: { workspaceId, name: input.contactName }
@@ -132,11 +135,18 @@ export async function createFinancialItem(input: {
 
         if (existingContact) {
           finalContactId = existingContact.id;
+          if (cleanPhone && existingContact.phone !== cleanPhone) {
+            await tx.contact.update({
+              where: { id: existingContact.id },
+              data: { phone: cleanPhone },
+            });
+          }
         } else {
           const newContact = await tx.contact.create({
             data: {
               workspaceId,
               name: input.contactName,
+              phone: cleanPhone || null,
               type: "PERSON",
               isPayee: input.direction === "PAYABLE",
               isDebtor: input.direction === "RECEIVABLE",
@@ -144,7 +154,13 @@ export async function createFinancialItem(input: {
           });
           finalContactId = newContact.id;
         }
+      } else if (finalContactId && cleanPhone) {
+        await tx.contact.update({
+          where: { id: finalContactId },
+          data: { phone: cleanPhone },
+        });
       }
+
 
       // Salvar Chave Pix se fornecida corretamente
       if (finalContactId && input.pixKey && input.pixKeyType && input.direction === "PAYABLE") {
@@ -234,6 +250,7 @@ export async function updateFinancialItem(input: {
   title: string;
   description?: string;
   contactName?: string;
+  contactPhone?: string;
   pixKey?: string;
   pixKeyType?: "CPF" | "CNPJ" | "EMAIL" | "PHONE" | "EVP";
   categoryName?: string;
@@ -271,17 +288,26 @@ export async function updateFinancialItem(input: {
       }
 
       let finalContactId = existing.contactId;
+      const cleanPhone = input.contactPhone?.replace(/\D/g, "");
+
       if (input.contactName) {
         const existingContact = await tx.contact.findFirst({
           where: { workspaceId, name: input.contactName },
         });
         if (existingContact) {
           finalContactId = existingContact.id;
+          if (cleanPhone && existingContact.phone !== cleanPhone) {
+            await tx.contact.update({
+              where: { id: existingContact.id },
+              data: { phone: cleanPhone },
+            });
+          }
         } else {
           const newContact = await tx.contact.create({
             data: {
               workspaceId,
               name: input.contactName,
+              phone: cleanPhone || null,
               type: "PERSON",
               isPayee: input.direction === "PAYABLE",
               isDebtor: input.direction === "RECEIVABLE",
@@ -289,7 +315,13 @@ export async function updateFinancialItem(input: {
           });
           finalContactId = newContact.id;
         }
+      } else if (finalContactId && cleanPhone) {
+        await tx.contact.update({
+          where: { id: finalContactId },
+          data: { phone: cleanPhone },
+        });
       }
+
 
       if (finalContactId && input.pixKey && input.pixKeyType && input.direction === "PAYABLE") {
         const existingKey = await tx.pixKey.findFirst({

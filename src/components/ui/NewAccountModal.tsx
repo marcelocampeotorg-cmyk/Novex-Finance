@@ -22,6 +22,7 @@ const newAccountSchema = z.object({
   title: z.string().min(3, "Título deve ter no mínimo 3 caracteres"),
   description: z.string().optional(),
   contactName: z.string().min(2, "Digite o nome do contato ou favorecido"),
+  contactPhone: z.string().optional(),
   category: z.string().min(1, "Selecione uma categoria"),
   totalAmount: z.coerce.number().min(0.01, "Informe um valor maior que R$ 0,00"),
   startDate: z.string().min(1, "Selecione a data de vencimento ou início"),
@@ -77,6 +78,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
       title: "",
       description: "",
       contactName: "",
+      contactPhone: "",
       category: defaultDirection === "RECEIVABLE" ? "Serviços Prestados" : "Moradia",
       totalAmount: 0,
       startDate: new Date().toISOString().split("T")[0],
@@ -125,6 +127,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
           title: editItem.title,
           description: editItem.description || "",
           contactName: editItem.contact?.name || "",
+          contactPhone: editItem.contact?.phone || "",
           category: editItem.category || (editItem.direction === "RECEIVABLE" ? "Serviços Prestados" : "Moradia"),
           totalAmount: initialAmount,
           startDate: editItem.startDate ? editItem.startDate.split("T")[0] : new Date().toISOString().split("T")[0],
@@ -246,6 +249,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
           title: data.title,
           description: finalDescription,
           contactName: data.contactName,
+          contactPhone: data.contactPhone,
           pixKey: data.pixKey,
           pixKeyType: data.pixKeyType,
           categoryName: data.category,
@@ -265,6 +269,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
           title: data.title,
           description: finalDescription,
           contactName: data.contactName,
+          contactPhone: data.contactPhone,
           pixKey: data.pixKey,
           pixKeyType: data.pixKeyType,
           categoryName: data.category,
@@ -414,24 +419,52 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
           {/* Dados Principais */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="font-semibold text-novex-text-secondary block mb-1">Título da Conta *</label>
+              <label className="font-semibold text-novex-text-secondary block mb-1">
+                {direction === "RECEIVABLE" ? "Motivo da Cobrança / Título *" : "Título da Conta *"}
+              </label>
               <input
                 {...register("title")}
-                placeholder="Ex: Pensão Alimentícia, Aluguel, Servidor"
+                placeholder={direction === "RECEIVABLE" ? "Ex: IPTV, Mensalidade, Prestação de Serviço" : "Ex: Pensão Alimentícia, Aluguel, Servidor"}
                 className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-novex-text-primary focus:border-novex-cyan focus:outline-none"
               />
               {errors.title?.message && <span className="text-red-400 text-[10px] mt-1 block">{String(errors.title.message)}</span>}
             </div>
 
             <div>
-              <label className="font-semibold text-novex-text-secondary block mb-1">Contato / Favorecido (Digite o nome) *</label>
+              <label className="font-semibold text-novex-text-secondary block mb-1">
+                {direction === "RECEIVABLE" ? "Nome do Devedor / Cliente *" : "Contato / Favorecido *"}
+              </label>
               <input
                 {...register("contactName")}
-                placeholder="Digite o nome do contato, empresa ou pessoa..."
+                placeholder={direction === "RECEIVABLE" ? "Ex: Juliano" : "Digite o nome do contato, empresa ou pessoa..."}
                 className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-novex-text-primary focus:border-novex-cyan focus:outline-none"
               />
               {errors.contactName?.message && <span className="text-red-400 text-[10px] mt-1 block">{String(errors.contactName.message)}</span>}
             </div>
+          </div>
+
+          {/* WhatsApp / Telefone do Devedor ou Favorecido */}
+          <div className="rounded-lg border border-novex-border bg-novex-surface2/30 p-3 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="font-semibold text-xs text-novex-text-secondary">
+                {direction === "RECEIVABLE" ? "WhatsApp do Devedor (para envio da cobrança Pix)" : "Telefone / WhatsApp (Opcional)"}
+              </label>
+              {direction === "RECEIVABLE" && (
+                <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+                  Cobrança Automática / Manual
+                </span>
+              )}
+            </div>
+            <input
+              {...register("contactPhone")}
+              placeholder="DDD + Número (Ex: 62992053928)"
+              className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-xs text-novex-text-primary focus:border-novex-cyan focus:outline-none font-mono"
+            />
+            {direction === "RECEIVABLE" && (
+              <p className="text-[10px] text-novex-text-muted">
+                O sistema usará este número para cobrar o devedor informando o motivo <strong>({watch("title") || "IPTV"})</strong>, valor e a chave Pix Copia e Cola.
+              </p>
+            )}
           </div>
 
           {/* Campo Chave Pix para Pagamento / Cobrança com Seletor de Tipo */}

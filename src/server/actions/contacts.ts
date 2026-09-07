@@ -111,3 +111,40 @@ export async function createContact(input: {
     return { success: false, error: error.message };
   }
 }
+
+export async function updateContactPhoneByInstallment(input: {
+  installmentId: string;
+  phone: string;
+}) {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+    const cleanPhone = input.phone.replace(/\D/g, "");
+
+    const installment = await db.installment.findFirst({
+      where: {
+        id: input.installmentId,
+        financialItem: { workspaceId, deletedAt: null },
+      },
+      include: {
+        financialItem: {
+          include: { contact: true },
+        },
+      },
+    });
+
+    if (!installment || !installment.financialItem.contact) {
+      return { success: false, error: "Contato ou parcela não localizados." };
+    }
+
+    await db.contact.update({
+      where: { id: installment.financialItem.contact.id },
+      data: { phone: cleanPhone || null },
+    });
+
+    revalidatePath("/contas-a-receber");
+    return { success: true, phone: cleanPhone };
+  } catch (err: any) {
+    return { success: false, error: err.message || "Erro ao atualizar telefone do contato." };
+  }
+}
+

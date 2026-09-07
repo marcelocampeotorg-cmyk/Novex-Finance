@@ -292,7 +292,9 @@ async function sendWhatsAppDebtorReminderForWorkspace(
       return { success: false, error: safeSettings.error || "Não foi possível aplicar as configurações seguras da instância." };
     }
 
-    const dedupeKey = `whatsapp:${workspaceId}:${charge.id}:${input.messageStage}`;
+    const dedupeKey = input.messageStage === "MANUAL"
+      ? `whatsapp:${workspaceId}:${charge.id}:MANUAL:${Date.now()}`
+      : `whatsapp:${workspaceId}:${charge.id}:${input.messageStage}`;
 
     // Item 3: Atomic claim exclusivity
     const existingLog = await db.whatsAppDeliveryLog.findUnique({ where: { dedupeKey } });
@@ -348,12 +350,17 @@ async function sendWhatsAppDebtorReminderForWorkspace(
       }
     }
 
+    const ws = await db.workspace.findUnique({ where: { id: workspaceId }, select: { name: true } });
+
     const result = await evolutionAPIClient.sendPixChargeReminder({
       debtorName: charge.installment.financialItem.contact.name,
       debtorPhone: charge.installment.financialItem.contact.phone,
       amountCents: Number(charge.amountCents),
       dueDate: charge.installment.dueDate.toLocaleDateString("pt-BR"),
       pixCopiaECola: charge.qrCode,
+      title: charge.installment.financialItem.title,
+      description: charge.installment.financialItem.description || undefined,
+      senderName: ws?.name || "Franklin Jr",
       baseUrl: creds.baseUrl,
       apiKey: creds.apiKey,
       instanceName: creds.instanceName,
@@ -383,6 +390,96 @@ export async function sendWhatsAppDebtorReminder(input: { pixChargeId: string; m
   return sendWhatsAppDebtorReminderForWorkspace(workspaceId, input);
 }
 
+/**
+ * Ação manual invocada diretamente pela interface para cobrar o devedor via WhatsApp (Bot)
+ */
+export async function sendManualDebtorPixReminder(input: {
+  installmentId?: string;
+  pixChargeId?: string;
+  phone?: string;
+}) {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+
+    let targetPixChargeId = input.pixChargeId;
+
+    if (!targetPixChargeId && input.installmentId) {
+      const existing = await db.pixCharge.findFirst({
+        where: {
+          workspaceId,
+          installmentId: input.installmentId,
+          status: { in: ["PENDING", "ACTION_REQUIRED"] },
+          qrCode: { not: null },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      if (existing) {
+        targetPixChargeId = existing.id;
+      } else {
+        const { generateReceivablePixCharge } = await import("@/server/actions/pix-receivables");
+        const gen = await generateReceivablePixCharge({ installmentId: input.installmentId });
+        if (!gen.success || !gen.pixChargeId) {
+          return { success: false, error: gen.error || "Não foi possível gerar a cobrança Pix para esta parcela." };
+        }
+        targetPixChargeId = gen.pixChargeId;
+      }
+    }
+
+    if (!targetPixChargeId) {
+      return { success: false, error: "Identificador da cobrança Pix não encontrado." };
+    }
+
+    const charge = await db.pixCharge.findFirst({
+      where: { id: targetPixChargeId, workspaceId },
+      include: {
+        installment: {
+          include: {
+            financialItem: {
+              include: { contact: true },
+            },
+          },
+        },
+      },
+    });
+
+    if (!charge) {
+      return { success: false, error: "Cobrança Pix não encontrada." };
+    }
+
+    if (input.phone && charge.installment.financialItem.contact) {
+      const cleanInputPhone = input.phone.replace(/\D/g, "");
+      const currentContactPhone = charge.installment.financialItem.contact.phone?.replace(/\D/g, "");
+      if (cleanInputPhone && cleanInputPhone !== currentContactPhone) {
+        await db.contact.update({
+          where: { id: charge.installment.financialItem.contact.id },
+          data: { phone: cleanInputPhone },
+        });
+        charge.installment.financialItem.contact.phone = cleanInputPhone;
+      }
+    }
+
+    if (!charge.installment.financialItem.contact?.phone) {
+      return {
+        success: false,
+        error: "O devedor não possui telefone cadastrado. Informe o número antes de enviar.",
+      };
+    }
+
+    const result = await sendWhatsAppDebtorReminderForWorkspace(workspaceId, {
+      pixChargeId: targetPixChargeId,
+      messageStage: "MANUAL",
+    });
+
+    revalidatePath("/contas-a-receber");
+    return result;
+  } catch (err: any) {
+    console.error("Erro na ação de cobrança manual WhatsApp:", err);
+    return { success: false, error: err.message || "Erro ao processar cobrança manual." };
+  }
+}
+
+
 export async function processAutomaticWhatsAppCollectionsForWorkspace(
   workspaceId: string,
   alerts?: NotificationAlert[],
@@ -404,7 +501,7 @@ export async function processAutomaticWhatsAppCollectionsForWorkspace(
   let failed = 0;
 
   for (const alert of eligibleAlerts) {
-    const charge = await db.pixCharge.findFirst({
+    let charge = await db.pixCharge.findFirst({
       where: {
         workspaceId,
         installmentId: alert.installmentId,
@@ -414,6 +511,19 @@ export async function processAutomaticWhatsAppCollectionsForWorkspace(
       orderBy: { createdAt: "desc" },
       select: { id: true },
     });
+
+    if (!charge) {
+      try {
+        const { generateReceivablePixCharge } = await import("@/server/actions/pix-receivables");
+        const genRes = await generateReceivablePixCharge({ installmentId: alert.installmentId });
+        if (genRes.success && genRes.pixChargeId && genRes.qrCode) {
+          charge = { id: genRes.pixChargeId };
+        }
+      } catch (e: any) {
+        console.warn(`[NotificationService] Falha ao auto-gerar PixCharge para parcela ${alert.installmentId}:`, e.message);
+      }
+    }
+
     if (!charge) continue;
 
     const messageStage: WhatsAppReminderStage = alert.type === "OVERDUE"

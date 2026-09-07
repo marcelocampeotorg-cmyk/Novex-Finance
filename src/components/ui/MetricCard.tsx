@@ -6,7 +6,7 @@ interface MetricCardProps {
   title: string;
   amountCents: number;
   overrideText?: string;
-  subtitle?: string;
+  subtitle?: React.ReactNode;
   icon: LucideIcon;
   variant?: "default" | "cyan" | "danger" | "success" | "warning";
   badgeText?: string;

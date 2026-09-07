@@ -25,6 +25,8 @@ import {
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import { formatTransactionDisplay } from "@/lib/transaction-presentation";
 import { FinancialItemDTO, InstallmentDTO, BalanceSummaryDTO } from "@/types";
+import { CashWalletAdjustModal } from "@/components/modals/CashWalletAdjustModal";
+import { LiveNotificationPopup } from "@/components/ui/LiveNotificationPopup";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -58,6 +60,7 @@ export default function DashboardPage() {
   const [anchorDate, setAnchorDate] = useState(new Date().toISOString().slice(0, 10));
   const [savingAnchor, setSavingAnchor] = useState(false);
   const [anchorMessage, setAnchorMessage] = useState<string | null>(null);
+  const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
 
   const handleSaveAnchor = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -248,13 +251,43 @@ export default function DashboardPage() {
               : undefined
           }
           subtitle={
-            displaySummary.financeMode === "HYBRID"
-              ? `Mercado Pago: ${formatCurrency(displaySummary.mercadoPagoOfficialBalanceCents ?? 0)} · Caixa Espécie: ${formatCurrency(displaySummary.manualBalanceCents ?? 0)}`
-              : displaySummary.financeMode === "MANUAL"
-              ? "Conta geral de recebimentos e pagamentos manuais"
-              : displaySummary.mercadoPagoOfficialBalanceCents === null
-              ? "Relatório Liberações indisponível ou em reconciliação"
-              : `${displaySummary.mercadoPagoBalanceBasis === "RELEASE_PLUS_ACCOUNT_MONEY" ? "Atualizado por fontes oficiais" : "Âncora oficial"}${displaySummary.mercadoPagoOfficialBalanceAt ? ` até ${new Date(displaySummary.mercadoPagoOfficialBalanceAt).toLocaleString("pt-BR")}` : ""}`
+            displaySummary.financeMode === "HYBRID" ? (
+              <span className="flex flex-wrap items-center gap-1.5">
+                <span>
+                  Mercado Pago: {formatCurrency(displaySummary.mercadoPagoOfficialBalanceCents ?? 0)} · Caixa Espécie: {formatCurrency(displaySummary.manualBalanceCents ?? 0)}
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsWalletModalOpen(true);
+                  }}
+                  className="text-[10px] font-extrabold text-novex-cyan hover:underline bg-novex-cyan/15 hover:bg-novex-cyan/25 px-2 py-0.5 rounded-md border border-novex-cyan/40 transition-colors ml-0.5 cursor-pointer"
+                >
+                  Conferir carteira
+                </button>
+              </span>
+            ) : displaySummary.financeMode === "MANUAL" ? (
+              <span className="flex flex-wrap items-center gap-1.5">
+                <span>Conta geral de recebimentos e pagamentos manuais</span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsWalletModalOpen(true);
+                  }}
+                  className="text-[10px] font-extrabold text-novex-cyan hover:underline bg-novex-cyan/15 hover:bg-novex-cyan/25 px-2 py-0.5 rounded-md border border-novex-cyan/40 transition-colors ml-0.5 cursor-pointer"
+                >
+                  Conferir carteira
+                </button>
+              </span>
+            ) : displaySummary.mercadoPagoOfficialBalanceCents === null ? (
+              "Relatório Liberações indisponível ou em reconciliação"
+            ) : (
+              `${displaySummary.mercadoPagoBalanceBasis === "RELEASE_PLUS_ACCOUNT_MONEY" ? "Atualizado por fontes oficiais" : "Âncora oficial"}${displaySummary.mercadoPagoOfficialBalanceAt ? ` até ${new Date(displaySummary.mercadoPagoOfficialBalanceAt).toLocaleString("pt-BR")}` : ""}`
+            )
           }
           icon={Wallet}
           variant="cyan"
@@ -758,6 +791,17 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+      {/* Modal de Conferência Rápida da Carteira / Caixa em Espécie */}
+      <CashWalletAdjustModal
+        isOpen={isWalletModalOpen}
+        onClose={() => setIsWalletModalOpen(false)}
+        currentBalanceCents={displaySummary.manualBalanceCents ?? 0}
+        onSuccess={() => loadDashboard()}
+      />
+
+      {/* Notificação Flutuante (Popup) em Tempo Real com 10s de Auto-Dismiss */}
+      <LiveNotificationPopup />
     </div>
   );
 }
