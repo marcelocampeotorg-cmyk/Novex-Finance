@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PaymentDialog } from "@/components/ui/PaymentDialog";
+import { ManualSettlementModal } from "@/components/modals/ManualSettlementModal";
 import { AccountDetailsDrawer } from "@/components/ui/AccountDetailsDrawer";
 import { NewAccountModal } from "@/components/ui/NewAccountModal";
 import {
@@ -17,6 +18,7 @@ import {
   ArrowUpRight,
   CheckCircle2,
   Edit3,
+  Banknote,
 } from "lucide-react";
 
 import { formatCurrency, formatDate } from "@/lib/formatters";
@@ -29,6 +31,9 @@ export default function ContasAPagarPage() {
   const [paymentInstallment, setPaymentInstallment] = useState<InstallmentDTO | null>(null);
   const [paymentAccountTitle, setPaymentAccountTitle] = useState("");
   const [paymentPixKey, setPaymentPixKey] = useState<string | undefined>();
+  const [manualSettleInstallment, setManualSettleInstallment] = useState<InstallmentDTO | null>(null);
+  const [manualSettleAccountTitle, setManualSettleAccountTitle] = useState("");
+  const [manualSettlePayeeName, setManualSettlePayeeName] = useState("");
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<FinancialItemDTO | null>(null);
   const [payablesList, setPayablesList] = useState<FinancialItemDTO[]>([]);
@@ -196,17 +201,31 @@ export default function ContasAPagarPage() {
                           <Eye className="h-4 w-4" />
                         </button>
                         {inst && inst.status !== "SETTLED" && (
-                          <button
-                            onClick={() => {
-                              setPaymentAccountTitle(item.title);
-                              setPaymentPixKey(item.pixKey);
-                              setPaymentInstallment(inst);
-                            }}
-                            className="rounded bg-novex-cyan/10 px-2.5 py-1.5 text-[11px] font-bold text-novex-cyan hover:bg-novex-cyan/20 transition-colors flex items-center gap-1.5"
-                          >
-                            <QrCode className="h-3.5 w-3.5" />
-                            <span>Pagar</span>
-                          </button>
+                          <>
+                            <button
+                              onClick={() => {
+                                setManualSettleAccountTitle(item.title);
+                                setManualSettlePayeeName(item.contact?.name || "Favorecido");
+                                setManualSettleInstallment(inst);
+                              }}
+                              className="rounded bg-novex-surface2 hover:bg-novex-border px-2.5 py-1.5 text-[11px] font-semibold text-novex-text-primary transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                              title="Registrar pagamento manual em dinheiro/cédula, Pix ou transferência"
+                            >
+                              <Banknote className="h-3.5 w-3.5 text-novex-cyan" />
+                              <span>Baixar</span>
+                            </button>
+                            <button
+                              onClick={() => {
+                                setPaymentAccountTitle(item.title);
+                                setPaymentPixKey(item.pixKey);
+                                setPaymentInstallment(inst);
+                              }}
+                              className="rounded bg-novex-cyan/10 px-2.5 py-1.5 text-[11px] font-bold text-novex-cyan hover:bg-novex-cyan/20 transition-colors flex items-center gap-1.5"
+                            >
+                              <QrCode className="h-3.5 w-3.5" />
+                              <span>Pagar</span>
+                            </button>
+                          </>
                         )}
                         <button
                           onClick={async () => {
@@ -233,6 +252,16 @@ export default function ContasAPagarPage() {
       </div>
 
       {/* Modais e Drawers */}
+      <ManualSettlementModal
+        isOpen={!!manualSettleInstallment}
+        onClose={() => setManualSettleInstallment(null)}
+        onSuccess={() => loadItems()}
+        installment={manualSettleInstallment}
+        itemTitle={manualSettleAccountTitle}
+        contactName={manualSettlePayeeName}
+        direction="PAYABLE"
+      />
+
       <PaymentDialog
         isOpen={!!paymentInstallment}
         onClose={() => setPaymentInstallment(null)}
@@ -250,6 +279,12 @@ export default function ContasAPagarPage() {
           setPaymentAccountTitle(selectedDrawerItem?.title || "");
           setPaymentPixKey(selectedDrawerItem?.pixKey || undefined);
           setPaymentInstallment(inst);
+        }}
+        onSettleClick={(inst) => {
+          setSelectedDrawerItem(null);
+          setManualSettleAccountTitle(selectedDrawerItem?.title || "");
+          setManualSettlePayeeName(selectedDrawerItem?.contact?.name || "Favorecido");
+          setManualSettleInstallment(inst);
         }}
         onDelete={async (targetItem) => {
           const { deleteFinancialItem } = await import("@/server/actions/financial-items");

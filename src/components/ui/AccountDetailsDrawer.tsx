@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { X, Calendar, User, Tag, Paperclip, CreditCard, History, CheckCircle2, Clock, Trash2, Scale, AlertCircle } from "lucide-react";
+import { X, Calendar, User, Tag, Paperclip, CreditCard, History, CheckCircle2, Clock, Trash2, Scale, AlertCircle, Banknote } from "lucide-react";
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { FinancialItemDTO } from "@/types";
@@ -20,6 +20,7 @@ interface AccountDetailsDrawerProps {
   onClose: () => void;
   item: FinancialItemDTO | null;
   onPayClick?: (installment: any) => void;
+  onSettleClick?: (installment: any) => void;
   onDelete?: (item: FinancialItemDTO) => void;
 }
 
@@ -28,6 +29,7 @@ export const AccountDetailsDrawer: React.FC<AccountDetailsDrawerProps> = ({
   onClose,
   item,
   onPayClick,
+  onSettleClick,
   onDelete,
 }) => {
   const [currentItem, setCurrentItem] = useState<FinancialItemDTO | null>(item);
@@ -253,13 +255,27 @@ export const AccountDetailsDrawer: React.FC<AccountDetailsDrawerProps> = ({
 
                       <div className="flex items-center gap-2">
                         <StatusBadge status={inst.status} />
-                        {inst.status !== "SETTLED" && onPayClick && (
-                          <button
-                            onClick={() => onPayClick(inst)}
-                            className="rounded bg-novex-cyan px-2.5 py-1 text-[11px] font-semibold text-novex-bg hover:bg-novex-cyan-hover"
-                          >
-                            Pagar Pix
-                          </button>
+                        {inst.status !== "SETTLED" && (
+                          <div className="flex items-center gap-1.5">
+                            {onSettleClick && (
+                              <button
+                                onClick={() => onSettleClick(inst)}
+                                className="rounded bg-novex-surface2 hover:bg-novex-border px-2.5 py-1 text-[11px] font-semibold text-novex-text-primary transition-colors flex items-center gap-1 cursor-pointer"
+                                title="Registrar baixa manual (cédula/dinheiro, Pix externo, etc.)"
+                              >
+                                <Banknote className="h-3 w-3 text-novex-cyan" />
+                                <span>Baixar</span>
+                              </button>
+                            )}
+                            {onPayClick && (
+                              <button
+                                onClick={() => onPayClick(inst)}
+                                className="rounded bg-novex-cyan px-2.5 py-1 text-[11px] font-semibold text-novex-bg hover:bg-novex-cyan-hover cursor-pointer"
+                              >
+                                Pagar Pix
+                              </button>
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>

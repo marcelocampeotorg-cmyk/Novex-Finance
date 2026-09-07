@@ -4,8 +4,9 @@ import React, { useState, useEffect } from "react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { ReceivablePixChargeModal } from "@/components/modals/ReceivablePixChargeModal";
+import { ManualSettlementModal } from "@/components/modals/ManualSettlementModal";
 import { NewAccountModal } from "@/components/ui/NewAccountModal";
-import { Search, Plus, QrCode, Eye, ArrowDownLeft, Send, Trash2, Edit3 } from "lucide-react";
+import { Search, Plus, QrCode, Eye, ArrowDownLeft, Send, Trash2, Edit3, Banknote } from "lucide-react";
 
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import { FinancialItemDTO, InstallmentDTO } from "@/types";
@@ -15,6 +16,9 @@ export default function ContasAReceberPage() {
   const [selectedInstallment, setSelectedInstallment] = useState<InstallmentDTO | null>(null);
   const [selectedItemTitle, setSelectedItemTitle] = useState("");
   const [debtorName, setDebtorName] = useState("");
+  const [manualSettleInstallment, setManualSettleInstallment] = useState<InstallmentDTO | null>(null);
+  const [manualSettleItemTitle, setManualSettleItemTitle] = useState("");
+  const [manualSettleDebtorName, setManualSettleDebtorName] = useState("");
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<FinancialItemDTO | null>(null);
   const [receivablesList, setReceivablesList] = useState<FinancialItemDTO[]>([]);
@@ -154,17 +158,31 @@ export default function ContasAReceberPage() {
                   <div className="flex items-center gap-2">
                     <StatusBadge status={inst.status} />
                     {inst.status !== "SETTLED" && (
-                      <button
-                        onClick={() => {
-                          setSelectedItemTitle(item.title);
-                          setDebtorName(item.contact?.name || "Devedor");
-                          setSelectedInstallment(inst);
-                        }}
-                        className="flex items-center gap-1 rounded bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-500 transition-colors cursor-pointer"
-                      >
-                        <QrCode className="h-3 w-3" />
-                        <span>Cobrar via Pix</span>
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => {
+                            setManualSettleItemTitle(item.title);
+                            setManualSettleDebtorName(item.contact?.name || "Devedor");
+                            setManualSettleInstallment(inst);
+                          }}
+                          className="flex items-center gap-1 rounded bg-emerald-700/80 hover:bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white transition-colors cursor-pointer shadow-xs"
+                          title="Registrar recebimento manual em dinheiro/cédula, Pix ou transferência"
+                        >
+                          <Banknote className="h-3 w-3" />
+                          <span>Baixar</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedItemTitle(item.title);
+                            setDebtorName(item.contact?.name || "Devedor");
+                            setSelectedInstallment(inst);
+                          }}
+                          className="flex items-center gap-1 rounded bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-emerald-500 transition-colors cursor-pointer"
+                        >
+                          <QrCode className="h-3 w-3" />
+                          <span>Cobrar via Pix</span>
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -173,6 +191,17 @@ export default function ContasAReceberPage() {
           </div>
         ))}
       </div>
+
+      {/* Modal de Liquidação Manual (Dinheiro / Cédula / Outro) */}
+      <ManualSettlementModal
+        isOpen={!!manualSettleInstallment}
+        onClose={() => setManualSettleInstallment(null)}
+        onSuccess={() => loadItems()}
+        installment={manualSettleInstallment}
+        itemTitle={manualSettleItemTitle}
+        contactName={manualSettleDebtorName}
+        direction="RECEIVABLE"
+      />
 
       {/* Modal de Cobrança Pix via Orders API */}
       {selectedInstallment && (
