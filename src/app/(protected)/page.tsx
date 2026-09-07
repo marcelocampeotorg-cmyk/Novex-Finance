@@ -226,15 +226,47 @@ export default function DashboardPage() {
       {/* Grid de Cards Métricos Principais - Limpo e Focado */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
         <MetricCard
-          title="Saldo Mercado Pago"
-          amountCents={displaySummary.mercadoPagoOfficialBalanceCents ?? 0}
-          overrideText={displaySummary.mercadoPagoOfficialBalanceCents === null ? "Em reconciliação" : undefined}
-          subtitle={displaySummary.mercadoPagoOfficialBalanceCents === null
-            ? "Relatório Liberações indisponível ou em reconciliação"
-            : `${displaySummary.mercadoPagoBalanceBasis === "RELEASE_PLUS_ACCOUNT_MONEY" ? "Atualizado por fontes oficiais" : "Âncora oficial"}${displaySummary.mercadoPagoOfficialBalanceAt ? ` até ${new Date(displaySummary.mercadoPagoOfficialBalanceAt).toLocaleString("pt-BR")}` : ""}`}
+          title={
+            displaySummary.financeMode === "HYBRID"
+              ? "Saldo Consolidado (Total)"
+              : displaySummary.financeMode === "MANUAL"
+              ? "Saldo em Dinheiro / Caixa Geral"
+              : "Saldo Mercado Pago"
+          }
+          amountCents={
+            displaySummary.financeMode === "HYBRID"
+              ? (displaySummary.consolidatedBalanceCents ?? displaySummary.mercadoPagoOfficialBalanceCents ?? 0)
+              : displaySummary.financeMode === "MANUAL"
+              ? (displaySummary.manualBalanceCents ?? 0)
+              : (displaySummary.mercadoPagoOfficialBalanceCents ?? 0)
+          }
+          overrideText={
+            displaySummary.financeMode === "HYBRID"
+              ? undefined
+              : displaySummary.mercadoPagoOfficialBalanceCents === null
+              ? "Em reconciliação"
+              : undefined
+          }
+          subtitle={
+            displaySummary.financeMode === "HYBRID"
+              ? `Mercado Pago: ${formatCurrency(displaySummary.mercadoPagoOfficialBalanceCents ?? 0)} · Caixa Espécie: ${formatCurrency(displaySummary.manualBalanceCents ?? 0)}`
+              : displaySummary.financeMode === "MANUAL"
+              ? "Conta geral de recebimentos e pagamentos manuais"
+              : displaySummary.mercadoPagoOfficialBalanceCents === null
+              ? "Relatório Liberações indisponível ou em reconciliação"
+              : `${displaySummary.mercadoPagoBalanceBasis === "RELEASE_PLUS_ACCOUNT_MONEY" ? "Atualizado por fontes oficiais" : "Âncora oficial"}${displaySummary.mercadoPagoOfficialBalanceAt ? ` até ${new Date(displaySummary.mercadoPagoOfficialBalanceAt).toLocaleString("pt-BR")}` : ""}`
+          }
           icon={Wallet}
           variant="cyan"
-          badgeText={displaySummary.mercadoPagoOfficialBalanceCents === null ? "Em Reconciliação" : "Oficial"}
+          badgeText={
+            displaySummary.financeMode === "HYBRID"
+              ? "Consolidado"
+              : displaySummary.financeMode === "MANUAL"
+              ? "Caixa Geral"
+              : displaySummary.mercadoPagoOfficialBalanceCents === null
+              ? "Em Reconciliação"
+              : "Oficial"
+          }
           valueColor="white"
         />
 
@@ -459,7 +491,7 @@ export default function DashboardPage() {
         {/* Extrato de Movimentações Recentes Importadas */}
         <div className="rounded-xl border border-novex-border bg-novex-surface1 p-4 sm:p-6 flex flex-col">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm sm:text-base font-bold text-novex-text-primary">Movimentações Mercado Pago</h3>
+            <h3 className="text-sm sm:text-base font-bold text-novex-text-primary">Movimentações Recentes</h3>
             <a href="/movimentacoes" className="text-xs text-novex-cyan hover:underline">
               Ver extrato
             </a>

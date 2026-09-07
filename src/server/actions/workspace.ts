@@ -394,7 +394,9 @@ export async function getDashboardData() {
       description: tx.description,
       counterpartName: tx.counterpartName,
       type: tx.type,
+      source: tx.source,
       rawProviderData: tx.rawProviderData,
+      rawEnrichmentData: tx.rawEnrichmentData,
       category: "Movimentação",
       reconciliationStatus: tx.reconciliations[0]?.status || "UNMATCHED",
     }));

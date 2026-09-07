@@ -51,7 +51,9 @@ export function ManualSettlementModal({
     : 0;
 
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodType>("CASH");
-  const [settlementDate, setSettlementDate] = useState(new Date().toISOString().slice(0, 10));
+  const [settlementDate, setSettlementDate] = useState(() =>
+    new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" })
+  );
   const [amountStr, setAmountStr] = useState("");
   const [notes, setNotes] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -61,7 +63,7 @@ export function ManualSettlementModal({
     if (isOpen && installment) {
       const remaining = installment.amountCents - (installment.settledAmountCents || 0);
       setAmountStr((remaining / 100).toFixed(2).replace(".", ","));
-      setSettlementDate(new Date().toISOString().slice(0, 10));
+      setSettlementDate(new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }));
       setPaymentMethod("CASH");
       setNotes("");
       setErrorMessage(null);

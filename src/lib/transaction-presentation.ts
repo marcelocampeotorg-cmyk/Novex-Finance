@@ -68,10 +68,12 @@ export function formatTransactionDisplay(tx: TransactionPresentationInput): Tran
 
   // 1. Ajuste Manual da Conta Geral
   if (isManual) {
+    const method = enrichment.methodLabel || "Dinheiro / Caixa geral";
+    const subtitle = counterpart ? `${counterpart} · ${method}` : method;
     return {
-      title: desc || (direction === "CREDIT" ? "Entrada manual" : "Saída manual"),
-      subtitle: "Conta geral manual",
-      isKnownCounterpart: false,
+      title: desc || (direction === "CREDIT" ? "Recebimento manual" : "Pagamento manual"),
+      subtitle,
+      isKnownCounterpart: Boolean(counterpart),
       identificationStatus: "OFFICIAL",
     };
   }

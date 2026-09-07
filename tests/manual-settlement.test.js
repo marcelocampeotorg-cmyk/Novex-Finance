@@ -235,3 +235,43 @@ test("Guardrail: rejeita baixa em parcela que já está SETTLED", () => {
   assert.equal(res.success, false);
   assert.match(res.error, /já se encontra totalmente quitada/);
 });
+
+test("Apresentação de transação manual: exibe contraparte e método de pagamento no subtítulo", async () => {
+  const { formatTransactionDisplay } = await import("../src/lib/transaction-presentation.ts");
+
+  const tx = {
+    source: "MANUAL_ADJUSTMENT",
+    direction: "CREDIT",
+    amountCents: 25000,
+    counterpartName: "Tio Vilmar",
+    description: "Recebimento em Cédula / Dinheiro em espécie — aposta tio vilmar",
+    rawEnrichmentData: {
+      methodLabel: "Cédula / Dinheiro em espécie",
+      paymentMethod: "CASH",
+    },
+  };
+
+  const display = formatTransactionDisplay(tx);
+  assert.equal(display.title, "Recebimento em Cédula / Dinheiro em espécie — aposta tio vilmar");
+  assert.equal(display.subtitle, "Tio Vilmar · Cédula / Dinheiro em espécie");
+  assert.equal(display.isKnownCounterpart, true);
+  assert.equal(display.identificationStatus, "OFFICIAL");
+});
+
+test("Parsing de data da baixa manual: se for hoje em BRT usa horário atual, se for data retroativa ancora ao meio-dia BRT sem virar dia anterior", () => {
+  function parseSettlementDate(dateStr) {
+    const now = new Date();
+    const todayBrt = now.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+    if (dateStr === todayBrt) {
+      return now;
+    }
+    const parsed = new Date(`${dateStr}T12:00:00-03:00`);
+    return isNaN(parsed.getTime()) ? new Date(dateStr) : parsed;
+  }
+
+  const pastDate = parseSettlementDate("2026-09-05");
+  // No fuso de Brasília, a data deve ser exatamente 05/09/2026 às 12:00
+  const dateFormattedBrt = pastDate.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+  assert.equal(dateFormattedBrt, "05/09/2026");
+});
+

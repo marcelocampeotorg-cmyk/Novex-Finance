@@ -18,6 +18,16 @@ const manualSettlementSchema = z.object({
 
 export type ManualSettlementInput = z.infer<typeof manualSettlementSchema>;
 
+function parseSettlementDate(dateStr: string): Date {
+  const now = new Date();
+  const todayBrt = now.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+  if (dateStr === todayBrt) {
+    return now;
+  }
+  const parsed = new Date(`${dateStr}T12:00:00-03:00`);
+  return isNaN(parsed.getTime()) ? new Date(dateStr) : parsed;
+}
+
 export async function settleInstallmentManually(input: ManualSettlementInput) {
   try {
     const { workspaceId, userId } = await requireAuthenticatedWorkspace();
@@ -28,7 +38,7 @@ export async function settleInstallmentManually(input: ManualSettlementInput) {
     }
 
     const { installmentId, amountCents, settlementDate, paymentMethod, notes } = parsed.data;
-    const settlementDateObj = new Date(settlementDate);
+    const settlementDateObj = parseSettlementDate(settlementDate);
 
     return await db.$transaction(async (tx) => {
       // 1. Localizar parcela com item financeiro e relações
