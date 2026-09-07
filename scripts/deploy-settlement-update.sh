@@ -4,14 +4,14 @@ set -euo pipefail
 DEST="/home/servidor/Área de trabalho/Sistemas/novex finance"
 
 echo "=== [1/3] Movendo arquivos sincronizados ==="
-mkdir -p "$DEST/src/components/modals" "$DEST/src/server/actions" "$DEST/tests"
+mkdir -p "$DEST/src/components/modals" "$DEST/src/server/actions" "$DEST/src/lib" "$DEST/tests"
 
-cp /tmp/manual-settlement.ts "$DEST/src/server/actions/manual-settlement.ts"
-cp /tmp/ManualSettlementModal.tsx "$DEST/src/components/modals/ManualSettlementModal.tsx"
-cp /tmp/contas_a_receber_page.tsx "$DEST/src/app/(protected)/contas-a-receber/page.tsx"
-cp /tmp/contas_a_pagar_page.tsx "$DEST/src/app/(protected)/contas-a-pagar/page.tsx"
-cp /tmp/AccountDetailsDrawer.tsx "$DEST/src/components/ui/AccountDetailsDrawer.tsx"
-cp /tmp/manual-settlement.test.js "$DEST/tests/manual-settlement.test.js"
+[ -f /tmp/manual-settlement.ts ] && cp /tmp/manual-settlement.ts "$DEST/src/server/actions/manual-settlement.ts"
+[ -f /tmp/ManualSettlementModal.tsx ] && cp /tmp/ManualSettlementModal.tsx "$DEST/src/components/modals/ManualSettlementModal.tsx"
+[ -f /tmp/transaction-presentation.ts ] && cp /tmp/transaction-presentation.ts "$DEST/src/lib/transaction-presentation.ts"
+[ -f /tmp/workspace.ts ] && cp /tmp/workspace.ts "$DEST/src/server/actions/workspace.ts"
+[ -f /tmp/page.tsx ] && cp /tmp/page.tsx "$DEST/src/app/(protected)/page.tsx"
+[ -f /tmp/manual-settlement.test.js ] && cp /tmp/manual-settlement.test.js "$DEST/tests/manual-settlement.test.js"
 
 echo "=== [2/3] Rodando testes dentro do servidor ==="
 cd "$DEST"
