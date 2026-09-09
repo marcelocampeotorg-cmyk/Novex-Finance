@@ -75,6 +75,28 @@ export class MercadoPagoPaymentsClient {
     const isApproved = p.status === "approved" && ["accredited", "approved"].includes(String(p.status_detail || "").toLowerCase());
     if (!isApproved) return null;
 
+    // Rejeitar categoricamente pagamentos efetuados com dinheiro em conta (account_money),
+    // compras, débitos automáticos, empréstimos ou saídas.
+    // O pipeline intradiário destina-se estritamente à captura de Pix recebidos.
+    const paymentMethod = String(p.payment_method_id || p.payment_method?.id || "").toLowerCase();
+    const paymentType = String(p.payment_type_id || "").toLowerCase();
+    const operationType = String(p.operation_type || "").toLowerCase();
+    const subUnit = String(p.point_of_interaction?.business_info?.sub_unit || "").toLowerCase();
+    const poiType = String(p.point_of_interaction?.type || "").toLowerCase();
+
+    if (paymentMethod === "account_money" || paymentType === "account_money" || poiType === "credits") {
+      return null;
+    }
+
+    // Apenas capturar recebimentos intradiários legítimos (Pix ou aportes em conta)
+    const isPix = paymentMethod === "pix" || paymentType === "bank_transfer";
+    const isAccountFund = operationType === "account_fund";
+    const isMoneyInflow = subUnit === "money_inflows";
+
+    if (!isPix && !isAccountFund && !isMoneyInflow) {
+      return null;
+    }
+
     const netReceived = p.transaction_details?.net_received_amount ?? p.transaction_amount ?? 0;
     const totalAmount = p.transaction_amount ?? netReceived;
     const netAmountCents = Math.round(Number(netReceived) * 100);

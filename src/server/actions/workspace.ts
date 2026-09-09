@@ -168,29 +168,38 @@ export async function getWorkspaceSummary() {
         : "Movimentação líquida em reconciliação";
     }
 
-    const debtorContacts = await db.contact.findMany({
-      where: { workspaceId, isDebtor: true, deletedAt: null },
-      select: { id: true }
-    });
-    // Correção H: totalDebtorsOwedCents = amount - settled (dívida parcial real)
-    let totalDebtorsOwedCents = 0;
-    if (debtorContacts.length > 0) {
-      const debtorInstallments = await db.installment.findMany({
-        where: {
-          financialItem: {
-            workspaceId,
-            contactId: { in: debtorContacts.map((c: any) => c.id) },
-            direction: "RECEIVABLE",
-            deletedAt: null,
-          },
-          status: { notIn: ["SETTLED", "CANCELED"] },
+    // Busca todas as parcelas a receber ativas com pendência real (> 0) e contatos devedores
+    const activeReceivableInstallments = await db.installment.findMany({
+      where: {
+        financialItem: {
+          workspaceId,
+          direction: "RECEIVABLE",
+          deletedAt: null,
         },
-        select: { amountCents: true, settledAmountCents: true },
-      });
-      for (const di of debtorInstallments) {
-        totalDebtorsOwedCents += Number(di.amountCents - di.settledAmountCents);
+        status: { notIn: ["SETTLED", "CANCELED"] },
+      },
+      select: {
+        amountCents: true,
+        settledAmountCents: true,
+        financialItem: {
+          select: { contactId: true },
+        },
+      },
+    });
+
+    let totalDebtorsOwedCents = 0;
+    const activeDebtorContactIds = new Set<string>();
+
+    for (const di of activeReceivableInstallments) {
+      const remaining = Number(di.amountCents - di.settledAmountCents);
+      if (remaining > 0) {
+        totalDebtorsOwedCents += remaining;
+        if (di.financialItem.contactId) {
+          activeDebtorContactIds.add(di.financialItem.contactId);
+        }
       }
     }
+    const debtorsCountCalculated = activeDebtorContactIds.size;
 
     // Métricas Reais do Mês Atual (LedgerEntry como Fonte Canônica dos Relatórios)
     const monthEntries = await db.ledgerEntry.findMany({
@@ -293,6 +302,7 @@ export async function getWorkspaceSummary() {
       totalReceivableMonthCents: totalReceivablePendingCents,
       totalOverdueCents,
       totalDebtorsOwedCents,
+      debtorsCount: debtorsCountCalculated,
       lastSyncAt,
       syncSource,
       accountDisplayName,
@@ -440,9 +450,7 @@ export async function getDashboardData() {
         })),
       }));
 
-    const debtorsCount = await db.contact.count({
-      where: { workspaceId, isDebtor: true, deletedAt: null },
-    });
+    const debtorsCount = (summary as any).debtorsCount ?? 0;
 
     // Chart data: agrupar por mês
     const now = new Date();

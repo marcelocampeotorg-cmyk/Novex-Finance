@@ -32,8 +32,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="pt-BR">
-      <body className="bg-novex-bg text-novex-text-primary antialiased">
+    <html lang="pt-BR" translate="no" className="notranslate">
+      <head>
+        <meta name="google" content="notranslate" />
+      </head>
+      <body className="bg-novex-bg text-novex-text-primary antialiased notranslate">
         {children}
         <ServiceWorkerRegistration />
       </body>

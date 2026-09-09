@@ -117,6 +117,23 @@ export async function settlePixChargeAtomic(input: SettlePixChargeInput) {
       },
     });
 
+    // Se todas as parcelas do item pai estiverem quitadas, atualizar status do item pai para COMPLETED
+    if (newStatus === "SETTLED") {
+      const allItemInsts = await tx.installment.findMany({
+        where: { financialItemId: currentInstallment.financialItemId },
+      });
+      const allSettled = allItemInsts.every((inst) =>
+        inst.id === installmentId ? true : inst.status === "SETTLED"
+      );
+
+      if (allSettled) {
+        await tx.financialItem.update({
+          where: { id: currentInstallment.financialItemId },
+          data: { status: "COMPLETED" },
+        });
+      }
+    }
+
     await tx.auditLog.create({
       data: {
         workspaceId,

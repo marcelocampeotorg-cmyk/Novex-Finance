@@ -609,3 +609,36 @@ Status: CORRIGIDO_LOCALMENTE_PENDENTE_DEPLOY
 - **Causa:** o relatório financeiro não fornece contraparte nesses `PAYOUT`; o importador CSV genérico criaria fatos financeiros novos, portanto não podia receber o Extrato de conta sem risco de duplicidade.
 - **Correção:** importar o CSV do Extrato de conta somente como enriquecimento auditável, com vínculo estrito por `REFERENCE_ID`/`SOURCE_ID`, data, direção e valor; sem criar ledger, saldo ou conciliação. A apresentação passa a mostrar o favorecido e “Pagamento com Pix” quando o próprio extrato confirmar ambos.
 - **Validação local:** CSV oficial de agosto processado com 96 registros válidos, 0 rejeitados e 53 contrapartes nominais; testes focados, typecheck e build aprovados. Ainda requer deploy autorizado e upload pelo painel para atualizar dados produtivos.
+
+### ERR-075 — Login em produção exibindo 'Credenciais inválidas' por isolamento quebrado de rede Docker
+Status: RESOLVIDO
+- **Data:** 2026-09-08
+- **Área:** Autenticação / Infraestrutura Docker / Rede de Produção
+- **Sintoma:** O usuário tentou logar em `https://finance.novexbr.com.br` com as credenciais cadastradas (`franklinjr18@hotmail.com`), recebendo "Credenciais inválidas. Verifique seu e-mail e senha.".
+- **Causa confirmada:** O container `novexfinance-app` havia sido iniciado por um comando Docker compose sem o argumento `-f docker-compose.prod.yml`, associando-o à rede padrão isolada `novexfinance-prod_default`. Com isso, o processo Next.js não alcançava o banco PostgreSQL (`novexfinance-prod-db-1` na rede `novexfinance-prod-backend`) nem o worker (`novexfinance-prod-edge`), registrando em logs `PrismaClientInitializationError: Can't reach database server at db:5432`. O framework de autenticação capturava a exceção de banco de dados e reportava erro de credenciais no frontend.
+- **Correção aplicada:**
+  1. O container `novexfinance-app` foi conectado às redes oficiais `novexfinance-prod-backend` e `novexfinance-prod-edge` (com o alias `app`).
+  2. A rede temporária órfã `novexfinance-prod_default` foi desconectada e removida.
+  3. A comunicação com PostgreSQL (`db:5432`), Redis (`redis:6379`), Evolution (`evolution:8080`) e Worker (`app:3000`) foi restabelecida e validada.
+- **Evidência:**
+  - Verificação criptográfica do hash de senha para `franklinjr18@hotmail.com` confirmou `PASSWORD_VALID: true`.
+  - Requisição de autenticação `POST /api/auth/sign-in/email` via domínio público retornou `HTTP/1.1 200 OK` com `Set-Cookie` de sessão ativo.
+  - Logs do worker normalizados sem falhas de requisição.
+
+### ERR-076 — Débito de empréstimo/assinatura classificado indevidamente como ganho (CREDIT) no pipeline intradiário
+Status: RESOLVIDO
+- **Data:** 2026-09-08
+- **Área:** Mercado Pago / Pagamentos Intradiários / Classificação Financeira / Integridade do Ledger
+- **Sintoma:** O pagamento de parcela de empréstimo Mercado Crédito (R$ 94,98, débito automático em conta) apareceu duplicado nas movimentações recentes: uma vez como débito legítimo ("Pagamento efetuado", -R$ 94,98, vindo do Relatório de Liquidação oficial) e outra como ganho indevido ("Pagamento de parcelas de Mercado Crédito", +R$ 94,98, vindo da busca intradiária).
+- **Causa confirmada:** Em `MercadoPagoPaymentsClient.mapPaymentToRawTransaction` (`payments-client.ts`), a direção financeira estava fixada como `direction = "CREDIT"` sem filtrar o meio de pagamento (`payment_method_id` ou `payment_type_id`). Operações de débito efetuadas com saldo em conta (`account_money`), como empréstimos ou assinaturas de serviços, eram incorretamente convertidas em créditos nas importações intradiárias em tempo real.
+- **Correção aplicada:**
+  1. Adicionado filtro estrito em `mapPaymentToRawTransaction`: rejeita deterministicamente qualquer pagamento cujo método ou tipo seja `account_money` ou cujo ponto de interação seja de empréstimos/débitos (`CREDITS`), limitando a ingestão em tempo real estritamente a Pix recebidos e aportes de conta legítimos (`pix`, `bank_transfer`, `account_fund`, `money_inflows`). Débitos continuam sendo apurados exclusivamente pela fonte autoritativa (Relatório Dinheiro em Conta).
+  2. Os registros espúrios gerados pela captura intradiária (`13250fa9-7de0-456f-884f-827099c9d990` e `cc00e903-8e1d-4cdc-bbfd-cf367e19b5fd`) foram colocados em quarentena auditável com motivo `INVERTED_PAYMENTS_API_ACCOUNT_MONEY_DEBIT`, seus lançamentos no ledger marcados com `excludedFromReports: true` e devidamente registrados em `audit_logs`. O débito contábil real oficial foi preservado intacto.
+  3. Criada suíte de testes unitários dedicada em `tests/intraday-pix-filtering.test.js` cobrindo a rejeição de saídas e a aprovação de Pix recebidos.
+  4. Código sincronizado e container de produção `novexfinance-prod-app-1` recompilado com sucesso no servidor.
+- **Evidência:**
+  - 165 testes unitários e de integração aprovados (0 falhas).
+  - Consulta no banco confirma a transação espúria em quarentena (`quarantined_at: 2026-09-09 03:01:20`) e apenas o débito real `-R$ 94,98` visível no extrato.
+  - Imagem e container de produção `novexfinance-prod-app-1` saudáveis (`HTTP 200 OK`).
+
+

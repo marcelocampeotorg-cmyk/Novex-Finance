@@ -125,6 +125,7 @@ export interface BalanceSummaryDTO {
   totalReceivableMonthCents: number;
   totalOverdueCents: number;
   totalDebtorsOwedCents: number;
+  debtorsCount?: number;
   lastSyncAt: string | null;
   syncSource: "SINCRONIZADO" | "PROCESSANDO" | "PENDENTE" | "FALHA" | "DESCONECTADO" | "CALCULADO";
   accountDisplayName: string;
