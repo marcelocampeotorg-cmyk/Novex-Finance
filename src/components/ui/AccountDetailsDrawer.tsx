@@ -151,7 +151,7 @@ export const AccountDetailsDrawer: React.FC<AccountDetailsDrawerProps> = ({
               {/* Valor Total e Status */}
               <div className="rounded-xl border border-novex-border bg-novex-surface2/60 p-4">
                 <span className="text-xs text-novex-text-muted">Valor Total da Obrigação</span>
-                <div className="text-3xl font-bold text-novex-text-primary mt-1">
+                <div className={`text-3xl font-bold mt-1 font-mono ${currentItem.direction === "PAYABLE" ? "text-red-400" : "text-emerald-400"}`}>
                   {formatCurrency(currentItem.totalAmountCents)}
                 </div>
                 <div className="mt-3 flex items-center justify-between">
@@ -380,7 +380,7 @@ export const AccountDetailsDrawer: React.FC<AccountDetailsDrawerProps> = ({
               <div className="rounded-lg border border-novex-border bg-novex-surface2/60 p-3 flex items-center justify-between">
                 <div>
                   <span className="text-[10px] text-novex-text-muted block uppercase font-mono">Nova Parcela Estimada</span>
-                  <span className="font-bold font-mono text-base text-emerald-400">
+                  <span className={`font-bold font-mono text-base ${currentItem.direction === "PAYABLE" ? "text-red-400" : "text-emerald-400"}`}>
                     R$ {(adjustWage * (adjustPercentage / 100)).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                   </span>
                 </div>

@@ -168,7 +168,7 @@ export default function ContasAPagarPage() {
                     <td className="py-4 px-4 text-novex-text-secondary font-medium">
                       {formatDate(inst?.dueDate || item.startDate)}
                     </td>
-                    <td className="py-4 px-4 font-bold text-novex-text-primary">
+                    <td className="py-4 px-4 font-bold text-red-400 font-mono">
                       {formatCurrency(item.totalAmountCents)}
                     </td>
                     <td className="py-4 px-4 text-novex-text-muted">

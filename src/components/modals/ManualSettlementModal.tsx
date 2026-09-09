@@ -224,8 +224,8 @@ export function ManualSettlementModal({
                 {installment.totalSequences ? `/${installment.totalSequences}` : ""}
               </span>
               <span
-                className={`text-base font-bold ${
-                  isReceivable ? "text-emerald-400" : "text-novex-cyan"
+                className={`text-base font-bold font-mono ${
+                  isReceivable ? "text-emerald-400" : "text-red-400"
                 }`}
               >
                 {formatCurrency(remainingCents)}

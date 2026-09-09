@@ -566,7 +566,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
 
                   <div className="flex flex-col justify-center bg-novex-surface1/60 p-2 rounded-lg border border-novex-border/60">
                     <span className="text-[10px] text-novex-text-muted block font-medium">Parcela Calculada</span>
-                    <span className="font-mono font-bold text-sm text-emerald-400">
+                    <span className="font-mono font-bold text-sm text-red-400">
                       R$ {(minimumWageValue * (pensionPercentage / 100)).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
                     </span>
                     <span className="text-[9px] text-novex-text-muted">

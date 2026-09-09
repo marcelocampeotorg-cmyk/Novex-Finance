@@ -189,7 +189,7 @@ export default function LembretesPage() {
                     </div>
                   </div>
 
-                  <div className="text-right font-extrabold text-sm font-mono text-novex-text-primary shrink-0">
+                  <div className="text-right font-extrabold text-sm font-mono text-red-400 shrink-0">
                     {formatCurrency(alert.amountCents)}
                   </div>
                 </div>

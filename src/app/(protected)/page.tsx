@@ -338,13 +338,13 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
         {/* Banner Vencimento Crítico */}
         <div className="lg:col-span-2 rounded-xl border border-novex-border bg-novex-surface1 p-4 sm:p-5 flex items-start gap-3.5 sm:gap-4 shadow-sm">
-          <div className="rounded-lg bg-novex-cyan/10 p-2 sm:p-2.5 text-novex-cyan border border-novex-cyan/30 shrink-0">
+          <div className="rounded-lg bg-rose-500/10 p-2 sm:p-2.5 text-rose-400 border border-rose-500/20 shrink-0">
             <AlertTriangle className="h-5 w-5 sm:h-6 sm:w-6" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-sm font-bold text-novex-text-primary">Seus próximos pagamentos</h3>
-              <span className="text-xs font-bold text-emerald-400 shrink-0">
+              <span className="text-xs sm:text-sm font-bold text-red-400 shrink-0 font-mono">
                 {formatCurrency(displaySummary.totalPayableMonthCents || 0)}
               </span>
             </div>
