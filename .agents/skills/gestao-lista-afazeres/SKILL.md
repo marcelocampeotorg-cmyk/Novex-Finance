@@ -3,9 +3,11 @@ name: gestao-lista-afazeres
 description: Regras e padrão obrigatório para registrar, detalhar e auditar pendências e tarefas a fazer na lista de afazeres do projeto. Usar sempre que for pausar uma sessão, registrar pendências técnicas, planejar etapas de um MVP ou documentar afazeres detalhados com o que fazer, por que fazer, para que serve (impacto) e critérios de aceite.
 ---
 
-# Gestão da Lista de Afazeres
+# Gestão da Lista de Afazeres & Roadmap
 
-Documento oficial: `tarefas a fazer.md` (espelho em `docs/TAREFAS_A_FAZER.md`).
+Documentos oficiais (padrão canônico idêntico ao `NOVEX OFICINA`):
+- `afazeres.md`: Backlog Operacional do **Sistema Atual** (correções de bugs, pendências operacionais ativas e manutenção imediata).
+- `PROXIMAS_ATUALIZACOES.md`: Roadmap Evolutivo do **Sistema Futuro** (novas funcionalidades, melhorias de UI/UX, abas e updates planejados).
 
 ## Quando usar
 - Ao pausar qualquer sessão de desenvolvimento ou auditoria;
