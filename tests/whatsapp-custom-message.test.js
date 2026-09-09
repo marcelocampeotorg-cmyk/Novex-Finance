@@ -3,13 +3,13 @@ import assert from "node:assert/strict";
 import { EvolutionAPIClient, buildDebtorPixChargeMessage } from "../src/integrations/evolution-api/client.ts";
 
 test("Evolution API WhatsApp: Formatação humanizada com motivo/título e remetente", async () => {
-  let capturedBody = null;
+  const capturedBodies = [];
 
   const client = new EvolutionAPIClient();
-  // Mock do sendTextMessage para capturar a mensagem gerada
+  // Mock do sendTextMessage para capturar as mensagens geradas
   client.sendTextMessage = async (input) => {
-    capturedBody = input;
-    return { success: true, messageId: "msg-test-123" };
+    capturedBodies.push(input);
+    return { success: true, messageId: `msg-test-${capturedBodies.length}` };
   };
 
   const result = await client.sendPixChargeReminder({
@@ -23,27 +23,33 @@ test("Evolution API WhatsApp: Formatação humanizada com motivo/título e remet
   });
 
   assert.equal(result.success, true);
-  assert.ok(capturedBody);
-  assert.equal(capturedBody.number, "62992053928");
+  assert.equal(capturedBodies.length, 2, "Deve disparar 2 mensagens: 1 intro humanizada + 2 Pix isolado");
+  assert.equal(capturedBodies[0].number, "62992053928");
+  assert.equal(capturedBodies[1].number, "62992053928");
 
-  const text = capturedBody.text;
-  assert.match(text, /Olá, \*Juliano\*! Tudo bem\?/);
-  assert.match(text, /Aqui é o \*Franklin Jr\*\./);
-  assert.match(text, /referente à cobrança sobre \*IPTV\*/);
-  assert.match(text, /R\$\s*50,00/);
-  assert.match(text, /10\/09\/2026/);
-  assert.match(text, /00020126580014br\.gov\.bcb\.pix\.\.\./);
-  assert.match(text, /reconhece a baixa automaticamente/);
-  assert.match(text, /— \*Franklin Jr\*/);
+  // Mensagem 1: Apresentação, Motivo, Valor e Instruções com setas
+  const text1 = capturedBodies[0].text;
+  assert.match(text1, /Olá, \*Juliano\*! Tudo bem\?/);
+  assert.match(text1, /Aqui é o \*Franklin Jr\*\./);
+  assert.match(text1, /referente à cobrança sobre \*IPTV\*/);
+  assert.match(text1, /R\$\s*50,00/);
+  assert.match(text1, /10\/09\/2026/);
+  assert.match(text1, /reconhece a baixa automaticamente/);
+  assert.match(text1, /— \*Franklin Jr\*/);
+  assert.match(text1, /👇 \*Copie o código Pix na mensagem logo abaixo/);
+
+  // Mensagem 2: Exclusivamente a chave Pix para cópia fácil em 1 toque
+  const text2 = capturedBodies[1].text;
+  assert.equal(text2, "00020126580014br.gov.bcb.pix...");
 });
 
 test("Evolution API WhatsApp: Fallback limpo quando motivo não for fornecido", async () => {
-  let capturedBody = null;
+  const capturedBodies = [];
 
   const client = new EvolutionAPIClient();
   client.sendTextMessage = async (input) => {
-    capturedBody = input;
-    return { success: true, messageId: "msg-test-456" };
+    capturedBodies.push(input);
+    return { success: true, messageId: `msg-test-${capturedBodies.length}` };
   };
 
   const result = await client.sendPixChargeReminder({
@@ -55,10 +61,15 @@ test("Evolution API WhatsApp: Fallback limpo quando motivo não for fornecido", 
   });
 
   assert.equal(result.success, true);
-  const text = capturedBody.text;
-  assert.match(text, /Olá, \*Carlos\*! Tudo bem\?/);
-  assert.match(text, /referente à cobrança da sua conta, no valor de/);
-  assert.match(text, /R\$\s*120,00/);
+  assert.equal(capturedBodies.length, 2);
+  const text1 = capturedBodies[0].text;
+  assert.match(text1, /Olá, \*Carlos\*! Tudo bem\?/);
+  assert.match(text1, /referente à cobrança da sua conta, no valor de/);
+  assert.match(text1, /R\$\s*120,00/);
+  assert.match(text1, /👇 \*Copie o código Pix na mensagem logo abaixo/);
+
+  const text2 = capturedBodies[1].text;
+  assert.equal(text2, "PIX-CODE-123");
 });
 
 test("buildDebtorPixChargeMessage: Função pura gera mensagem idêntica para envio e cópia", () => {

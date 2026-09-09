@@ -266,6 +266,20 @@ export async function fetchEvolutionQRCode() {
 }
 
 /**
+ * Desconectar aparelho WhatsApp (logout da instância na Evolution API)
+ */
+export async function disconnectEvolutionInstance() {
+  try {
+    const { workspaceId } = await requireAuthenticatedWorkspace();
+    const creds = await resolveEvolutionCredentials(workspaceId);
+    const { evolutionAPIClient } = await import("@/integrations/evolution-api/client");
+    return await evolutionAPIClient.logoutInstance(creds.baseUrl, creds.apiKey, creds.instanceName);
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
  * Disparar lembrete ou cobrança de devedor via WhatsApp (Regras 35 & 38: Servidor resolve credenciais e registra em WhatsAppDeliveryLog)
  */
 export type WhatsAppReminderStage = "MANUAL" | "DUE" | "OVERDUE" | `DUE_SOON_${number}D`;

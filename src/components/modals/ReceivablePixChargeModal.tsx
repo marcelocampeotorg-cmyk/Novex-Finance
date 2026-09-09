@@ -26,6 +26,7 @@ import {
 import { updateContactPhoneByInstallment } from "@/server/actions/contacts";
 import { buildDebtorPixChargeMessage } from "@/integrations/evolution-api/client";
 import { formatCurrency } from "@/lib/formatters";
+import { QRCodeSVG } from "qrcode.react";
 
 interface ReceivablePixChargeModalProps {
   isOpen: boolean;
@@ -223,7 +224,7 @@ export function ReceivablePixChargeModal({
       if (res.success) {
         setBotFeedback({
           type: "success",
-          text: `Mensagem disparada com sucesso para ${phoneInput || chargeData?.debtorPhone}!`,
+          text: `Cobrança enviada com sucesso em 2 etapas (texto explicativo + chave Pix avulsa para cópia fácil no celular)!`,
         });
       } else {
         const isDisconnected =
@@ -347,18 +348,14 @@ export function ReceivablePixChargeModal({
                   <span className="text-[10px] text-slate-600 font-mono font-bold">Escaneie no App do Banco</span>
                 </div>
               ) : chargeData?.qrCode ? (
-                <div className="p-2 bg-white rounded-lg flex flex-col items-center gap-2">
-                  <svg className="w-40 h-40 opacity-20" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <rect width="100" height="100" fill="white" />
-                    <rect x="5" y="5" width="30" height="30" fill="black" />
-                    <rect x="10" y="10" width="20" height="20" fill="white" />
-                    <rect x="15" y="15" width="10" height="10" fill="black" />
-                    <rect x="65" y="5" width="30" height="30" fill="black" />
-                    <rect x="5" y="65" width="30" height="30" fill="black" />
-                  </svg>
-                  <span className="text-[10px] text-amber-600 font-mono font-bold">
-                    QR Code Visual Indisponível. Utilize o Pix Copia e Cola.
-                  </span>
+                <div className="p-2.5 bg-white rounded-xl flex flex-col items-center gap-1.5 shadow-sm">
+                  <QRCodeSVG
+                    value={chargeData.qrCode}
+                    size={160}
+                    level="M"
+                    includeMargin={true}
+                  />
+                  <span className="text-[10px] text-slate-700 font-mono font-bold">Escaneie no App do Banco</span>
                 </div>
               ) : (
                 <div className="p-6 text-center text-xs text-slate-500">QR Code indisponível</div>

@@ -20,6 +20,8 @@ import {
   Sliders,
   Wallet,
   AlertTriangle,
+  LogOut,
+  Phone,
 } from "lucide-react";
 import { changePassword } from "@/server/actions/user";
 import { updateWorkspaceName, getWorkspaceName } from "@/server/actions/workspace";
@@ -36,6 +38,7 @@ import {
   checkEvolutionConnectionState,
   fetchEvolutionQRCode,
   sendNeutralWhatsAppTest,
+  disconnectEvolutionInstance,
 } from "@/server/actions/notifications";
 
 export default function ConfiguracoesPage() {
@@ -61,12 +64,18 @@ export default function ConfiguracoesPage() {
 
   // WhatsApp / Evolution API States (Desacoplado & Simplificado)
   const [showAdvancedEvo, setShowAdvancedEvo] = useState(false);
+  const [showTestSection, setShowTestSection] = useState(false);
   const [evoUrl, setEvoUrl] = useState("http://localhost:8081");
   const [evoApiKey, setEvoApiKey] = useState("");
   const [evoInstance, setEvoInstance] = useState("novex-finance");
   const [waConnected, setWaConnected] = useState(false);
+  const [waProfileName, setWaProfileName] = useState<string | null>(null);
+  const [waOwnerNumber, setWaOwnerNumber] = useState<string | null>(null);
   const [qrCodeBase64, setQrCodeBase64] = useState<string | null>(null);
-  const [waLoading, setWaLoading] = useState(false);
+  const [waQrLoading, setWaQrLoading] = useState(false);
+  const [waStatusLoading, setWaStatusLoading] = useState(false);
+  const [waTestLoading, setWaTestLoading] = useState(false);
+  const [waDisconnectLoading, setWaDisconnectLoading] = useState(false);
   const [waFeedback, setWaFeedback] = useState<{ type: "success" | "error"; msg: string } | null>(null);
   const [testPhone, setTestPhone] = useState("");
 
@@ -92,6 +101,20 @@ export default function ConfiguracoesPage() {
       if (evo.baseUrl) setEvoUrl(evo.baseUrl);
       setEvoApiKey("");
       if (evo.instanceName) setEvoInstance(evo.instanceName);
+
+      // Checar status real do WhatsApp em segundo plano
+      try {
+        const waState = await checkEvolutionConnectionState();
+        if (waState.success && waState.state === "open") {
+          setWaConnected(true);
+          setWaProfileName(waState.profileName || null);
+          setWaOwnerNumber(waState.ownerJid?.replace("@s.whatsapp.net", "") || null);
+        } else {
+          setWaConnected(false);
+        }
+      } catch {
+        // não bloqueia o carregamento inicial
+      }
     } catch (e) {
       console.error("Erro ao carregar status:", e);
     }
@@ -228,7 +251,7 @@ export default function ConfiguracoesPage() {
 
   // WhatsApp Evolution API Actions
   const handleCheckWhatsAppStatus = async () => {
-    setWaLoading(true);
+    setWaStatusLoading(true);
     setWaFeedback(null);
     try {
       const res = await checkEvolutionConnectionState();
@@ -236,7 +259,9 @@ export default function ConfiguracoesPage() {
       if (res.success && res.state === "open") {
         setWaConnected(true);
         setQrCodeBase64(null);
-        setWaFeedback({ type: "success", msg: "WhatsApp Conectado com sucesso!" });
+        setWaProfileName(res.profileName || null);
+        setWaOwnerNumber(res.ownerJid?.replace("@s.whatsapp.net", "") || null);
+        setWaFeedback({ type: "success", msg: "WhatsApp conectado com sucesso!" });
       } else {
         setWaConnected(false);
         setWaFeedback({ type: "error", msg: res.error || "Instância do WhatsApp não está conectada no momento." });
@@ -245,32 +270,62 @@ export default function ConfiguracoesPage() {
       setWaConnected(false);
       setWaFeedback({ type: "error", msg: "Erro ao consultar estado da instância." });
     } finally {
-      setWaLoading(false);
+      setWaStatusLoading(false);
     }
   };
 
   const handleFetchQRCode = async () => {
-    setWaLoading(true);
+    setWaQrLoading(true);
     setWaFeedback(null);
 
     try {
       const res = await fetchEvolutionQRCode();
 
-      if (res.success && "base64" in res && res.base64) {
-        setQrCodeBase64(res.base64);
-        setWaFeedback({ type: "success", msg: "QR Code gerado! Escaneie no quadro ao lado com seu celular." });
+      if (res.success) {
+        if ("alreadyConnected" in res && res.alreadyConnected) {
+          setWaConnected(true);
+          setQrCodeBase64(null);
+          setWaFeedback({ type: "success", msg: "WhatsApp já está conectado e pronto para uso!" });
+        } else if ("base64" in res && res.base64) {
+          setQrCodeBase64(res.base64);
+          setWaFeedback({ type: "success", msg: "QR Code gerado! Escaneie com seu WhatsApp no celular." });
+        }
       } else {
         setWaFeedback({ type: "error", msg: res.error || "Aguardando inicialização da instância WhatsApp." });
       }
     } catch (err: any) {
       setWaFeedback({ type: "error", msg: "Erro de comunicação ao buscar QR Code." });
     } finally {
-      setWaLoading(false);
+      setWaQrLoading(false);
+    }
+  };
+
+  const handleDisconnectWhatsApp = async () => {
+    if (!confirm("Deseja realmente desconectar o aparelho WhatsApp desta instância?")) {
+      return;
+    }
+    setWaDisconnectLoading(true);
+    setWaFeedback(null);
+    try {
+      const res = await disconnectEvolutionInstance();
+      if (res.success) {
+        setWaConnected(false);
+        setQrCodeBase64(null);
+        setWaProfileName(null);
+        setWaOwnerNumber(null);
+        setWaFeedback({ type: "success", msg: "Aparelho desconectado com sucesso." });
+      } else {
+        setWaFeedback({ type: "error", msg: res.error || "Erro ao desconectar instância." });
+      }
+    } catch (e: any) {
+      setWaFeedback({ type: "error", msg: "Erro ao comunicar com o servidor." });
+    } finally {
+      setWaDisconnectLoading(false);
     }
   };
 
   const handleSaveEvoCredentials = async () => {
-    setWaLoading(true);
+    setWaStatusLoading(true);
     setWaFeedback(null);
     try {
       const res = await saveEvolutionApiCredentials({
@@ -286,7 +341,7 @@ export default function ConfiguracoesPage() {
     } catch (err: any) {
       setWaFeedback({ type: "error", msg: "Erro ao salvar." });
     } finally {
-      setWaLoading(false);
+      setWaStatusLoading(false);
     }
   };
 
@@ -296,7 +351,7 @@ export default function ConfiguracoesPage() {
       return;
     }
 
-    setWaLoading(true);
+    setWaTestLoading(true);
     setWaFeedback(null);
 
     try {
@@ -310,7 +365,7 @@ export default function ConfiguracoesPage() {
     } catch (err: any) {
       setWaFeedback({ type: "error", msg: "Erro de comunicação ao disparar WhatsApp." });
     } finally {
-      setWaLoading(false);
+      setWaTestLoading(false);
     }
   };
 
@@ -652,136 +707,251 @@ export default function ConfiguracoesPage() {
             </div>
           )}
 
-          {/* Painel do WhatsApp Simplificado para o Usuário Final */}
-          <div className="space-y-4 text-xs">
-            <p className="text-novex-text-secondary text-xs">
-              Clique em <strong>&quot;Gerar QR Code de Conexão&quot;</strong> e escaneie o código com seu aplicativo do WhatsApp no celular (em <em>Dispositivos Conectados &gt; Conectar um aparelho</em>).
-            </p>
-
-            {/* Layout Flex: Ações + QR Code no Canto */}
-            <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 pt-2 border-t border-novex-border/60">
-              <div className="space-y-3 flex-1">
-                <div className="flex flex-wrap items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={handleFetchQRCode}
-                    disabled={waLoading}
-                    className="flex items-center gap-2 rounded-xl bg-novex-cyan hover:bg-novex-cyan/90 text-novex-bg font-bold px-4 py-2.5 text-xs transition-all shadow-md cursor-pointer disabled:opacity-50"
-                  >
-                    <QrCode className="h-4 w-4" />
-                    <span>{waLoading ? "Gerando QR Code..." : "Gerar QR Code de Conexão"}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleCheckWhatsAppStatus}
-                    disabled={waLoading}
-                    className="flex items-center gap-2 rounded-xl bg-novex-surface2 hover:bg-novex-border text-novex-text-primary font-semibold px-4 py-2.5 text-xs border border-novex-border transition-colors cursor-pointer disabled:opacity-50"
-                  >
-                    <RefreshCw className={`h-4 w-4 ${waLoading ? "animate-spin" : ""}`} />
-                    <span>Verificar Conexão</span>
-                  </button>
-                </div>
-
-                {/* Seção de Teste de Disparo Real */}
-                <div className="pt-3 space-y-2">
-                  <span className="font-semibold text-novex-text-primary block">Testar Disparo de Mensagem</span>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={testPhone}
-                      onChange={(e) => setTestPhone(e.target.value)}
-                      placeholder="DDD + Número (ex: 5511999999999)"
-                      className="rounded-lg border border-novex-border bg-novex-bg py-2 px-3 text-xs text-novex-text-primary font-mono focus:border-novex-cyan focus:outline-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleSendTestWhatsApp}
-                      disabled={waLoading || !testPhone.trim()}
-                      className="flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3.5 py-2 text-xs transition-all cursor-pointer disabled:opacity-50"
-                    >
-                      <Send className="h-3.5 w-3.5" />
-                      <span>{waLoading ? "Disparando..." : "Enviar Mensagem Teste"}</span>
-                    </button>
+          {/* Painel do WhatsApp: Conectado (Minimizado) vs Desconectado (Expandido) */}
+          {waConnected ? (
+            /* MODO CONECTADO: Card Minimizado, Compacto e Limpo */
+            <div className="space-y-4 pt-1">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400">
+                    <Phone className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-novex-text-primary text-xs">
+                        {waProfileName || "WhatsApp Conectado"}
+                      </span>
+                      {waOwnerNumber && (
+                        <span className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">
+                          +{waOwnerNumber}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[11px] text-novex-text-muted block mt-0.5">
+                      Instância ativa e pronta para envio automático e manual de cobranças Pix
+                    </span>
                   </div>
                 </div>
 
-                {/* Sanfonado de Configurações Avançadas (Opcional) */}
-                <div className="pt-2">
+                <div className="flex items-center gap-2 shrink-0">
                   <button
                     type="button"
-                    onClick={() => setShowAdvancedEvo(!showAdvancedEvo)}
-                    className="flex items-center gap-1.5 text-[11px] text-novex-text-muted hover:text-novex-cyan transition-colors"
+                    onClick={handleCheckWhatsAppStatus}
+                    disabled={waStatusLoading}
+                    className="flex items-center gap-1.5 rounded-lg bg-novex-surface2 hover:bg-novex-border text-novex-text-primary font-semibold px-3 py-1.5 text-xs border border-novex-border transition-colors cursor-pointer disabled:opacity-50"
+                    title="Verificar status atual da conexão"
                   >
-                    <Sliders className="h-3.5 w-3.5" />
-                    <span>{showAdvancedEvo ? "Ocultar Parâmetros Avançados" : "Configurações Avançadas do Servidor"}</span>
+                    <RefreshCw className={`h-3.5 w-3.5 ${waStatusLoading ? "animate-spin text-novex-cyan" : ""}`} />
+                    <span>{waStatusLoading ? "Checando..." : "Verificar"}</span>
                   </button>
 
-                  {showAdvancedEvo && (
-                    <div className="mt-3 p-3 rounded-lg bg-novex-surface2/60 border border-novex-border/60 space-y-3 animate-in fade-in">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div>
-                          <label className="font-semibold text-novex-text-secondary block mb-1">URL da API</label>
-                          <input
-                            type="text"
-                            value={evoUrl}
-                            onChange={(e) => setEvoUrl(e.target.value)}
-                            placeholder="https://api.evolution-api.com"
-                            className="w-full rounded-lg border border-novex-border bg-novex-bg p-2 text-novex-text-primary font-mono"
-                          />
-                        </div>
-                        <div>
-                          <label className="font-semibold text-novex-text-secondary block mb-1">Instância</label>
-                          <input
-                            type="text"
-                            value={evoInstance}
-                            onChange={(e) => setEvoInstance(e.target.value)}
-                            placeholder="novex-finance"
-                            className="w-full rounded-lg border border-novex-border bg-novex-bg p-2 text-novex-text-primary font-mono"
-                          />
-                        </div>
-                      </div>
-                      <div>
-                        <label className="font-semibold text-novex-text-secondary block mb-1">API Key Personalizada</label>
-                        <input
-                          type="password"
-                          value={evoApiKey}
-                          onChange={(e) => setEvoApiKey(e.target.value)}
-                          placeholder="Deixe vazio para preservar a chave atual"
-                          className="w-full rounded-lg border border-novex-border bg-novex-bg p-2 text-novex-text-primary font-mono"
-                        />
-                      </div>
-                      <div className="pt-2">
-                        <button
-                          type="button"
-                          onClick={handleSaveEvoCredentials}
-                          disabled={waLoading}
-                          className="flex items-center justify-center gap-2 w-full rounded-lg bg-novex-cyan text-novex-bg font-semibold px-4 py-2.5 text-xs transition-all cursor-pointer hover:bg-novex-cyan/90 disabled:opacity-50"
-                        >
-                          {waLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                          Salvar Configurações no Banco
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                  <button
+                    type="button"
+                    onClick={handleDisconnectWhatsApp}
+                    disabled={waDisconnectLoading}
+                    className="flex items-center gap-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 font-semibold px-3 py-1.5 text-xs transition-colors cursor-pointer disabled:opacity-50"
+                    title="Desvincular este aparelho do WhatsApp"
+                  >
+                    <LogOut className={`h-3.5 w-3.5 ${waDisconnectLoading ? "animate-spin" : ""}`} />
+                    <span>{waDisconnectLoading ? "Desconectando..." : "Desconectar"}</span>
+                  </button>
                 </div>
               </div>
 
-              {/* Quadro do QR Code no Canto Superior Direito do Card */}
-              {qrCodeBase64 && (
-                <div className="rounded-xl border-2 border-novex-cyan/60 bg-white p-3 text-center space-y-2 shrink-0 self-center md:self-start shadow-lg">
-                  <span className="text-[10px] font-bold text-slate-800 uppercase block">Escaneie no WhatsApp</span>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={qrCodeBase64.startsWith("data:") ? qrCodeBase64 : `data:image/png;base64,${qrCodeBase64}`}
-                    alt="QR Code WhatsApp Evolution API"
-                    className="w-36 h-36 mx-auto rounded border border-slate-200"
-                  />
-                  <span className="text-[9px] text-slate-500 block">Dispositivos Conectados &gt; Conectar</span>
+              {/* Disparo de Teste Rápido */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-novex-surface2/40 border border-novex-border/60">
+                <div className="space-y-0.5">
+                  <span className="font-semibold text-novex-text-primary text-xs block">Testar Disparo no WhatsApp</span>
+                  <span className="text-[11px] text-novex-text-muted block">Envie uma mensagem de teste para confirmar o recebimento no seu celular</span>
                 </div>
-              )}
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={testPhone}
+                    onChange={(e) => setTestPhone(e.target.value)}
+                    placeholder="DDD + Número (ex: 62999999999)"
+                    className="w-48 rounded-lg border border-novex-border bg-novex-bg py-1.5 px-2.5 text-xs text-novex-text-primary font-mono focus:border-novex-cyan focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSendTestWhatsApp}
+                    disabled={waTestLoading || !testPhone.trim()}
+                    className="flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1.5 text-xs transition-all cursor-pointer disabled:opacity-50 shrink-0"
+                  >
+                    <Send className={`h-3.5 w-3.5 ${waTestLoading ? "animate-spin" : ""}`} />
+                    <span>{waTestLoading ? "Enviando..." : "Disparar Teste"}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Parâmetros Avançados Sanfonado */}
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedEvo(!showAdvancedEvo)}
+                  className="flex items-center gap-1.5 text-[11px] text-novex-text-muted hover:text-novex-cyan transition-colors"
+                >
+                  <Sliders className="h-3.5 w-3.5" />
+                  <span>{showAdvancedEvo ? "Ocultar Parâmetros do Servidor" : "Configurações Avançadas do Servidor"}</span>
+                </button>
+
+                {showAdvancedEvo && (
+                  <div className="mt-2.5 p-3 rounded-lg bg-novex-surface2/60 border border-novex-border/60 space-y-3 animate-in fade-in text-xs">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className="font-semibold text-novex-text-secondary block mb-1">URL da API</label>
+                        <input
+                          type="text"
+                          value={evoUrl}
+                          onChange={(e) => setEvoUrl(e.target.value)}
+                          placeholder="http://evolution:8080"
+                          className="w-full rounded-lg border border-novex-border bg-novex-bg p-2 text-novex-text-primary font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-semibold text-novex-text-secondary block mb-1">Instância</label>
+                        <input
+                          type="text"
+                          value={evoInstance}
+                          onChange={(e) => setEvoInstance(e.target.value)}
+                          placeholder="novex-finance"
+                          className="w-full rounded-lg border border-novex-border bg-novex-bg p-2 text-novex-text-primary font-mono"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="font-semibold text-novex-text-secondary block mb-1">API Key Personalizada</label>
+                      <input
+                        type="password"
+                        value={evoApiKey}
+                        onChange={(e) => setEvoApiKey(e.target.value)}
+                        placeholder="Deixe vazio para preservar a chave atual"
+                        className="w-full rounded-lg border border-novex-border bg-novex-bg p-2 text-novex-text-primary font-mono"
+                      />
+                    </div>
+                    <div className="pt-1">
+                      <button
+                        type="button"
+                        onClick={handleSaveEvoCredentials}
+                        disabled={waStatusLoading}
+                        className="flex items-center justify-center gap-2 w-full rounded-lg bg-novex-cyan text-novex-bg font-semibold px-4 py-2 text-xs transition-all cursor-pointer hover:bg-novex-cyan/90 disabled:opacity-50"
+                      >
+                        {waStatusLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                        Salvar Parâmetros no Banco
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          ) : (
+            /* MODO DESCONECTADO: Card com Instruções e Geração de QR Code */
+            <div className="space-y-4 text-xs">
+              <p className="text-novex-text-secondary text-xs">
+                Clique em <strong>&quot;Gerar QR Code de Conexão&quot;</strong> e escaneie o código com seu aplicativo do WhatsApp no celular (em <em>Dispositivos Conectados &gt; Conectar um aparelho</em>).
+              </p>
+
+              <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 pt-2 border-t border-novex-border/60">
+                <div className="space-y-3 flex-1">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={handleFetchQRCode}
+                      disabled={waQrLoading}
+                      className="flex items-center gap-2 rounded-xl bg-novex-cyan hover:bg-novex-cyan/90 text-novex-bg font-bold px-4 py-2.5 text-xs transition-all shadow-md cursor-pointer disabled:opacity-50"
+                    >
+                      <QrCode className={`h-4 w-4 ${waQrLoading ? "animate-spin" : ""}`} />
+                      <span>{waQrLoading ? "Gerando QR Code..." : "Gerar QR Code de Conexão"}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleCheckWhatsAppStatus}
+                      disabled={waStatusLoading}
+                      className="flex items-center gap-2 rounded-xl bg-novex-surface2 hover:bg-novex-border text-novex-text-primary font-semibold px-4 py-2.5 text-xs border border-novex-border transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      <RefreshCw className={`h-4 w-4 ${waStatusLoading ? "animate-spin" : ""}`} />
+                      <span>{waStatusLoading ? "Verificando..." : "Verificar Conexão"}</span>
+                    </button>
+                  </div>
+
+                  {/* Parâmetros Avançados Sanfonado */}
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvancedEvo(!showAdvancedEvo)}
+                      className="flex items-center gap-1.5 text-[11px] text-novex-text-muted hover:text-novex-cyan transition-colors"
+                    >
+                      <Sliders className="h-3.5 w-3.5" />
+                      <span>{showAdvancedEvo ? "Ocultar Parâmetros Avançados" : "Configurações Avançadas do Servidor"}</span>
+                    </button>
+
+                    {showAdvancedEvo && (
+                      <div className="mt-3 p-3 rounded-lg bg-novex-surface2/60 border border-novex-border/60 space-y-3 animate-in fade-in">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div>
+                            <label className="font-semibold text-novex-text-secondary block mb-1">URL da API</label>
+                            <input
+                              type="text"
+                              value={evoUrl}
+                              onChange={(e) => setEvoUrl(e.target.value)}
+                              placeholder="http://evolution:8080"
+                              className="w-full rounded-lg border border-novex-border bg-novex-bg p-2 text-novex-text-primary font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="font-semibold text-novex-text-secondary block mb-1">Instância</label>
+                            <input
+                              type="text"
+                              value={evoInstance}
+                              onChange={(e) => setEvoInstance(e.target.value)}
+                              placeholder="novex-finance"
+                              className="w-full rounded-lg border border-novex-border bg-novex-bg p-2 text-novex-text-primary font-mono"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="font-semibold text-novex-text-secondary block mb-1">API Key Personalizada</label>
+                          <input
+                            type="password"
+                            value={evoApiKey}
+                            onChange={(e) => setEvoApiKey(e.target.value)}
+                            placeholder="Deixe vazio para preservar a chave atual"
+                            className="w-full rounded-lg border border-novex-border bg-novex-bg p-2 text-novex-text-primary font-mono"
+                          />
+                        </div>
+                        <div className="pt-2">
+                          <button
+                            type="button"
+                            onClick={handleSaveEvoCredentials}
+                            disabled={waStatusLoading}
+                            className="flex items-center justify-center gap-2 w-full rounded-lg bg-novex-cyan text-novex-bg font-semibold px-4 py-2.5 text-xs transition-all cursor-pointer hover:bg-novex-cyan/90 disabled:opacity-50"
+                          >
+                            {waStatusLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                            Salvar Configurações no Banco
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Quadro do QR Code no Canto do Card */}
+                {qrCodeBase64 && (
+                  <div className="rounded-xl border-2 border-novex-cyan/60 bg-white p-3 text-center space-y-2 shrink-0 self-center md:self-start shadow-lg">
+                    <span className="text-[10px] font-bold text-slate-800 uppercase block">Escaneie no WhatsApp</span>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={qrCodeBase64.startsWith("data:") ? qrCodeBase64 : `data:image/png;base64,${qrCodeBase64}`}
+                      alt="QR Code WhatsApp Evolution API"
+                      className="w-36 h-36 mx-auto rounded border border-slate-200"
+                    />
+                    <span className="text-[9px] text-slate-500 block">Dispositivos Conectados &gt; Conectar</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

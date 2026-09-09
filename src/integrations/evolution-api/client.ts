@@ -16,6 +16,8 @@ export interface EvolutionQRCodeResponse {
   success: boolean;
   base64?: string;
   pairingCode?: string;
+  alreadyConnected?: boolean;
+  state?: string;
   error?: string;
 }
 
@@ -23,6 +25,9 @@ export interface EvolutionStatusResponse {
   success: boolean;
   state: "open" | "connecting" | "close" | "disconnected";
   stage?: "SERVICE" | "AUTHENTICATION" | "INSTANCE" | "PAIRING" | "CONNECTED";
+  profileName?: string;
+  ownerJid?: string;
+  profilePicUrl?: string;
   error?: string;
 }
 
@@ -115,7 +120,38 @@ export class EvolutionAPIClient {
           const data = await response.json();
           const state = data.instance?.state || data.state || "close";
           const normalizedState = state === "open" ? "open" : state === "connecting" ? "connecting" : "disconnected";
-          return { success: true, state: normalizedState, stage: normalizedState === "open" ? "CONNECTED" : "PAIRING" };
+
+          let profileName: string | undefined;
+          let ownerJid: string | undefined;
+          let profilePicUrl: string | undefined;
+
+          if (normalizedState === "open") {
+            try {
+              const fetchRes = await fetch(`${baseUrl}/instance/fetchInstances`, {
+                headers: { apikey: apiKey },
+              });
+              if (fetchRes.ok) {
+                const instances = await fetchRes.json();
+                const current = Array.isArray(instances) ? instances.find((i: any) => i.name === instanceName) : null;
+                if (current) {
+                  profileName = current.profileName || undefined;
+                  ownerJid = current.ownerJid || undefined;
+                  profilePicUrl = current.profilePicUrl || undefined;
+                }
+              }
+            } catch {
+              // não bloqueia
+            }
+          }
+
+          return {
+            success: true,
+            state: normalizedState,
+            stage: normalizedState === "open" ? "CONNECTED" : "PAIRING",
+            profileName,
+            ownerJid,
+            profilePicUrl,
+          };
         }
         if (response.status === 401 || response.status === 403) return { success: false, state: "disconnected", stage: "AUTHENTICATION", error: `Evolution recusou a API key (HTTP ${response.status}).` };
         if (response.status === 404) return { success: false, state: "disconnected", stage: "INSTANCE", error: "Instância ainda não criada; solicite o QR Code para criá-la." };
@@ -183,6 +219,9 @@ export class EvolutionAPIClient {
 
         if (response.ok) {
           const data = await response.json();
+          if (data.instance?.state === "open" || data.state === "open") {
+            return { success: true, alreadyConnected: true, state: "open" };
+          }
           let base64 = data.base64 || data.qrcode?.base64;
           let pairingCode = data.pairingCode || data.code;
           
@@ -196,6 +235,9 @@ export class EvolutionAPIClient {
               });
               if (retryRes.ok) {
                 const retryData = await retryRes.json();
+                if (retryData.instance?.state === "open" || retryData.state === "open") {
+                  return { success: true, alreadyConnected: true, state: "open" };
+                }
                 base64 = retryData.base64 || retryData.qrcode?.base64;
                 pairingCode = retryData.pairingCode || retryData.code;
                 if (base64) break;
@@ -224,6 +266,32 @@ export class EvolutionAPIClient {
       success: false,
       error: lastError,
     };
+  }
+
+  /**
+   * Desconectar/deslogar a instância WhatsApp para permitir novo pareamento
+   */
+  async logoutInstance(url?: string, key?: string, instance?: string): Promise<{ success: boolean; error?: string }> {
+    const targetUrls = this.getTargetUrls(url);
+    const apiKey = this.getApiKey(key);
+    const instanceName = this.getInstanceName(instance);
+
+    let lastError = "Evolution API não respondeu ao desconectar.";
+    for (const baseUrl of targetUrls) {
+      try {
+        const response = await fetch(`${baseUrl}/instance/logout/${instanceName}`, {
+          method: "DELETE",
+          headers: { apikey: apiKey },
+        });
+        if (response.ok || response.status === 404) {
+          return { success: true };
+        }
+        lastError = `HTTP ${response.status} ao desconectar instância.`;
+      } catch (e: any) {
+        lastError = e?.message || String(e);
+      }
+    }
+    return { success: false, error: lastError };
   }
 
   /**
@@ -272,7 +340,9 @@ export class EvolutionAPIClient {
   }
 
   /**
-   * Enviar cobrança Pix com QR Code Copia e Cola via WhatsApp para o Devedor
+   * Enviar cobrança Pix com QR Code Copia e Cola via WhatsApp para o Devedor.
+   * Envia o texto humanizado e, logo em seguida, o código Pix Copia e Cola em mensagem
+   * avulsa e limpa, permitindo que o cliente copie a chave com 1 toque no celular.
    */
   async sendPixChargeReminder(input: {
     debtorName: string;
@@ -287,23 +357,47 @@ export class EvolutionAPIClient {
     apiKey?: string;
     instanceName?: string;
   }): Promise<EvolutionAPIResponse> {
-    const messageText = buildDebtorPixChargeMessage({
+    const introText = buildDebtorPixChargeMessage({
       debtorName: input.debtorName,
       amountCents: input.amountCents,
       dueDate: input.dueDate,
-      pixCopiaECola: input.pixCopiaECola,
       title: input.title,
       description: input.description,
       senderName: input.senderName,
+      hasPixFollowUp: Boolean(input.pixCopiaECola?.trim()),
     });
 
-    return this.sendTextMessage({
+    // 1. Enviar mensagem de apresentação e instruções
+    const firstMsgResult = await this.sendTextMessage({
       number: input.debtorPhone,
-      text: messageText,
+      text: introText,
       baseUrl: input.baseUrl,
       apiKey: input.apiKey,
       instanceName: input.instanceName,
     });
+
+    if (!firstMsgResult.success) {
+      return firstMsgResult;
+    }
+
+    // 2. Se houver Pix Copia e Cola, enviar em mensagem isolada e limpa logo abaixo
+    if (input.pixCopiaECola?.trim()) {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+
+      const pixMsgResult = await this.sendTextMessage({
+        number: input.debtorPhone,
+        text: input.pixCopiaECola.trim(),
+        baseUrl: input.baseUrl,
+        apiKey: input.apiKey,
+        instanceName: input.instanceName,
+      });
+
+      if (!pixMsgResult.success) {
+        console.warn("Aviso: Mensagem de introdução enviada, mas falha ao enviar código Pix isolado:", pixMsgResult.error);
+      }
+    }
+
+    return firstMsgResult;
   }
 }
 
@@ -318,6 +412,7 @@ export function buildDebtorPixChargeMessage(input: {
   title?: string;
   description?: string;
   senderName?: string;
+  hasPixFollowUp?: boolean;
 }): string {
   const valorFormatted = (input.amountCents / 100).toLocaleString("pt-BR", {
     style: "currency",
@@ -333,15 +428,15 @@ export function buildDebtorPixChargeMessage(input: {
     : "referente à cobrança da sua conta";
 
   const desc = input.description?.trim() ? `\n_Detalhes: ${input.description.trim()}_\n` : "";
-
-  let messageText = `Olá, *${input.debtorName}*! Tudo bem?\n\n${senderIntro}Estou entrando em contato ${motivoSubject}, no valor de *${valorFormatted}* com vencimento em *${input.dueDate}*.${desc}`;
-
-  if (input.pixCopiaECola) {
-    messageText += `\n\nSegue a chave Pix Copia e Cola para pagamento:\n\n\`\`\`${input.pixCopiaECola}\`\`\`\n\n_Após realizar o pagamento no aplicativo do seu banco, o sistema reconhece a baixa automaticamente._`;
-  }
-
   const signature = input.senderName?.trim() ? `*${input.senderName.trim()}*` : `*NOVEX Finance*`;
-  messageText += `\n\nAgradeço a atenção! — ${signature}`;
+
+  let messageText = `Olá, *${input.debtorName}*! Tudo bem?\n\n${senderIntro}Estou entrando em contato ${motivoSubject}, no valor de *${valorFormatted}* com vencimento em *${input.dueDate}*.${desc}\n\n_Após realizar o pagamento no aplicativo do seu banco, o sistema reconhece a baixa automaticamente._\n\nAgradeço a atenção! — ${signature}`;
+
+  if (input.hasPixFollowUp) {
+    messageText += `\n\n👇 *Copie o código Pix na mensagem logo abaixo para pagar no app do seu banco:*`;
+  } else if (input.pixCopiaECola) {
+    messageText += `\n\n👇 *Chave Pix Copia e Cola:*\n\`\`\`${input.pixCopiaECola.trim()}\`\`\``;
+  }
 
   return messageText;
 }

@@ -10,3 +10,4 @@ export const checkEvolutionConnectionState = service.checkEvolutionConnectionSta
 export const fetchEvolutionQRCode = service.fetchEvolutionQRCode;
 export const sendWhatsAppDebtorReminder = service.sendWhatsAppDebtorReminder;
 export const sendNeutralWhatsAppTest = service.sendNeutralWhatsAppTest;
+export const disconnectEvolutionInstance = service.disconnectEvolutionInstance;

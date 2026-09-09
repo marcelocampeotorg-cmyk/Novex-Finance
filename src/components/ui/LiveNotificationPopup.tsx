@@ -26,6 +26,20 @@ export function LiveNotificationPopup() {
   const DURATION_MS = 10000; // 10 segundos conforme pedido pelo usuário
 
   useEffect(() => {
+    // Evitar que o alerta fique pipocando toda hora a cada navegação
+    try {
+      const lastDismissed = sessionStorage.getItem("novex_alerts_dismissed_at");
+      if (lastDismissed) {
+        const timeDiff = Date.now() - Number(lastDismissed);
+        // Respeitar silêncio de 1 hora na mesma sessão
+        if (timeDiff < 60 * 60 * 1000) {
+          return;
+        }
+      }
+    } catch {
+      // ambiente sem sessionStorage
+    }
+
     // Carregar alertas ao montar a tela
     getLiveDashboardAlerts().then((res) => {
       if (res.success && res.alerts.length > 0) {
@@ -34,6 +48,13 @@ export function LiveNotificationPopup() {
       }
     });
   }, []);
+
+  const handleDismiss = () => {
+    setIsVisible(false);
+    try {
+      sessionStorage.setItem("novex_alerts_dismissed_at", String(Date.now()));
+    } catch {}
+  };
 
   // Controlar o timer de 10 segundos com barra de progresso
   useEffect(() => {
@@ -128,7 +149,7 @@ export function LiveNotificationPopup() {
         </div>
 
         <button
-          onClick={() => setIsVisible(false)}
+          onClick={handleDismiss}
           className="text-novex-text-muted hover:text-novex-text-primary p-1 transition-colors rounded-lg hover:bg-novex-surface2"
           title="Fechar notificação"
         >
