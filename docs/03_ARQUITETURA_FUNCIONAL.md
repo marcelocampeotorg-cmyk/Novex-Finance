@@ -39,3 +39,13 @@ Não é obrigatório pré-cadastrar Claro, Mercado Livre, assinatura etc.
 
 ## Fluxo E — Exceções
 Duplicidade, ambiguidade, valor divergente, estorno observado, chargeback e dados insuficientes entram em estado explícito. Nunca são “resolvidos” por suposição silenciosa.
+
+## Fluxo F — Provisionamento e Governança via Painel Master (SaaS)
+Proprietário cadastra o cliente e seleciona o produto NOVEX Finance no Painel Master interno.
+→ Master envia requisição REST assinada com `MASTER_API_SECRET` (`POST /api/master/tenants`).
+→ NOVEX Finance cria o `User`, o `Workspace` do cliente e o `Membership` com papel `OWNER`.
+→ NOVEX Finance provisiona categorias financeiras padrão e a conta manual inicial.
+→ Master gerencia o status da assinatura (`PUT /api/master/tenants/:id/subscription` -> `ACTIVE`, `SUSPENDED`).
+→ Cliente acessa diretamente a interface web do Finance (`finance.novexbr.com.br`) com seu e-mail e senha.
+→ Cliente acessa Configurações e escaneia seu próprio QR Code na Evolution API (instância `ws_<workspaceId>`).
+→ Todo dado financeiro (lançamentos, contatos, cobranças e extrato) é estritamente isolado pelo `workspaceId`.

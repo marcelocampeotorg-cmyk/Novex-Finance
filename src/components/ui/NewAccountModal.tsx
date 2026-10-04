@@ -165,7 +165,7 @@ export const NewAccountModal: React.FC<NewAccountModalProps> = ({
         setInstallmentsList([]);
       }
     }
-  }, [isOpen, editItem, defaultDirection, reset]);
+  }, [isOpen, editItem, defaultDirection, reset, amountMode]);
 
   React.useEffect(() => {
     if (!editItem && kind === "INSTALLMENT_PLAN" && totalAmount > 0 && installmentsCount > 0) {

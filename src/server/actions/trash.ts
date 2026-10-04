@@ -13,6 +13,25 @@ export interface TrashedItemDTO {
 }
 
 export async function getTrashedItems(): Promise<TrashedItemDTO[]> {
+  if (process.env.VISUAL_AUDIT_MODE === "true") {
+    return [
+      {
+        id: "trash-item-1",
+        title: "Assinatura Antiga Cancelada",
+        category: "Tecnologia",
+        direction: "PAYABLE",
+        deletedAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+      },
+      {
+        id: "trash-item-2",
+        title: "Cobrança Duplicada Teste",
+        category: "Serviços",
+        direction: "RECEIVABLE",
+        deletedAt: new Date(Date.now() - 86400000 * 5).toISOString(),
+      },
+    ];
+  }
+
   const { workspaceId } = await requireAuthenticatedWorkspace();
 
   const trashedFinancialItems = await db.financialItem.findMany({

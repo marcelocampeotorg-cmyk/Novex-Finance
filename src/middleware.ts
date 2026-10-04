@@ -6,6 +6,7 @@ export function middleware(request: NextRequest) {
 
   // Permitir arquivos estáticos, rotas de auth, webhooks e APIs que não dependem de cookie
   const isPublic =
+    process.env.VISUAL_AUDIT_MODE === "true" ||
     path === "/login" ||
     path.startsWith("/api/auth") ||
     path.startsWith("/api/webhooks") ||

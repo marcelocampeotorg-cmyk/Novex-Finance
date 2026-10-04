@@ -64,6 +64,14 @@ services:
       start_period: 30s
     networks: [edge, backend]
     security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
     logging: *default-logging
 
   worker:
@@ -84,6 +92,14 @@ services:
       - "const run=async()=>{try{const r=await fetch('http://app:3000/api/worker/run',{method:'POST',headers:{authorization:'Bearer '+process.env.WORKER_SECRET}});if(!r.ok)console.error('worker HTTP',r.status,await r.text())}catch(e){console.error('worker request',e.message)}};run();setInterval(run,15000)"
     networks: [edge]
     security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
     logging: *default-logging
 
   db:
@@ -102,6 +118,14 @@ services:
       timeout: 5s
       retries: 10
     networks: [backend]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
     logging: *default-logging
 
   redis:
@@ -116,6 +140,14 @@ services:
       timeout: 5s
       retries: 10
     networks: [backend]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
     logging: *default-logging
 
   evolution:
@@ -155,6 +187,14 @@ services:
         condition: service_healthy
     networks: [edge, backend]
     security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          cpus: '0.10'
+          memory: 128M
     # A imagem oficial v2.3.7 imprime objetos completos de mensagens com
     # console.log, ignorando LOG_LEVEL/LOG_BAILEYS. Diagnóstico operacional
     # usa healthcheck/endpoints autenticados, sem persistir payload bruto.
@@ -182,6 +222,14 @@ services:
     command: ["/bin/sh", "/opt/novex/backup-loop.sh"]
     networks: [backend]
     security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
     logging: *default-logging
 
 networks:

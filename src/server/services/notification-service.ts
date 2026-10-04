@@ -28,6 +28,18 @@ export interface NotificationAlert {
 }
 
 export async function getNotificationRuleForWorkspace(targetWorkspaceId?: string) {
+  if (process.env.VISUAL_AUDIT_MODE === "true") {
+    return {
+      id: "rule-mock-1",
+      daysBefore: [7, 3, 1],
+      onDueDate: true,
+      overdueFrequency: 1,
+      hour: 9,
+      channels: ["DASHBOARD", "WHATSAPP"],
+      enabled: true,
+    };
+  }
+
   const workspaceId = targetWorkspaceId || (await requireAuthenticatedWorkspace()).workspaceId;
 
   let rule = await db.notificationRule.findFirst({
@@ -107,6 +119,50 @@ export async function updateNotificationRule(input: NotificationRuleInput) {
  * Avalia parcelas financeiras ativas e gera alertas de notificação em tempo real
  */
 export async function processNotificationAlertsForWorkspace(targetWorkspaceId?: string): Promise<NotificationAlert[]> {
+  if (process.env.VISUAL_AUDIT_MODE === "true") {
+    return [
+      {
+        id: "alert-1",
+        installmentId: "inst-1",
+        financialItemId: "item-1",
+        title: "Mensalidade Consultoria TI - Acme Corp",
+        contactName: "Acme Corp",
+        amountCents: 350000,
+        dueDate: new Date(Date.now() + 86400000 * 2).toISOString(),
+        direction: "RECEIVABLE",
+        type: "DUE_SOON",
+        message: "Vence em 2 dias: Mensalidade Consultoria TI (R$ 3.500,00)",
+        daysDiff: 2,
+      },
+      {
+        id: "alert-2",
+        installmentId: "inst-2",
+        financialItemId: "item-2",
+        title: "Licença Software Cloud - AWS",
+        contactName: "Amazon Web Services",
+        amountCents: 125000,
+        dueDate: new Date().toISOString(),
+        direction: "PAYABLE",
+        type: "DUE_TODAY",
+        message: "Vence HOJE: Licença Software Cloud (R$ 1.250,00)",
+        daysDiff: 0,
+      },
+      {
+        id: "alert-3",
+        installmentId: "inst-3",
+        financialItemId: "item-3",
+        title: "Manutenção de Servidores - Alpha Soluções",
+        contactName: "Alpha Soluções",
+        amountCents: 85000,
+        dueDate: new Date(Date.now() - 86400000 * 3).toISOString(),
+        direction: "PAYABLE",
+        type: "OVERDUE",
+        message: "Vencida há 3 dias: Manutenção de Servidores (R$ 850,00)",
+        daysDiff: -3,
+      },
+    ];
+  }
+
   const workspaceId = targetWorkspaceId || (await requireAuthenticatedWorkspace()).workspaceId;
   const rule = await getNotificationRuleForWorkspace(workspaceId);
   const now = new Date();

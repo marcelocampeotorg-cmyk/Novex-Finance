@@ -81,3 +81,30 @@ Preservar o que está correto. Corrigir seletivamente o que contradiz esta docum
 - lint, typecheck, build de produção, Prisma validate/generate/status, Compose de produção e `git diff --check` aprovados;
 - banco principal e banco da Evolution tiveram dumps restaurados com sucesso em PostgreSQL descartável antes do corte para o servidor;
 - o deploy deve criar somente o projeto Docker `novexfinance-prod`, redes/volumes exclusivos e binds de app/Evolution no loopback, sem alterar qualquer recurso de Master ou Oficina.
+
+## Atualização operacional — 2026-10-04
+
+- **Auditoria de Padrões e Alinhamento com Novex Trade:**
+  - Inspeção dos padrões operacionais do Novex Trade (`/srv/novex/trader`): zero hardcode, limites estritos de recursos Docker (CPU/memória) e deploy idempotente sem colisão de portas.
+  - Criação das skills operacionais `.agents/skills/anti-godcode` e `.agents/skills/anti-hardcode` para auditoria e governança contínua no NOVEX Finance.
+- **Eliminação de God-Code e Refatoração Limpa:**
+  - Desacoplado o subsistema de regras dinâmicas e memória de contrapartes de `src/server/services/transactions-service.ts` para o novo módulo dedicado `src/server/services/counterpart-rules-service.ts`, mantendo contratos públicos intactos via re-exportação.
+- **Eliminação de Hardcode e Higienização de Resíduos:**
+  - Removidos fallbacks hardcoded de UUID (`00000000-0000-0000-0000-000000000000`) e URLs de localhost em `src/app/(protected)/configuracoes/page.tsx`.
+  - Normalizados todos os caminhos legados (`/home/servidor`, usuário `servidor`) para o padrão canônico do servidor: `frank@192.168.4.12:/srv/novex/finance`.
+  - Removidos ~193 MB de arquivos residuais na raiz (`docs.zip`, `update.tar.gz`), folha de estilos órfã `src/styles/globals.css` e logs transitórios. Arquivados 19 scripts de teste/diagnóstico legados em `backups/scripts-diagnostics-legacy.zip`.
+- **Garantia de Isolamento Multi-Stack no Servidor Compartilhado (`novexserver`):**
+  - Mapeamento das stacks existentes no host: Novex Trade (`novex_trade_engine`, porta 8026) e Novex Oficina (`saas-oficina-*`, portas 8080, 3000, 8082, 5434, 6381).
+  - Isolamento do NOVEX Finance:
+    - Projeto Docker: `novexfinance-prod`.
+    - Redes: `novexfinance-prod-edge` e `novexfinance-prod-backend` (com `internal: true`).
+    - Volumes: prefixados exclusivamente com `novexfinance-prod-*`.
+    - Portas de Borda: apenas no loopback `127.0.0.1:3001` (App) e `127.0.0.1:8081` (Evolution). PostgreSQL e Redis não expõem portas no host.
+    - Limites de recursos definidos para todos os serviços (CPU e memória), prevenindo exaustão de RAM no host compartilhado.
+- **Testes e Validação:**
+  - Criado teste automatizado `tests/zero-hardcoding-and-isolation.test.js` validando manifesto Docker e ausência de hardcodes no código fonte.
+  - Suíte completa: 170 testes (167 aprovados, 0 falhas, 3 pulados por ausência intencional de `TEST_DATABASE_URL`).
+  - Typecheck (`tsc --noEmit`) e Linter (`next lint`): 100% aprovados com 0 erros e 0 avisos.
+  - Next.js 14 Build de produção: 16/16 rotas estáticas/dinâmicas compiladas perfeitamente.
+  - Criados automatizadores de deploy unificados: `deploy.ps1`, `deploy.bat` e `scripts/remote-deploy.sh`.
+

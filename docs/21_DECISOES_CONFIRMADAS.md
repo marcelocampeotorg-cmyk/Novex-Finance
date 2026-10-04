@@ -4,7 +4,7 @@ Este é o documento de maior precedência.
 
 1. Produto: NOVEX Finance / NOVEX.
 2. Domínio alvo: `finance.novexbr.com.br` (subdomínio exclusivo da zona `novexbr.com.br`).
-3. Uso atual: uma única pessoa. Não projetar telas ou permissões multiusuário como requisito.
+3. Uso: transição ativa de monousuário para modelo **SaaS Multi-Tenant** provisionado e governado centralmente pelo **Painel Master**. A conta atual do proprietário (Frank) permanece como o Workspace Principal/Dono no mesmo banco de dados, totalmente preservada, e os novos clientes entram como novos workspaces isolados.
 4. Interface: desktop e mobile; site instalável como PWA.
 5. Paleta: identidade NOVEX/NOVEXBR fornecida pelo usuário.
 6. Estética: premium, limpa, moderna, dark-first.
@@ -44,3 +44,9 @@ Este é o documento de maior precedência.
 40. O NOVEX Finance não compartilha banco, Redis, Evolution, volumes, redes Docker, nomes de projeto ou ciclo de vida com NOVEX Master, NOVEX Oficina/Options ou qualquer outro sistema no mesmo host.
 41. Remover, recriar ou restaurar a stack `novexfinance-prod` deve afetar somente recursos prefixados por `novexfinance-prod`; nenhuma rotina de deploy pode usar `docker compose down` ou remoção de volumes fora desse projeto.
 42. PostgreSQL, Redis e Evolution não são publicados na rede externa. A aplicação é vinculada ao loopback do host e recebe tráfego somente por proxy/túnel autorizado.
+43. **Arquitetura SaaS e Painel Master:** O Painel Master é um painel administrativo e financeiro exclusivo do proprietário (Frank), atuando como *Control Plane* do ecossistema para gerenciar clientes, planos e produtos (Finance, Oficina, etc.). O Master provisiona, ativa, suspende e consulta clientes no NOVEX Finance exclusivamente via API REST interna autenticada por segredo de serviço (`MASTER_API_SECRET`).
+44. **Acesso do Cliente Final:** O cliente final é cadastrado no Painel Master pelo proprietário ao contratar o serviço. O cliente acessa o NOVEX Finance diretamente pela interface web do `finance.novexbr.com.br` com suas próprias credenciais (e-mail e senha), sem acesso ao Painel Master.
+45. **WhatsApp Multi-Instância na Evolution API:** O envio de cobranças Pix permanece via Evolution API (sem API oficial da Meta nesta fase, devido ao volume e custos). Cada cliente do SaaS possui sua própria instância dedicada na Evolution API (ex: `ws_<workspaceId>`), escaneando o próprio QR Code nas configurações do seu workspace no Finance para cobrar através de seu próprio número de WhatsApp.
+46. **Isolamento e Segurança Multi-Tenant:** Toda consulta, escrita, cálculo de saldo, ledger, contato, categoria, regra e webhook deve ser estritamente escopada por `workspaceId`. A sessão do usuário resolve seu workspace ativo e impede qualquer vazamento cruzado de dados entre empresas.
+47. **Preservação dos Dados do Proprietário:** A base de dados existente, incluindo o caixa físico e a conta Mercado Pago do proprietário, permanece como Workspace Principal (ID/Seed preservado). A transição para SaaS não descarta, reseta nem migra destrutivamente os dados atuais.
+48. **Política de Deploy do SaaS:** Nenhum deploy em produção deve ser realizado enquanto a arquitetura SaaS, a API do Master, o gerenciamento de instâncias da Evolution e o isolamento multi-tenant não estiverem 100% implementados e validados em ambiente local (Docker / suíte de testes). O ambiente de produção atual permanece intocado até autorização explícita de corte.

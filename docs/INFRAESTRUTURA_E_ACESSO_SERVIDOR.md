@@ -1,7 +1,8 @@
 # Guia de Infraestrutura, Acesso ao Servidor e Deploy — NOVEX Finance
 
 > **Documento de Referência Técnica para Engenharia e Agentes (Codex / Antigravity)**
-> **Atualizado em:** 2026-09-02
+> **Atualizado em:** 2026-10-04
+> **Servidor Alvo:** `novexserver` (Ubuntu Server 24.04 LTS)
 > **Domínio Oficial e Canônico:** `https://finance.novexbr.com.br`
  
 ---
@@ -9,30 +10,31 @@
 ## 1. Dados de Conexão e Acesso ao Servidor
  
 * **Host / IP:** `192.168.4.12`
-* **Porta SSH:** `22`
-* **Usuário:** `servidor`
+* **Hostname:** `novexserver`
+* **Porta SSH:** `22` (autenticação por chave pública)
+* **Usuário:** `frank`
 * **Comando de Acesso SSH:**
   ```bash
-  ssh -o StrictHostKeyChecking=no servidor@192.168.4.12
+  ssh -o StrictHostKeyChecking=no frank@192.168.4.12
   ```
-* **Permissões do Usuário `servidor`:**
-  * Pertence ao grupo `docker` (executa `docker` e `docker compose` diretamente sem necessidade de `sudo`);
-  * Permissão de leitura e escrita completa no diretório da sua home.
+* **Permissões do Usuário `frank`:**
+  * Pertence ao grupo `docker` (executa `docker` e `docker compose` diretamente);
+  * Proprietário do diretório de aplicações `/srv/novex/`.
  
 ---
  
 ## 2. Caminhos e Diretórios no Servidor
  
 * **Diretório Raiz do NOVEX Finance:**
-  `/home/servidor/Área de trabalho/Sistemas/novex finance`
+  `/srv/novex/finance`
 * **Arquivo de Configuração de Produção:**
-  `/home/servidor/Área de trabalho/Sistemas/novex finance/.env.production` (permissão `600`)
+  `/srv/novex/finance/.env.production` (permissão `600`)
 * **Arquivo Docker Compose de Produção:**
-  `/home/servidor/Área de trabalho/Sistemas/novex finance/docker-compose.prod.yml`
+  `/srv/novex/finance/docker-compose.prod.yml`
 * **Diretório de Backups Periódicos:**
-  `/home/servidor/Área de trabalho/Sistemas/novex finance/backups`
+  `/srv/novex/finance/backups`
 * **Scripts Operacionais:**
-  `/home/servidor/Área de trabalho/Sistemas/novex finance/scripts/` (`deploy-server.sh`, `backup-db.sh`, `backup-loop.sh`, `restore-db.sh`)
+  `/srv/novex/finance/scripts/` (`deploy-server.sh`, `backup-db.sh`, `backup-loop.sh`, `restore-db.sh`)
  
 ---
  
@@ -103,8 +105,8 @@ O servidor hospeda múltiplos sistemas em produção que **NUNCA PODEM SER AFETA
 
 ### A. Subir ou Atualizar a Stack do Finance
 ```bash
-ssh servidor@192.168.4.12
-cd "/home/servidor/Área de trabalho/Sistemas/novex finance"
+ssh frank@192.168.4.12
+cd /srv/novex/finance
 sh scripts/deploy-server.sh
 ```
 
@@ -119,7 +121,7 @@ journalctl -u cloudflared -n 50 --no-pager
 
 ### C. Diagnóstico dos Serviços do NOVEX Finance
 ```bash
-cd "/home/servidor/Área de trabalho/Sistemas/novex finance"
+cd /srv/novex/finance
 
 # Status de todos os containers do projeto
 docker compose --env-file .env.production -f docker-compose.prod.yml ps
@@ -136,7 +138,7 @@ curl -fsS http://127.0.0.1:8081/instance/fetchInstances
 
 ### D. Rotina de Backup e Restauração
 ```bash
-cd "/home/servidor/Área de trabalho/Sistemas/novex finance"
+cd /srv/novex/finance
 
 # Executar backup manual sob demanda
 sh scripts/backup-db.sh

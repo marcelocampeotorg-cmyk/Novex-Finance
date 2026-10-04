@@ -49,6 +49,18 @@ export async function getActiveMercadoPagoIntegration() {
  * Retorna o status sanitizado da integração do Mercado Pago para o workspace autenticado.
  */
 export async function getMercadoPagoIntegrationStatus(): Promise<IntegrationStatusResult> {
+  if (process.env.VISUAL_AUDIT_MODE === "true") {
+    return {
+      isConnected: true,
+      status: "CONNECTED",
+      environment: "PRODUCTION",
+      maskedToken: "APP_USR-8392••••••••••••-102938",
+      publicKey: "APP_USR-pubkey-sample-1234",
+      lastValidatedAt: new Date().toISOString(),
+      canManage: true,
+    };
+  }
+
   const context = await requireAuthenticatedWorkspace();
   const isAdmin = ["OWNER", "ADMIN"].includes(context.role);
 
@@ -370,6 +382,16 @@ export async function disconnectMercadoPagoIntegration() {
  * Retorna o status da integração Evolution API (DTO Sanitizado - NUNCA expõe apiKey ao React)
  */
 export async function getEvolutionApiStatus() {
+  if (process.env.VISUAL_AUDIT_MODE === "true") {
+    return {
+      isConnected: true,
+      baseUrl: "https://api-wpp.novex.app",
+      instanceName: "novex-finance-prod",
+      maskedApiKey: "evo•••••••••••849",
+      managedLocally: false,
+    };
+  }
+
   const context = await requireAuthenticatedWorkspace();
 
   const integration = await db.integrationAccount.findFirst({

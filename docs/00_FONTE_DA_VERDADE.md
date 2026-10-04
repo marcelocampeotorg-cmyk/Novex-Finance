@@ -1,6 +1,6 @@
 # 00 — Fonte da Verdade
 
-O NOVEX Finance é um sistema financeiro pessoal automatizado, inicialmente usado por uma única pessoa. O objetivo não é transformar o software em um banco nem conceder a ele autoridade para movimentar dinheiro.
+O NOVEX Finance é um sistema financeiro automatizado operando como **SaaS Multi-Tenant**, provisionado e governado centralmente pelo **Painel Master**. O objetivo não é transformar o software em um banco nem conceder a ele autoridade para movimentar dinheiro.
 
 O produto deve reduzir ao mínimo o trabalho manual de lançamento, cobrança, conciliação, categorização e acompanhamento.
 

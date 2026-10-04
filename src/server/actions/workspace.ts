@@ -25,6 +25,71 @@ export async function getWorkspaceSummary() {
   try {
     const context = await requireAuthenticatedWorkspace();
     const workspaceId = context.workspaceId;
+
+    if (process.env.VISUAL_AUDIT_MODE === "true") {
+      return {
+        success: true as const,
+        knownNetMovementCents: 13766,
+        manualBalanceCents: 12000,
+        manualBalanceAt: new Date().toISOString(),
+        mercadoPagoOfficialBalanceCents: 13766,
+        mercadoPagoOfficialBalanceAt: new Date().toISOString(),
+        mercadoPagoAnchorBalanceCents: 13766,
+        mercadoPagoAnchorAt: new Date().toISOString(),
+        mercadoPagoBalanceBasis: "RELEASE_PLUS_ACCOUNT_MONEY" as const,
+        mercadoPagoBalanceStatus: "CONFIRMED" as const,
+        consolidatedBalanceCents: 25766,
+        financeMode: "HYBRID" as const,
+        quarantineCount: 0,
+        coverageStart: new Date(Date.now() - 86400000 * 30).toISOString(),
+        coverageEnd: new Date().toISOString(),
+        historyBackfillStatus: "COMPLETED",
+        projectedKnownFlowCents: 125266,
+        projectedFlowCents: 125266,
+        totalPayablePendingCents: 8500,
+        totalReceivablePendingCents: 120000,
+        totalPayableMonthCents: 8500,
+        totalReceivableMonthCents: 120000,
+        totalOverdueCents: 0,
+        totalDebtorsOwedCents: 120000,
+        debtorsCount: 3,
+        lastSyncAt: new Date().toISOString(),
+        syncSource: "SINCRONIZADO" as const,
+        accountDisplayName: "Mercado Pago Oficial",
+        unresolvedTransactionsCount: 0,
+        unmatchesCount: 0,
+        uncategorizedCount: 0,
+        balanceDescription: "Saldo Oficial Confirmado",
+        isOutdated: false,
+        monthIncomeCents: 450000,
+        monthExpenseCents: 185000,
+        monthNetCents: 265000,
+        financialAccounts: [
+          {
+            id: "acc-mp-1",
+            type: "MERCADO_PAGO" as const,
+            name: "Mercado Pago Oficial",
+            openingBalanceCents: null,
+            openingBalanceAt: null,
+            officialBalanceCents: 13766,
+            officialBalanceStatus: "CONFIRMED" as const,
+          },
+          {
+            id: "acc-man-1",
+            type: "MANUAL" as const,
+            name: "Caixa Físico / Cofre",
+            openingBalanceCents: 12000,
+            openingBalanceAt: new Date().toISOString(),
+            officialBalanceCents: null,
+            officialBalanceStatus: "UNAVAILABLE" as const,
+          },
+        ],
+        mpContinuousCoverageStart: new Date(Date.now() - 86400000 * 30).toISOString(),
+        mpContinuousCoverageEnd: new Date().toISOString(),
+        role: "OWNER",
+      };
+    }
+
     const workspace = await db.workspace.findUnique({
       where: { id: workspaceId },
       select: { financeMode: true, financialAccounts: true },
@@ -388,6 +453,88 @@ export async function getDashboardData() {
     if (!summary.success) {
       return { success: false as const, error: summary.error || "Falha ao carregar resumo do dashboard." };
     }
+
+    if (process.env.VISUAL_AUDIT_MODE === "true") {
+      return {
+        success: true as const,
+        summary,
+        chartData: [
+          { data: "01/10", entradas: 1200, saídas: 450, saldo: 750 },
+          { data: "02/10", entradas: 850, saídas: 600, saldo: 1000 },
+          { data: "03/10", entradas: 1450, saídas: 300, saldo: 2150 },
+          { data: "04/10", entradas: 1000, saídas: 500, saldo: 2650 },
+        ],
+        recentTransactions: [
+          {
+            id: "tx-1",
+            direction: "DEBIT",
+            amountCents: 1252,
+            description: "Mercado Pago Payout",
+            counterpartName: "Facebook Servicos Online Do Brasil Ltda",
+            type: "PAYOUTS",
+            source: "MERCADO_PAGO_API",
+            category: "Marketing & Anúncios",
+            reconciliationStatus: "MATCHED",
+            occurredAt: new Date().toISOString(),
+          },
+          {
+            id: "tx-2",
+            direction: "CREDIT",
+            amountCents: 7500,
+            description: "Transferência Pix Recebida",
+            counterpartName: "Jovani Rosa Dos Santos",
+            type: "PIX",
+            source: "MERCADO_PAGO_API",
+            category: "Recebimento Pix",
+            reconciliationStatus: "MATCHED",
+            occurredAt: new Date().toISOString(),
+          },
+          {
+            id: "tx-3",
+            direction: "DEBIT",
+            amountCents: 2200,
+            description: "Compra no Débito",
+            counterpartName: "Drogaria Jaranapolis Ltda",
+            type: "CARD",
+            source: "MERCADO_PAGO_API",
+            category: "Saúde & Farmácia",
+            reconciliationStatus: "MATCHED",
+            occurredAt: new Date().toISOString(),
+          },
+        ],
+        payables: [
+          {
+            id: "pay-1",
+            title: "Servidor Nuvem (Cloud)",
+            direction: "PAYABLE",
+            totalAmountCents: 8500,
+            installments: [
+              {
+                id: "inst-1",
+                sequence: 1,
+                totalSequences: 1,
+                amountCents: 8500,
+                dueDate: new Date(Date.now() + 86400000 * 3).toISOString(),
+                status: "SCHEDULED",
+              },
+            ],
+          },
+        ],
+        debtorsCount: 2,
+        installmentsForecast: [
+          { month: "10", year: 2026, count: 4, totalCents: 85000 },
+          { month: "11", year: 2026, count: 3, totalCents: 62000 },
+          { month: "12", year: 2026, count: 2, totalCents: 41000 },
+          { month: "01", year: 2027, count: 1, totalCents: 20000 },
+        ],
+        expensesByCategory: [
+          { name: "Infraestrutura & Nuvem", amountCents: 85000, percentage: 46 },
+          { name: "Marketing & Anúncios", amountCents: 55000, percentage: 30 },
+          { name: "Alimentação & Suprimentos", amountCents: 45000, percentage: 24 },
+        ],
+      };
+    }
+
     const { workspaceId } = await requireAuthenticatedWorkspace();
 
     const txs = await db.externalTransaction.findMany({

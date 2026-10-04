@@ -4,11 +4,11 @@ Este documento consolida a arquitetura e as regras atuais do NOVEX Finance para 
 
 ## 1. Objetivo do NOVEX Finance
 
-O NOVEX Finance é um gestor financeiro pessoal automatizado, inicialmente para uma única pessoa.
+O NOVEX Finance é um gestor financeiro empresarial e pessoal automatizado, operando como **SaaS Multi-Tenant** provisionado e gerenciado centralmente pelo Painel Master.
 
 Ele deve controlar contas a pagar e receber, gerar cobranças Pix, gerar QR/Pix Copia e Cola para pagamentos realizados pelo usuário, observar o Mercado Pago, importar entradas e saídas reais, manter um Ledger auditável, conciliar movimentações, aprender padrões confirmados, cobrar devedores pela Evolution API e atualizar a interface sem F5.
 
-Não é banco, ERP, terminal de trading, sistema contábil completo nem plataforma multiempresa. Ver [Visão do Produto](./01_VISAO_PRODUTO.md).
+Não é banco, ERP tradicional, terminal de trading nem sistema fiscal completo de apuração tributária. Ver [Visão do Produto](./01_VISAO_PRODUTO.md).
 
 ## 2. Regra financeira máxima
 

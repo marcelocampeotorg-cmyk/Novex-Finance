@@ -12,8 +12,9 @@ import {
   DEFAULT_PENSION_PERCENTAGE,
   calculatePensionInstallmentCents,
 } from "@/domain/pension-indexer";
-import { adjustPensionMinimumWage } from "@/server/actions/financial-items";
+import { adjustPensionMinimumWage, deleteFinancialItem } from "@/server/actions/financial-items";
 import { notifyStoreChange } from "@/services/financial-store";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 
 interface AccountDetailsDrawerProps {
   isOpen: boolean;
@@ -39,6 +40,8 @@ export const AccountDetailsDrawer: React.FC<AccountDetailsDrawerProps> = ({
   const [isAdjusting, setIsAdjusting] = useState(false);
   const [adjustSuccessMsg, setAdjustSuccessMsg] = useState<string | null>(null);
   const [adjustErrorMsg, setAdjustErrorMsg] = useState<string | null>(null);
+  const [isConfirmDeleteOpen, setIsConfirmDeleteOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     setCurrentItem(item);
@@ -59,16 +62,22 @@ export const AccountDetailsDrawer: React.FC<AccountDetailsDrawerProps> = ({
     (i) => i.status === "SCHEDULED" || i.status === "OVERDUE"
   );
 
-  const handleDelete = async () => {
-    if (confirm(`Tem certeza que deseja excluir permanentemente a conta "${currentItem.title}"?`)) {
+  const handleConfirmDelete = async () => {
+    setIsDeleting(true);
+    try {
       if (onDelete) {
-        onDelete(currentItem);
+        await onDelete(currentItem);
       } else {
-        const { deleteFinancialItem } = await import("@/server/actions/financial-items");
         const result = await deleteFinancialItem(currentItem.id);
-        if (!result.success) throw new Error(result.error || "Falha ao excluir conta.");
+        if (!result.success) throw new Error(result.error || "Falha ao mover conta para a lixeira.");
       }
+      notifyStoreChange();
+      setIsConfirmDeleteOpen(false);
       onClose();
+    } catch (err: any) {
+      console.error("Erro ao mover conta para lixeira:", err);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -304,11 +313,11 @@ export const AccountDetailsDrawer: React.FC<AccountDetailsDrawerProps> = ({
           {/* Footer Actions */}
           <div className="border-t border-novex-border pt-4 mt-6">
             <button
-              onClick={handleDelete}
+              onClick={() => setIsConfirmDeleteOpen(true)}
               className="flex w-full items-center justify-center gap-2 rounded-lg border border-rose-500/40 bg-rose-500/10 py-2.5 text-xs font-semibold text-rose-400 hover:bg-rose-500/20 transition-colors"
             >
               <Trash2 className="h-4 w-4" />
-              <span>Excluir Esta Conta</span>
+              <span>Mover para a Lixeira</span>
             </button>
           </div>
         </div>
@@ -413,6 +422,18 @@ export const AccountDetailsDrawer: React.FC<AccountDetailsDrawerProps> = ({
           </div>
         </div>
       )}
+      {/* Modal Corporativo de Confirmação de Exclusão (Soft Delete) */}
+      <ConfirmModal
+        isOpen={isConfirmDeleteOpen}
+        onClose={() => setIsConfirmDeleteOpen(false)}
+        onConfirm={handleConfirmDelete}
+        isLoading={isDeleting}
+        title={`Mover "${currentItem?.title}" para a Lixeira?`}
+        description="Esta obrigação financeira deixará de ser considerada nos cálculos ativos e no fluxo de caixa previsto."
+        subNote="O registro não é excluído permanentemente. Você pode restaurá-lo a qualquer momento na Central de Lixeira em até 30 dias."
+        confirmText="Mover para Lixeira"
+        variant="danger"
+      />
     </div>
   );
 };

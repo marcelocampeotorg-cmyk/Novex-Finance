@@ -13,6 +13,13 @@ import { selectMercadoPagoSyncWindow } from "@/domain/mercado-pago-sync-window";
 import { validateAccessToken } from "@/integrations/mercado-pago/credentials-validator";
 import { classifyTransactionDescription, extractCounterpartPattern } from "@/domain/transaction-classification";
 import { parseMercadoPagoAccountStatementCsv, toTitleCaseCounterpart } from "@/domain/mercado-pago-account-statement";
+import {
+  applyCounterpartMemoryToTransactions,
+  confirmTransactionCounterpart,
+  getCounterpartRules,
+  toggleCounterpartRule,
+  deleteCounterpartRule,
+} from "./counterpart-rules-service";
 
 function brazilianCivilDate(date: Date): string {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -28,6 +35,79 @@ function brazilianCivilDate(date: Date): string {
 export async function getExternalTransactions(period: string = "MONTHLY") {
   try {
     const { workspaceId } = await requireAuthenticatedWorkspace();
+
+    if (process.env.VISUAL_AUDIT_MODE === "true") {
+      return [
+        {
+          id: "tx-1",
+          source: "MERCADO_PAGO_API",
+          provider: "MERCADO_PAGO",
+          externalId: "175963571301",
+          direction: "DEBIT",
+          type: "PAYOUTS",
+          status: "APPROVED",
+          amountCents: 1252,
+          feeCents: 0,
+          netAmountCents: 1252,
+          occurredAt: new Date(Date.now() - 3600000 * 4).toISOString(),
+          counterpartName: "Facebook Servicos Online Do Brasil Ltda",
+          description: "Facebook Ads Brasil",
+          reconciliationStatus: "MATCHED",
+          category: "Marketing & Anúncios",
+        },
+        {
+          id: "tx-2",
+          source: "MERCADO_PAGO_API",
+          provider: "MERCADO_PAGO",
+          externalId: "176866825828",
+          direction: "CREDIT",
+          type: "PIX",
+          status: "APPROVED",
+          amountCents: 7500,
+          feeCents: 0,
+          netAmountCents: 7500,
+          occurredAt: new Date(Date.now() - 3600000 * 18).toISOString(),
+          counterpartName: "Jovani Rosa Dos Santos",
+          description: "Pix Recebido - Itaú Unibanco",
+          reconciliationStatus: "MATCHED",
+          category: "Recebimento Pix",
+        },
+        {
+          id: "tx-3",
+          source: "MERCADO_PAGO_API",
+          provider: "MERCADO_PAGO",
+          externalId: "175901588737",
+          direction: "DEBIT",
+          type: "CARD",
+          status: "APPROVED",
+          amountCents: 2200,
+          feeCents: 0,
+          netAmountCents: 2200,
+          occurredAt: new Date(Date.now() - 3600000 * 30).toISOString(),
+          counterpartName: "Drogaria Jaranapolis Ltda",
+          description: "Drogaria Jaranapolis",
+          reconciliationStatus: "MATCHED",
+          category: "Saúde & Farmácia",
+        },
+        {
+          id: "tx-4",
+          source: "MERCADO_PAGO_API",
+          provider: "MERCADO_PAGO",
+          externalId: "175714580829",
+          direction: "DEBIT",
+          type: "PAYOUTS",
+          status: "APPROVED",
+          amountCents: 999,
+          feeCents: 0,
+          netAmountCents: 999,
+          occurredAt: new Date(Date.now() - 3600000 * 48).toISOString(),
+          counterpartName: "Google Brasil Pagamentos Ltda.",
+          description: "Google Workspace Subscription",
+          reconciliationStatus: "SUGGESTED",
+          category: "Tecnologia & Softwares",
+        },
+      ];
+    }
 
     const now = new Date();
     let dateFilter: { gte?: Date; lte?: Date } | undefined = undefined;
@@ -1146,6 +1226,19 @@ export async function getReconciliationSummary(period: string = "MONTHLY") {
   try {
     const { workspaceId } = await requireAuthenticatedWorkspace();
 
+    if (process.env.VISUAL_AUDIT_MODE === "true") {
+      return {
+        totalCount: 4,
+        matchedCount: 3,
+        suggestedCount: 1,
+        unmatchedCount: 0,
+        totalCreditCents: 7500,
+        totalDebitCents: 4451,
+        totalFeeCents: 0,
+        reconciliationPercentage: 75,
+      };
+    }
+
     const now = new Date();
     let dateFilter: { gte?: Date; lte?: Date } | undefined = undefined;
 
@@ -1543,229 +1636,13 @@ export async function enrichAllMercadoPagoTransactions(internalContext?: symbol,
 }
 
 /**
- * Aplica o catálogo de memória de fornecedores (CounterpartRule) em transações elegíveis
+ * Regras e memória de contrapartes (desacoplado em counterpart-rules-service.ts)
  */
-export async function applyCounterpartMemoryToTransactions(targetWorkspaceId?: string, internalContext?: symbol) {
-  try {
-    const workspaceId = internalContext === INTERNAL_WORKER_CONTEXT && targetWorkspaceId
-      ? targetWorkspaceId
-      : (await requireAuthenticatedWorkspace()).workspaceId;
+export {
+  applyCounterpartMemoryToTransactions,
+  confirmTransactionCounterpart,
+  getCounterpartRules,
+  toggleCounterpartRule,
+  deleteCounterpartRule,
+} from "./counterpart-rules-service";
 
-    const rules = await db.counterpartRule.findMany({
-      where: { workspaceId, isEnabled: true },
-      select: { pattern: true, canonicalName: true, defaultCategoryId: true, confidenceScore: true, source: true, isEnabled: true },
-    });
-    if (rules.length === 0) return { success: true, updatedCount: 0 };
-
-    const eligibleTxs = await db.externalTransaction.findMany({
-      where: {
-        workspaceId,
-        quarantinedAt: null,
-        counterpartName: null,
-      },
-      select: {
-        id: true,
-        description: true,
-        rawProviderData: true,
-        rawEnrichmentData: true,
-      },
-      take: 100,
-    });
-
-    let updatedCount = 0;
-    for (const tx of eligibleTxs) {
-      const raw = typeof tx.rawProviderData === "object" && tx.rawProviderData !== null
-        ? (tx.rawProviderData as Record<string, unknown>)
-        : {};
-      const evidence = [
-        tx.description,
-        raw?.DESCRIPTION,
-        raw?.SALE_DETAIL,
-        raw?.OPERATION_TAGS,
-        raw?.EXTERNAL_REFERENCE,
-      ].filter((v): v is string => typeof v === "string").join(" ");
-
-      const classification = classifyTransactionDescription(evidence, null, rules);
-      if (classification.merchantName && (classification.confidence === "HIGH" || classification.confidence === "MEDIUM")) {
-        const enrichment = typeof tx.rawEnrichmentData === "object" && tx.rawEnrichmentData !== null
-          ? (tx.rawEnrichmentData as Record<string, unknown>)
-          : {};
-
-        await db.externalTransaction.update({
-          where: { id: tx.id },
-          data: {
-            counterpartName: classification.merchantName,
-            rawEnrichmentData: {
-              ...enrichment,
-              source: "INFERRED",
-              counterpartRule: {
-                pattern: classification.matchedPattern,
-                canonicalName: classification.merchantName,
-                confidence: classification.confidence,
-                reason: classification.reason,
-                appliedAt: new Date().toISOString(),
-              },
-            } as any,
-          },
-        });
-        updatedCount++;
-      }
-    }
-
-    if (updatedCount > 0) {
-      revalidatePath("/movimentacoes");
-      revalidatePath("/relatorios");
-      revalidatePath("/");
-    }
-
-    return { success: true, updatedCount };
-  } catch (err: any) {
-    console.error("Erro ao aplicar memória de fornecedores:", err);
-    return { success: false, error: err.message || String(err) };
-  }
-}
-
-/**
- * Confirma ou edita a identidade de um favorecido e opcionalmente gera regra de memória futura
- */
-export async function confirmTransactionCounterpart(params: {
-  externalTransactionId: string;
-  counterpartName: string;
-  rememberRule?: boolean;
-}) {
-  try {
-    const { workspaceId, userId } = await requireAuthenticatedWorkspace();
-    const cleanName = toTitleCaseCounterpart(params.counterpartName);
-    if (!cleanName || cleanName.length < 2) {
-      return { success: false, error: "Nome do favorecido inválido (mínimo de 2 caracteres)." };
-    }
-
-    const tx = await db.externalTransaction.findFirst({
-      where: { id: params.externalTransactionId, workspaceId },
-    });
-    if (!tx) {
-      return { success: false, error: "Movimentação não encontrada." };
-    }
-
-    const enrichment = typeof tx.rawEnrichmentData === "object" && tx.rawEnrichmentData !== null
-      ? (tx.rawEnrichmentData as Record<string, unknown>)
-      : {};
-
-    await db.$transaction(async (prismaTx) => {
-      await prismaTx.externalTransaction.update({
-        where: { id: tx.id },
-        data: {
-          counterpartName: cleanName,
-          rawEnrichmentData: {
-            ...enrichment,
-            source: "USER_CONFIRMED",
-            userConfirmation: {
-              confirmedAt: new Date().toISOString(),
-              confirmedBy: userId,
-              counterpartName: cleanName,
-            },
-          } as any,
-        },
-      });
-
-      if (params.rememberRule) {
-        const pattern = extractCounterpartPattern(cleanName);
-        if (pattern && pattern.length >= 2) {
-          await prismaTx.counterpartRule.upsert({
-            where: {
-              workspaceId_pattern: { workspaceId, pattern },
-            },
-            update: {
-              canonicalName: cleanName,
-              confidenceScore: 95,
-              source: "USER_CONFIRMED",
-              isEnabled: true,
-            },
-            create: {
-              workspaceId,
-              pattern,
-              canonicalName: cleanName,
-              confidenceScore: 95,
-              source: "USER_CONFIRMED",
-              isEnabled: true,
-            },
-          });
-        }
-      }
-
-      await prismaTx.auditLog.create({
-        data: {
-          workspaceId,
-          actorType: "USER",
-          actorId: userId,
-          action: "COUNTERPART_NAME_CONFIRMED",
-          entityType: "ExternalTransaction",
-          entityId: tx.id,
-          metadata: {
-            counterpartName: cleanName,
-            rememberRule: Boolean(params.rememberRule),
-          },
-        },
-      });
-    });
-
-    if (params.rememberRule) {
-      await applyCounterpartMemoryToTransactions(workspaceId);
-    }
-
-    revalidatePath("/movimentacoes");
-    return { success: true, counterpartName: cleanName };
-  } catch (err: any) {
-    console.error("Erro ao confirmar favorecido:", err);
-    return { success: false, error: err.message || String(err) };
-  }
-}
-
-/**
- * Consulta regras de contrapartes ativas do workspace
- */
-export async function getCounterpartRules() {
-  try {
-    const { workspaceId } = await requireAuthenticatedWorkspace();
-    const rules = await db.counterpartRule.findMany({
-      where: { workspaceId },
-      orderBy: { createdAt: "desc" },
-    });
-    return { success: true, rules };
-  } catch (err: any) {
-    return { success: false, error: err.message || String(err), rules: [] };
-  }
-}
-
-/**
- * Ativa ou desativa uma regra de contraparte
- */
-export async function toggleCounterpartRule(id: string, isEnabled: boolean) {
-  try {
-    const { workspaceId } = await requireAuthenticatedWorkspace();
-    await db.counterpartRule.updateMany({
-      where: { id, workspaceId },
-      data: { isEnabled },
-    });
-    revalidatePath("/movimentacoes");
-    return { success: true };
-  } catch (err: any) {
-    return { success: false, error: err.message || String(err) };
-  }
-}
-
-/**
- * Remove uma regra de contraparte
- */
-export async function deleteCounterpartRule(id: string) {
-  try {
-    const { workspaceId } = await requireAuthenticatedWorkspace();
-    await db.counterpartRule.deleteMany({
-      where: { id, workspaceId },
-    });
-    revalidatePath("/movimentacoes");
-    return { success: true };
-  } catch (err: any) {
-    return { success: false, error: err.message || String(err) };
-  }
-}

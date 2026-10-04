@@ -18,6 +18,32 @@ export async function getLiveDashboardAlerts(): Promise<{
   alerts: LiveAlertItem[];
 }> {
   try {
+    if (process.env.VISUAL_AUDIT_MODE === "true") {
+      return {
+        success: true,
+        alerts: [
+          {
+            id: "live-alert-1",
+            type: "DUE_TODAY",
+            title: "Cobrança Pix Vencendo Hoje",
+            description: "Mensalidade Consultoria TI - R$ 3.500,00",
+            amountCents: 350000,
+            contactName: "Acme Corp",
+            occurredAt: new Date().toISOString(),
+          },
+          {
+            id: "live-alert-2",
+            type: "PAYMENT_RECEIVED",
+            title: "Pix Recebido",
+            description: "Jovani Rosa de Oliveira - R$ 25,00",
+            amountCents: 2500,
+            contactName: "Jovani Rosa de Oliveira",
+            occurredAt: new Date().toISOString(),
+          },
+        ],
+      };
+    }
+
     const { workspaceId } = await requireAuthenticatedWorkspace();
 
     const now = new Date();

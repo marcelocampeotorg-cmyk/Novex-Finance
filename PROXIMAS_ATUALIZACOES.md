@@ -91,3 +91,66 @@
 > **STATUS DA FUNCIONALIDADE:**
 > ⚠️ **PLANEJADA | EM DESENHO DE ARQUITETURA**
 > Painel executivo com visualização de despesas por categoria, regras de correspondência determinísticas e relatórios de fluxo de caixa em tempo real.
+
+---
+
+## 4. Arquitetura SaaS Multi-Tenant & API de Integração com o Painel Master
+
+> **STATUS DA FUNCIONALIDADE:**
+> ⚠️ **PLANEJADA | EM DESENHO DE ARQUITETURA E PREPARAÇÃO LOCAL**
+> Transição oficial do NOVEX Finance para arquitetura multilocatária (*multi-tenant*), governada e provisionada pelo **Painel Master** (painel administrativo exclusivo do proprietário Frank), com instâncias individuais de WhatsApp na Evolution API e isolamento estrito de dados.
+
+---
+
+### 4.1 Princípios e Modelo Operacional
+
+1. **Papel do Painel Master (Control Plane Interno):**
+   - O Painel Master é de uso exclusivo do proprietário (Frank). Clientes finais não acessam o Master.
+   - O cliente contrata o produto com a NOVEX. O proprietário cadastra o cliente no Master e seleciona o produto (*NOVEX Finance*).
+   - O Painel Master faz uma chamada autenticada via API REST para o NOVEX Finance para criar/gerenciar o cliente.
+2. **Acesso do Cliente Final no Finance:**
+   - O cliente entra diretamente pela URL do sistema (`https://finance.novexbr.com.br`) usando seu e-mail e senha.
+   - O cliente enxerga apenas o seu Workspace e os seus dados financeiros (isolamento estrito por `workspaceId`).
+3. **Preservação dos Dados do Proprietário:**
+   - O workspace e os dados financeiros reais atuais do proprietário (caixa físico de R$ 120,00, credenciais do Mercado Pago, histórico e regras) permanecem como o **Workspace Principal / Dono** no mesmo banco de dados. Nada é resetado ou perdido.
+4. **WhatsApp Dedicado por Cliente (Evolution API):**
+   - Não será utilizada a API oficial da Meta nesta fase (baixo volume e economia de custos operacionais).
+   - Cada cliente no SaaS possui sua própria instância dedicada na Evolution API local (ex: `ws_<workspaceId>`), escaneando seu próprio QR Code na aba de Configurações para enviar cobranças pelo seu número próprio.
+5. **Política de Deploy Zero:**
+   - Todo o desenvolvimento, refatoração e testes serão executados exclusivamente em ambiente local (Docker / banco local).
+   - **Nenhum deploy em produção será realizado** até que o SaaS esteja 100% pronto, testado e expressamente aprovado pelo proprietário.
+
+---
+
+### 4.2 Especificação da API de Integração com o Painel Master
+
+Endpoints protegidos por cabeçalho de autorização com segredo compartilhado (`Authorization: Bearer <MASTER_API_SECRET>`):
+
+| Endpoint | Método | Descrição |
+| :--- | :--- | :--- |
+| `/api/master/tenants` | `POST` | Cria um novo cliente no Finance: gera o `User`, cria o `Workspace`, vincula como `MembershipRole.OWNER`, provisiona categorias padrão e conta geral manual. |
+| `/api/master/tenants/:id/subscription` | `PUT` | Atualiza o plano (`STARTER`, `PRO`, etc.) ou o status do cliente (`ACTIVE`, `SUSPENDED`, `CANCELED`). Se suspenso, o middleware bloqueia o acesso do cliente no Finance. |
+| `/api/master/tenants/:id/usage` | `GET` | Retorna métricas de uso do workspace (quantidade de transações do mês, saldo de lançamentos, instâncias ativas) para exibição no painel administrativo do Master. |
+| `/api/master/tenants/:id/reset-access` | `POST` | Gera um link de primeiro acesso ou redefinição de senha para o cliente final. |
+
+---
+
+### 4.3 Gestão Multi-Instância da Evolution API
+
+* **Módulo:** `src/integrations/evolution/instance-manager.ts`
+* **Comportamento:**
+  - Ao abrir a aba de WhatsApp nas Configurações, o Finance verifica se a instância `ws_<workspaceId>` existe na Evolution.
+  - Se não existir, chama `POST /instance/create` com o nome da instância e webhook direcionado para o callback do Finance.
+  - Exibe o QR Code Base64 nativo na tela do cliente.
+  - O status do socket (`open`, `close`, `connecting`) é consultado e armazenado por workspace, permitindo desconexão ou reinicialização sem afetar outros clientes.
+
+---
+
+### 4.4 Critérios de Aceite para Conclusão da Fase SaaS
+
+- [ ] Contrato da API do Master implementado e coberto por testes automatizados com validação de token `MASTER_API_SECRET`.
+- [ ] Criação de novos tenants cria usuário, workspace isolado e categorias padrão sem interferir no workspace do proprietário.
+- [ ] Testes de isolamento garantem que nenhum endpoint ou Server Action vaze dados de um `workspaceId` para outro.
+- [ ] Suporte a múltiplas instâncias da Evolution API verificado localmente.
+- [ ] Suíte de testes automatizados (`npm test`) passando com 100% de sucesso.
+- [ ] Homologação em Docker local sem regressão.

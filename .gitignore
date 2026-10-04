@@ -71,3 +71,8 @@ test-*
 # TypeScript build info
 *.tsbuildinfo
 tsconfig.tsbuildinfo
+
+# Python cache & relatórios visuais transitórios
+__pycache__/
+*.pyc
+/reports/

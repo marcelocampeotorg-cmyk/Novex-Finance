@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-DEST="/home/servidor/Área de trabalho/Sistemas/novex finance"
+DEST="${NOVEX_APP_DIR:-/srv/novex/finance}"
 
 mkdir -p "$DEST/src/app/api/logs/client" "$DEST/logs"
 

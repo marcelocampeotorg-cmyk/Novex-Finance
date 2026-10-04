@@ -65,7 +65,7 @@ export default function ConfiguracoesPage() {
   // WhatsApp / Evolution API States (Desacoplado & Simplificado)
   const [showAdvancedEvo, setShowAdvancedEvo] = useState(false);
   const [showTestSection, setShowTestSection] = useState(false);
-  const [evoUrl, setEvoUrl] = useState("http://localhost:8081");
+  const [evoUrl, setEvoUrl] = useState("");
   const [evoApiKey, setEvoApiKey] = useState("");
   const [evoInstance, setEvoInstance] = useState("novex-finance");
   const [waConnected, setWaConnected] = useState(false);
@@ -611,7 +611,7 @@ export default function ConfiguracoesPage() {
                 type="text"
                 value={publicKeyInput}
                 onChange={(e) => setPublicKeyInput(e.target.value)}
-                placeholder="APP_USR-c5511c56-3ddc-425e-80fb-..."
+                placeholder="APP_USR-..."
                 className="w-full rounded-lg border border-novex-border bg-novex-bg p-2.5 text-novex-text-primary font-mono focus:border-novex-cyan focus:outline-none"
               />
             </div>

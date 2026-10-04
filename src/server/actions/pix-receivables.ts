@@ -45,6 +45,25 @@ import { getActiveMercadoPagoIntegrationForWorkspace } from "@/server/services/m
 export async function generateReceivablePixCharge(input: {
   installmentId: string;
 }): Promise<PixChargeStatusResult> {
+  if (process.env.VISUAL_AUDIT_MODE === "true") {
+    return {
+      success: true,
+      pixChargeId: "pix-charge-mock-1",
+      externalOrderId: "ord-mp-9821739812",
+      status: "PENDING",
+      isPaid: false,
+      amountCents: 60000,
+      qrCode: "00020101021226840014br.gov.bcb.pix2562qrcodes-pix.mercadopago.com/order/sample-mock-pix-order5204000053039865406600.005802BR5916NOVEX FINANCE LTDA6009SAO PAULO62070503***6304ABCD",
+      qrCodeBase64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      ticketUrl: "https://www.mercadopago.com.br/payments/sample/ticket",
+      expiresAt: new Date(Date.now() + 86400000 * 3).toISOString(),
+      debtorName: "Jovani Rosa Dos Santos",
+      debtorPhone: "556294752418",
+      title: "Consultoria em Inteligência Financeira",
+      senderName: "Franklin Jr - NOVEX",
+    };
+  }
+
   const context = await requireAuthenticatedWorkspace();
 
   const workspace = await db.workspace.findUnique({

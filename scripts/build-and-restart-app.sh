@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-cd "/home/servidor/Área de trabalho/Sistemas/novex finance"
+cd "${NOVEX_APP_DIR:-/srv/novex/finance}"
 
 echo "=== [1/4] Iniciando build da imagem novexfinance-prod-app ==="
 docker compose --env-file .env.production -f docker-compose.prod.yml build app

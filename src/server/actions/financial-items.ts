@@ -8,6 +8,192 @@ export async function getFinancialItems(direction?: "PAYABLE" | "RECEIVABLE") {
   try {
     const { workspaceId } = await requireAuthenticatedWorkspace();
 
+    if (process.env.VISUAL_AUDIT_MODE === "true") {
+      if (direction === "RECEIVABLE") {
+        return [
+          {
+            id: "rec-1",
+            direction: "RECEIVABLE",
+            kind: "INSTALLMENT_PLAN",
+            title: "Consultoria em Inteligência Financeira",
+            description: "Projeto de automação e conciliação",
+            contact: {
+              id: "cont-1",
+              name: "Jovani Rosa Dos Santos",
+              document: "123.456.789-00",
+              phone: "556294752418",
+              pixKeys: [{ id: "pk-1", type: "CPF", value: "12345678900" }],
+            },
+            category: "Serviços & Consultoria",
+            categoryColor: "#00E5FF",
+            pixKey: "12345678900",
+            totalAmountCents: 120000,
+            startDate: new Date().toISOString(),
+            status: "ACTIVE",
+            attachmentsCount: 0,
+            createdAt: new Date().toISOString(),
+            installments: [
+              {
+                id: "inst-rec-1",
+                sequence: 1,
+                totalSequences: 2,
+                amountCents: 60000,
+                dueDate: new Date(Date.now() + 86400000 * 5).toISOString(),
+                status: "SCHEDULED",
+                settledAmountCents: 0,
+                selectedPixKey: { id: "pk-1", type: "CPF", value: "12345678900" },
+              },
+              {
+                id: "inst-rec-2",
+                sequence: 2,
+                totalSequences: 2,
+                amountCents: 60000,
+                dueDate: new Date(Date.now() + 86400000 * 35).toISOString(),
+                status: "SCHEDULED",
+                settledAmountCents: 0,
+                selectedPixKey: { id: "pk-1", type: "CPF", value: "12345678900" },
+              },
+            ],
+            _count: { reconciliations: 1 },
+          },
+          {
+            id: "rec-2",
+            direction: "RECEIVABLE",
+            kind: "ONE_TIME",
+            title: "Mensalidade Plano Corporativo",
+            description: "Acesso à plataforma e relatórios",
+            contact: {
+              id: "cont-2",
+              name: "Auto Peças Central Ltda",
+              document: "12.345.678/0001-90",
+              phone: "5511988887777",
+              pixKeys: [],
+            },
+            category: "Assinaturas SaaS",
+            categoryColor: "#10B981",
+            totalAmountCents: 45000,
+            startDate: new Date().toISOString(),
+            status: "ACTIVE",
+            attachmentsCount: 0,
+            createdAt: new Date().toISOString(),
+            installments: [
+              {
+                id: "inst-rec-3",
+                sequence: 1,
+                totalSequences: 1,
+                amountCents: 45000,
+                dueDate: new Date(Date.now() + 86400000 * 12).toISOString(),
+                status: "SCHEDULED",
+                settledAmountCents: 0,
+              },
+            ],
+            _count: { reconciliations: 0 },
+          },
+        ];
+      }
+
+      // PAYABLE
+      return [
+        {
+          id: "pay-1",
+          direction: "PAYABLE",
+          kind: "RECURRING",
+          title: "Servidor Nuvem (Cloud)",
+          description: "Hospedagem infraestrutura e Docker",
+          contact: {
+            id: "cont-pay-1",
+            name: "Cloud Server Hosting Ltda",
+            document: "98.765.432/0001-10",
+            phone: "5511977776666",
+            pixKeys: [{ id: "pk-pay-1", type: "EMAIL", value: "financeiro@cloudhosting.com.br" }],
+          },
+          category: "Infraestrutura & Nuvem",
+          categoryColor: "#00E5FF",
+          pixKey: "financeiro@cloudhosting.com.br",
+          totalAmountCents: 8500,
+          startDate: new Date().toISOString(),
+          status: "ACTIVE",
+          attachmentsCount: 0,
+          createdAt: new Date().toISOString(),
+          installments: [
+            {
+              id: "inst-pay-1",
+              sequence: 1,
+              totalSequences: 1,
+              amountCents: 8500,
+              dueDate: new Date(Date.now() + 86400000 * 3).toISOString(),
+              status: "SCHEDULED",
+              settledAmountCents: 0,
+              selectedPixKey: { id: "pk-pay-1", type: "EMAIL", value: "financeiro@cloudhosting.com.br" },
+            },
+          ],
+          _count: { reconciliations: 1 },
+        },
+        {
+          id: "pay-2",
+          direction: "PAYABLE",
+          kind: "INSTALLMENT_PLAN",
+          title: "Licença de Software de Segurança",
+          description: "Certificados SSL e firewall WAF",
+          contact: {
+            id: "cont-pay-2",
+            name: "SecOps Tech Brasil",
+            pixKeys: [],
+          },
+          category: "Tecnologia & Softwares",
+          categoryColor: "#3B82F6",
+          totalAmountCents: 12000,
+          startDate: new Date().toISOString(),
+          status: "ACTIVE",
+          attachmentsCount: 0,
+          createdAt: new Date().toISOString(),
+          installments: [
+            {
+              id: "inst-pay-2",
+              sequence: 1,
+              totalSequences: 1,
+              amountCents: 12000,
+              dueDate: new Date(Date.now() + 86400000 * 8).toISOString(),
+              status: "SCHEDULED",
+              settledAmountCents: 0,
+            },
+          ],
+          _count: { reconciliations: 0 },
+        },
+        {
+          id: "pay-3",
+          direction: "PAYABLE",
+          kind: "ONE_TIME",
+          title: "Internet Fibra Óptica",
+          description: "Conexão dedicada corporativa",
+          contact: {
+            id: "cont-pay-3",
+            name: "Telecom Fibra Conectada",
+            pixKeys: [],
+          },
+          category: "Utilidades & Escritório",
+          categoryColor: "#64748B",
+          totalAmountCents: 15000,
+          startDate: new Date().toISOString(),
+          status: "ACTIVE",
+          attachmentsCount: 0,
+          createdAt: new Date().toISOString(),
+          installments: [
+            {
+              id: "inst-pay-3",
+              sequence: 1,
+              totalSequences: 1,
+              amountCents: 15000,
+              dueDate: new Date(Date.now() - 86400000 * 2).toISOString(),
+              status: "SETTLED",
+              settledAmountCents: 15000,
+            },
+          ],
+          _count: { reconciliations: 1 },
+        },
+      ];
+    }
+
     const items = await db.financialItem.findMany({
       where: {
         workspaceId,
@@ -411,6 +597,21 @@ export async function updateFinancialItem(input: {
 export async function getOrCreatePaymentIntention(installmentId: string) {
   try {
     const { workspaceId } = await requireAuthenticatedWorkspace();
+
+    if (process.env.VISUAL_AUDIT_MODE === "true") {
+      return {
+        success: true,
+        intention: {
+          id: "int-1",
+          favoredName: "Cloud Server Hosting Ltda",
+          favoredPixKey: "financeiro@cloudhosting.com.br",
+          favoredPixKeyType: "EMAIL",
+          expectedAmountCents: 8500,
+          brCodePayload: "00020126580014BR.GOV.BCB.PIX0136financeiro@cloudhosting.com.br520400005303986540585.005802BR5925Cloud Server Hosting Ltda6009Sao Paulo62070503***6304ABCD",
+          txid: "INT12345678",
+        },
+      };
+    }
 
     const inst = await db.installment.findFirst({
       where: {

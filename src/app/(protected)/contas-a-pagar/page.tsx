@@ -7,6 +7,7 @@ import { PaymentDialog } from "@/components/ui/PaymentDialog";
 import { ManualSettlementModal } from "@/components/modals/ManualSettlementModal";
 import { AccountDetailsDrawer } from "@/components/ui/AccountDetailsDrawer";
 import { NewAccountModal } from "@/components/ui/NewAccountModal";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import {
   Search,
   Filter,
@@ -15,14 +16,16 @@ import {
   Eye,
   Trash2,
   Paperclip,
-  ArrowUpRight,
-  CheckCircle2,
   Edit3,
   Banknote,
+  AlertCircle,
+  RefreshCw,
 } from "lucide-react";
 
 import { formatCurrency, formatDate } from "@/lib/formatters";
 import { FinancialItemDTO, InstallmentDTO } from "@/types";
+import { subscribeFinancialStore, notifyStoreChange } from "@/services/financial-store";
+import { getFinancialItems, deleteFinancialItem } from "@/server/actions/financial-items";
 
 export default function ContasAPagarPage() {
   const [searchTerm, setSearchTerm] = useState("");
@@ -37,22 +40,52 @@ export default function ContasAPagarPage() {
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<FinancialItemDTO | null>(null);
   const [payablesList, setPayablesList] = useState<FinancialItemDTO[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [deletingItem, setDeletingItem] = useState<FinancialItemDTO | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const loadItems = async () => {
-    const { getFinancialItems } = await import("@/server/actions/financial-items");
-    const items = await getFinancialItems("PAYABLE");
-    setPayablesList(items as unknown as FinancialItemDTO[]);
+    setIsLoading(true);
+    setErrorMsg(null);
+    try {
+      const items = await getFinancialItems("PAYABLE");
+      setPayablesList(items as unknown as FinancialItemDTO[]);
+    } catch (err: any) {
+      console.error("Falha ao carregar contas a pagar:", err);
+      setErrorMsg(err?.message || "Não foi possível carregar as contas a pagar.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => {
     loadItems();
-    import("@/services/financial-store").then(({ subscribeFinancialStore }) => {
-      const unsubscribe = subscribeFinancialStore(() => {
-        loadItems();
-      });
-      return () => unsubscribe();
+    const unsubscribe = subscribeFinancialStore(() => {
+      loadItems();
     });
+    return () => {
+      unsubscribe();
+    };
   }, []);
+
+  const handleConfirmDelete = async () => {
+    if (!deletingItem) return;
+    setIsDeleting(true);
+    try {
+      const res = await deleteFinancialItem(deletingItem.id);
+      if (!res.success) {
+        throw new Error(res.error || "Falha ao mover conta para a lixeira.");
+      }
+      notifyStoreChange();
+      setDeletingItem(null);
+    } catch (err: any) {
+      console.error("Erro ao excluir conta:", err);
+      setErrorMsg(err?.message || "Falha ao mover conta para a lixeira.");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const filteredPayables = payablesList.filter((item) => {
     const matchesSearch =
@@ -84,6 +117,23 @@ export default function ContasAPagarPage() {
         }
       />
 
+      {/* Banner de Erro Resiliente */}
+      {errorMsg && (
+        <div className="flex items-center justify-between rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-xs text-red-300 animate-in fade-in duration-200">
+          <div className="flex items-center gap-2.5">
+            <AlertCircle className="h-4 w-4 text-red-400 flex-shrink-0" />
+            <span>{errorMsg}</span>
+          </div>
+          <button
+            onClick={() => loadItems()}
+            className="flex items-center gap-1.5 rounded-lg bg-red-500/20 px-3 py-1.5 text-xs font-semibold text-red-200 hover:bg-red-500/30 transition-colors"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            <span>Tentar novamente</span>
+          </button>
+        </div>
+      )}
+
       {/* Barra de Filtros e Pesquisa */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-xl border border-novex-border bg-novex-surface1 p-4">
         <div className="relative w-full sm:w-80">
@@ -114,7 +164,7 @@ export default function ContasAPagarPage() {
         </div>
       </div>
 
-      {/* Tabela de Contas a Pagar */}
+      {/* Tabela de Contas a Pagar com Skeleton e Empty State */}
       <div className="rounded-xl border border-novex-border bg-novex-surface1 overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
@@ -131,125 +181,216 @@ export default function ContasAPagarPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-novex-border/60">
-              {filteredPayables.map((item) => {
-                const inst = item.installments[0];
-                return (
-                  <tr
-                    key={item.id}
-                    onDoubleClick={() => {
-                      setEditingItem(item);
-                      setIsNewModalOpen(true);
-                    }}
-                    title="Clique 2 vezes para editar a conta"
-                    className="hover:bg-novex-surface2/40 transition-colors cursor-pointer"
-                  >
+              {isLoading ? (
+                Array.from({ length: 4 }).map((_, idx) => (
+                  <tr key={`skeleton-${idx}`} className="animate-pulse">
                     <td className="py-4 px-4">
-                      <div className="font-semibold text-novex-text-primary flex items-center gap-2">
-                        <span>{item.title}</span>
-                        {item.attachmentsCount > 0 && (
-                          <Paperclip className="h-3.5 w-3.5 text-novex-cyan" />
-                        )}
-                      </div>
-                      {item.description && (
-                        <div className="text-[10px] text-novex-text-muted truncate max-w-xs">{item.description}</div>
-                      )}
-                    </td>
-                    <td className="py-4 px-4 text-novex-text-secondary font-medium">
-                      {item.contact?.name || "Não informado"}
+                      <div className="h-3.5 bg-novex-surface2 rounded w-36 mb-1.5"></div>
+                      <div className="h-2.5 bg-novex-surface2/50 rounded w-24"></div>
                     </td>
                     <td className="py-4 px-4">
-                      <span
-                        className="px-2.5 py-1 rounded-md text-[10px] font-semibold text-white inline-block"
-                        style={{ backgroundColor: item.categoryColor }}
-                      >
-                        {item.category}
-                      </span>
-                    </td>
-                    <td className="py-4 px-4 text-novex-text-secondary font-medium">
-                      {formatDate(inst?.dueDate || item.startDate)}
-                    </td>
-                    <td className="py-4 px-4 font-bold text-red-400 font-mono">
-                      {formatCurrency(item.totalAmountCents)}
-                    </td>
-                    <td className="py-4 px-4 text-novex-text-muted">
-                      {item.kind === "INSTALLMENT_PLAN"
-                        ? `${item.installments.length}x`
-                        : item.kind === "RECURRING"
-                        ? "Recorrente"
-                        : "Avulsa"}
+                      <div className="h-3.5 bg-novex-surface2 rounded w-28"></div>
                     </td>
                     <td className="py-4 px-4">
-                      <StatusBadge status={inst?.status || "ACTIVE"} />
+                      <div className="h-5 bg-novex-surface2 rounded w-20"></div>
+                    </td>
+                    <td className="py-4 px-4">
+                      <div className="h-3.5 bg-novex-surface2 rounded w-20"></div>
+                    </td>
+                    <td className="py-4 px-4">
+                      <div className="h-4 bg-novex-surface2 rounded w-24"></div>
+                    </td>
+                    <td className="py-4 px-4">
+                      <div className="h-3.5 bg-novex-surface2 rounded w-16"></div>
+                    </td>
+                    <td className="py-4 px-4">
+                      <div className="h-5 bg-novex-surface2 rounded w-20"></div>
                     </td>
                     <td className="py-4 px-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => {
-                            setEditingItem(item);
-                            setIsNewModalOpen(true);
-                          }}
-                          className="rounded p-1.5 text-novex-text-muted hover:bg-novex-surface2 hover:text-novex-cyan transition-colors"
-                          title="Editar conta"
-                        >
-                          <Edit3 className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => setSelectedDrawerItem(item)}
-                          className="rounded p-1.5 text-novex-text-muted hover:bg-novex-surface2 hover:text-novex-text-primary transition-colors"
-                          title="Ver detalhes"
-                        >
-                          <Eye className="h-4 w-4" />
-                        </button>
-                        {inst && inst.status !== "SETTLED" && (
-                          <>
-                            <button
-                              onClick={() => {
-                                setManualSettleAccountTitle(item.title);
-                                setManualSettlePayeeName(item.contact?.name || "Favorecido");
-                                setManualSettleInstallment(inst);
-                              }}
-                              className="rounded bg-novex-surface2 hover:bg-novex-border px-2.5 py-1.5 text-[11px] font-semibold text-novex-text-primary transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
-                              title="Registrar pagamento manual em dinheiro/cédula, Pix ou transferência"
-                            >
-                              <Banknote className="h-3.5 w-3.5 text-novex-cyan" />
-                              <span>Baixar</span>
-                            </button>
-                            <button
-                              onClick={() => {
-                                setPaymentAccountTitle(item.title);
-                                setPaymentPixKey(item.pixKey);
-                                setPaymentInstallment(inst);
-                              }}
-                              className="rounded bg-novex-cyan/10 px-2.5 py-1.5 text-[11px] font-bold text-novex-cyan hover:bg-novex-cyan/20 transition-colors flex items-center gap-1.5"
-                            >
-                              <QrCode className="h-3.5 w-3.5" />
-                              <span>Pagar</span>
-                            </button>
-                          </>
-                        )}
-                        <button
-                          onClick={async () => {
-                            if (confirm(`Tem certeza que deseja excluir permanentemente a conta "${item.title}"?`)) {
-                              const { deleteFinancialItem } = await import("@/server/actions/financial-items");
-                              await deleteFinancialItem(item.id);
-                              const { notifyStoreChange } = await import("@/services/financial-store");
-                              notifyStoreChange();
-                            }
-                          }}
-                          className="rounded p-1.5 text-novex-text-muted hover:bg-red-500/20 hover:text-red-400 transition-colors"
-                          title="Excluir conta"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
+                      <div className="h-7 bg-novex-surface2 rounded w-24 ml-auto"></div>
                     </td>
                   </tr>
-                );
-              })}
+                ))
+              ) : filteredPayables.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="py-12 text-center">
+                    <div className="flex flex-col items-center justify-center space-y-3">
+                      <div className="rounded-full bg-novex-surface2 p-3 text-novex-text-muted">
+                        <Banknote className="h-6 w-6" />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-xs font-semibold text-novex-text-primary">
+                          {searchTerm || statusFilter !== "ALL"
+                            ? "Nenhuma conta a pagar encontrada para os filtros atuais."
+                            : "Nenhuma conta a pagar cadastrada no período."}
+                        </p>
+                        <p className="text-[11px] text-novex-text-muted">
+                          {searchTerm || statusFilter !== "ALL"
+                            ? "Tente ajustar a busca ou limpar os filtros de status."
+                            : "Cadastre novas obrigações para acompanhar vencimentos e gerar pagamentos Pix."}
+                        </p>
+                      </div>
+                      {searchTerm || statusFilter !== "ALL" ? (
+                        <button
+                          onClick={() => {
+                            setSearchTerm("");
+                            setStatusFilter("ALL");
+                          }}
+                          className="mt-2 text-xs font-semibold text-novex-cyan hover:underline"
+                        >
+                          Limpar Filtros
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            setEditingItem(null);
+                            setIsNewModalOpen(true);
+                          }}
+                          className="mt-2 flex items-center gap-1.5 rounded-lg bg-novex-cyan/10 px-3 py-1.5 text-xs font-semibold text-novex-cyan hover:bg-novex-cyan/20 transition-colors"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          <span>Cadastrar Primeira Conta</span>
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                filteredPayables.map((item) => {
+                  const inst = item.installments[0];
+                  return (
+                    <tr
+                      key={item.id}
+                      onDoubleClick={() => {
+                        setEditingItem(item);
+                        setIsNewModalOpen(true);
+                      }}
+                      title="Clique 2 vezes para editar a conta"
+                      className="hover:bg-novex-surface2/40 transition-colors cursor-pointer"
+                    >
+                      <td className="py-4 px-4">
+                        <div className="font-semibold text-novex-text-primary flex items-center gap-2">
+                          <span>{item.title}</span>
+                          {item.attachmentsCount > 0 && (
+                            <Paperclip className="h-3.5 w-3.5 text-novex-cyan" />
+                          )}
+                        </div>
+                        {item.description && (
+                          <div className="text-[10px] text-novex-text-muted truncate max-w-xs">{item.description}</div>
+                        )}
+                      </td>
+                      <td className="py-4 px-4 text-novex-text-secondary font-medium">
+                        {item.contact?.name || "Não informado"}
+                      </td>
+                      <td className="py-4 px-4">
+                        <span
+                          className="px-2.5 py-1 rounded-md text-[10px] font-semibold text-white inline-block"
+                          style={{ backgroundColor: item.categoryColor }}
+                        >
+                          {item.category}
+                        </span>
+                      </td>
+                      <td className="py-4 px-4 text-novex-text-secondary font-medium">
+                        {formatDate(inst?.dueDate || item.startDate)}
+                      </td>
+                      <td className="py-4 px-4 font-bold text-red-400 font-mono">
+                        {formatCurrency(item.totalAmountCents)}
+                      </td>
+                      <td className="py-4 px-4 text-novex-text-muted">
+                        {item.kind === "INSTALLMENT_PLAN"
+                          ? `${item.installments.length}x`
+                          : item.kind === "RECURRING"
+                          ? "Recorrente"
+                          : "Avulsa"}
+                      </td>
+                      <td className="py-4 px-4">
+                        <StatusBadge status={inst?.status || "ACTIVE"} />
+                      </td>
+                      <td className="py-4 px-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingItem(item);
+                              setIsNewModalOpen(true);
+                            }}
+                            className="rounded p-1.5 text-novex-text-muted hover:bg-novex-surface2 hover:text-novex-cyan transition-colors"
+                            title="Editar conta"
+                          >
+                            <Edit3 className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedDrawerItem(item);
+                            }}
+                            className="rounded p-1.5 text-novex-text-muted hover:bg-novex-surface2 hover:text-novex-text-primary transition-colors"
+                            title="Ver detalhes"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </button>
+                          {inst && inst.status !== "SETTLED" && (
+                            <>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setManualSettleAccountTitle(item.title);
+                                  setManualSettlePayeeName(item.contact?.name || "Favorecido");
+                                  setManualSettleInstallment(inst);
+                                }}
+                                className="rounded bg-novex-surface2 hover:bg-novex-border px-2.5 py-1.5 text-[11px] font-semibold text-novex-text-primary transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                                title="Registrar pagamento manual em dinheiro/cédula, Pix ou transferência"
+                              >
+                                <Banknote className="h-3.5 w-3.5 text-novex-cyan" />
+                                <span>Baixar</span>
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPaymentAccountTitle(item.title);
+                                  setPaymentPixKey(item.pixKey);
+                                  setPaymentInstallment(inst);
+                                }}
+                                className="rounded bg-novex-cyan/10 px-2.5 py-1.5 text-[11px] font-bold text-novex-cyan hover:bg-novex-cyan/20 transition-colors flex items-center gap-1.5"
+                              >
+                                <QrCode className="h-3.5 w-3.5" />
+                                <span>Pagar</span>
+                              </button>
+                            </>
+                          )}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeletingItem(item);
+                            }}
+                            className="rounded p-1.5 text-novex-text-muted hover:bg-red-500/20 hover:text-red-400 transition-colors"
+                            title="Mover para lixeira"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* Modal Corporativo de Confirmação de Exclusão (Soft Delete) */}
+      <ConfirmModal
+        isOpen={!!deletingItem}
+        onClose={() => setDeletingItem(null)}
+        onConfirm={handleConfirmDelete}
+        isLoading={isDeleting}
+        title={`Mover "${deletingItem?.title}" para a Lixeira?`}
+        description="Esta obrigação financeira deixará de ser exibida nas listas ativas e no cálculo de obrigações previstas."
+        subNote="O registro não é excluído permanentemente. Você pode restaurá-lo a qualquer momento na Central de Lixeira em até 30 dias."
+        confirmText="Mover para Lixeira"
+        variant="danger"
+      />
 
       {/* Modais e Drawers */}
       <ManualSettlementModal
@@ -287,9 +428,7 @@ export default function ContasAPagarPage() {
           setManualSettleInstallment(inst);
         }}
         onDelete={async (targetItem) => {
-          const { deleteFinancialItem } = await import("@/server/actions/financial-items");
           await deleteFinancialItem(targetItem.id);
-          const { notifyStoreChange } = await import("@/services/financial-store");
           notifyStoreChange();
           setSelectedDrawerItem(null);
         }}
