@@ -23,6 +23,8 @@ services:
       EVOLUTION_API_URL: http://evolution:8080
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:?EVOLUTION_API_KEY obrigatoria}
       EVOLUTION_INSTANCE_NAME: ${EVOLUTION_INSTANCE_NAME:-novex-finance}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
     depends_on:
       db:
         condition: service_healthy

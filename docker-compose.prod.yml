@@ -46,6 +46,8 @@ services:
       UPLOADS_DIR: /app/uploads
       LOGS_DIR: /app/logs
       ALLOW_PUBLIC_SIGNUP: "false"
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
     volumes:
       - uploads_data:/app/uploads
       - ./logs:/app/logs
