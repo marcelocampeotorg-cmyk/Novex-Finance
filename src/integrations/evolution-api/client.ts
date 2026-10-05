@@ -353,11 +353,12 @@ export class EvolutionAPIClient {
     title?: string;
     description?: string;
     senderName?: string;
+    customMessage?: string;
     baseUrl?: string;
     apiKey?: string;
     instanceName?: string;
   }): Promise<EvolutionAPIResponse> {
-    const introText = buildDebtorPixChargeMessage({
+    const introText = input.customMessage?.trim() || buildDebtorPixChargeMessage({
       debtorName: input.debtorName,
       amountCents: input.amountCents,
       dueDate: input.dueDate,

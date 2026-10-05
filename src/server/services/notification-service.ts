@@ -342,7 +342,7 @@ export type WhatsAppReminderStage = "MANUAL" | "DUE" | "OVERDUE" | `DUE_SOON_${n
 
 async function sendWhatsAppDebtorReminderForWorkspace(
   workspaceId: string,
-  input: { pixChargeId: string; messageStage: WhatsAppReminderStage },
+  input: { pixChargeId: string; messageStage: WhatsAppReminderStage; customMessage?: string },
 ) {
   try {
     const charge = await db.pixCharge.findFirst({
@@ -422,6 +422,26 @@ async function sendWhatsAppDebtorReminderForWorkspace(
 
     const ws = await db.workspace.findUnique({ where: { id: workspaceId }, select: { name: true } });
 
+    // Gerar mensagem com IA (Groq) se nenhuma mensagem customizada foi especificada
+    let messageToSend = input.customMessage?.trim();
+    if (!messageToSend) {
+      try {
+        const { generateAIPixChargeMessage } = await import("@/server/services/groq-service");
+        const aiResult = await generateAIPixChargeMessage({
+          debtorName: charge.installment.financialItem.contact.name,
+          amountCents: Number(charge.amountCents),
+          dueDate: charge.installment.dueDate.toLocaleDateString("pt-BR"),
+          pixCopiaECola: charge.qrCode,
+          title: charge.installment.financialItem.title,
+          description: charge.installment.financialItem.description || undefined,
+          senderName: ws?.name || "Franklin Jr",
+        });
+        messageToSend = aiResult.message;
+      } catch (e) {
+        console.warn("[Groq AI Notification] Recorrendo ao template padrão:", e);
+      }
+    }
+
     const result = await evolutionAPIClient.sendPixChargeReminder({
       debtorName: charge.installment.financialItem.contact.name,
       debtorPhone: charge.installment.financialItem.contact.phone,
@@ -431,6 +451,7 @@ async function sendWhatsAppDebtorReminderForWorkspace(
       title: charge.installment.financialItem.title,
       description: charge.installment.financialItem.description || undefined,
       senderName: ws?.name || "Franklin Jr",
+      customMessage: messageToSend,
       baseUrl: creds.baseUrl,
       apiKey: creds.apiKey,
       instanceName: creds.instanceName,
@@ -467,6 +488,7 @@ export async function sendManualDebtorPixReminder(input: {
   installmentId?: string;
   pixChargeId?: string;
   phone?: string;
+  customMessage?: string;
 }) {
   try {
     const { workspaceId } = await requireAuthenticatedWorkspace();
@@ -539,6 +561,7 @@ export async function sendManualDebtorPixReminder(input: {
     const result = await sendWhatsAppDebtorReminderForWorkspace(workspaceId, {
       pixChargeId: targetPixChargeId,
       messageStage: "MANUAL",
+      customMessage: input.customMessage,
     });
 
     revalidatePath("/contas-a-receber");

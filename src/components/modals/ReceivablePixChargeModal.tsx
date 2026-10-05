@@ -16,6 +16,7 @@ import {
   Phone,
   Edit2,
   CheckCheck,
+  Sparkles,
 } from "lucide-react";
 import {
   getReceivablePixChargeStatus,
@@ -23,6 +24,7 @@ import {
   sendManualReceivableWhatsAppReminder,
   PixChargeStatusResult,
 } from "@/server/actions/pix-receivables";
+import { getAIPixChargeMessage } from "@/server/actions/ai-charge";
 import { updateContactPhoneByInstallment } from "@/server/actions/contacts";
 import { buildDebtorPixChargeMessage } from "@/integrations/evolution-api/client";
 import { formatCurrency } from "@/lib/formatters";
@@ -68,8 +70,57 @@ export function ReceivablePixChargeModal({
   } | null>(null);
   const [copiedMessage, setCopiedMessage] = useState(false);
 
+  // Estados de IA (Groq) e mensagem editável
+  const [customMessage, setCustomMessage] = useState("");
+  const [generatingAI, setGeneratingAI] = useState(false);
+  const [isAIMessage, setIsAIMessage] = useState(false);
+
   const pollingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const pollDelayRef = useRef(5000); // 5s inicial
+
+  const handleGenerateAIMessage = async (targetCharge?: PixChargeStatusResult) => {
+    const active = targetCharge || chargeData;
+    const dName = active?.debtorName || debtorName;
+    const aTitle = active?.title || title;
+    const aDueDate =
+      active?.dueDate ||
+      (dueDate ? new Date(dueDate).toLocaleDateString("pt-BR") : new Date().toLocaleDateString("pt-BR"));
+    const aSenderName = active?.senderName || "Frank Oliveira";
+    const aAmount = active?.amountCents || amountCents;
+    const aPix = active?.qrCode;
+
+    setGeneratingAI(true);
+    try {
+      const res = await getAIPixChargeMessage({
+        debtorName: dName,
+        amountCents: aAmount,
+        dueDate: aDueDate,
+        pixCopiaECola: aPix,
+        title: aTitle,
+        description: active?.description,
+        senderName: aSenderName,
+      });
+
+      if (res?.message) {
+        setCustomMessage(res.message);
+        setIsAIMessage(res.usedAI);
+      }
+    } catch (e) {
+      console.error("Falha ao gerar mensagem com IA:", e);
+      setCustomMessage(buildDebtorPixChargeMessage({
+        debtorName: dName,
+        amountCents: aAmount,
+        dueDate: aDueDate,
+        pixCopiaECola: aPix,
+        title: aTitle,
+        description: active?.description,
+        senderName: aSenderName,
+      }));
+      setIsAIMessage(false);
+    } finally {
+      setGeneratingAI(false);
+    }
+  };
 
   useEffect(() => {
     if (isOpen && installmentId) {
@@ -78,6 +129,8 @@ export function ReceivablePixChargeModal({
       stopPolling();
       setBotFeedback(null);
       setIsEditingPhone(false);
+      setCustomMessage("");
+      setIsAIMessage(false);
     }
     return () => stopPolling();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -102,6 +155,8 @@ export function ReceivablePixChargeModal({
         if (res.debtorPhone) {
           setPhoneInput(res.debtorPhone);
         }
+        // Gera mensagem inteligente com IA assim que os dados do Pix estiverem disponíveis
+        handleGenerateAIMessage(res);
         if (res.isPaid) {
           if (onSuccess) onSuccess();
         } else if (res.pixChargeId) {
@@ -180,6 +235,9 @@ export function ReceivablePixChargeModal({
     senderName: activeSenderName,
   });
 
+  // Mensagem efetiva para envio (customizada pela IA ou template padrão)
+  const effectiveMessage = customMessage || formattedWhatsAppMessage;
+
   // Telefone para link WhatsApp Web
   const cleanPhone = (phoneInput || chargeData?.debtorPhone || "").replace(/\D/g, "");
   const waPhone = cleanPhone
@@ -188,7 +246,7 @@ export function ReceivablePixChargeModal({
       : `55${cleanPhone}`
     : "";
   const waWebUrl = waPhone
-    ? `https://wa.me/${waPhone}?text=${encodeURIComponent(formattedWhatsAppMessage)}`
+    ? `https://wa.me/${waPhone}?text=${encodeURIComponent(effectiveMessage)}`
     : null;
 
   const handleSavePhone = async () => {
@@ -219,6 +277,7 @@ export function ReceivablePixChargeModal({
         installmentId,
         pixChargeId: chargeData?.pixChargeId,
         phone: phoneInput.trim() || undefined,
+        customMessage: effectiveMessage,
       });
 
       if (res.success) {
@@ -249,7 +308,7 @@ export function ReceivablePixChargeModal({
   };
 
   const handleCopyFullMessage = () => {
-    navigator.clipboard.writeText(formattedWhatsAppMessage);
+    navigator.clipboard.writeText(effectiveMessage);
     setCopiedMessage(true);
     setTimeout(() => setCopiedMessage(false), 2500);
   };
@@ -453,15 +512,53 @@ export function ReceivablePixChargeModal({
                 </div>
               </div>
 
-              {/* Prévia da Mensagem Humanizada com Motivo */}
-              <div className="rounded-lg bg-novex-bg/60 border border-novex-border/60 p-2.5 space-y-1">
-                <div className="flex items-center justify-between text-[10px] font-bold text-novex-text-muted uppercase">
-                  <span>Mensagem Pronta para Envio</span>
-                  <span className="text-emerald-400">Motivo: {activeTitle}</span>
+              {/* Prévia da Mensagem Humanizada com Motivo & IA */}
+              <div className="rounded-xl bg-novex-bg/80 border border-novex-border/80 p-3 space-y-2">
+                <div className="flex items-center justify-between text-[11px] font-bold">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-novex-text-muted uppercase tracking-wider text-[10px]">
+                      Mensagem de Cobrança
+                    </span>
+                    {isAIMessage ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#00E5FF]/10 text-[#00E5FF] border border-[#00E5FF]/30 text-[10px] font-semibold">
+                        <Sparkles className="h-2.5 w-2.5" />
+                        Groq AI
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 text-[10px]">
+                        Template Padrão
+                      </span>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={() => handleGenerateAIMessage()}
+                    disabled={generatingAI}
+                    type="button"
+                    className="inline-flex items-center gap-1 text-[11px] text-[#00E5FF] hover:text-cyan-300 font-semibold transition-colors disabled:opacity-50 cursor-pointer"
+                    title="Pedir para a IA da Groq elaborar outra variação amigável"
+                  >
+                    <Sparkles className={`h-3 w-3 ${generatingAI ? "animate-spin" : ""}`} />
+                    <span>{generatingAI ? "Elaborando..." : "Regenerar IA"}</span>
+                  </button>
                 </div>
-                <p className="text-[11px] text-novex-text-secondary leading-relaxed line-clamp-3 hover:line-clamp-none transition-all cursor-pointer">
-                  {formattedWhatsAppMessage}
-                </p>
+
+                <div className="space-y-1">
+                  <textarea
+                    rows={4}
+                    value={effectiveMessage}
+                    onChange={(e) => {
+                      setCustomMessage(e.target.value);
+                      setIsAIMessage(false);
+                    }}
+                    placeholder="Elaborando mensagem amigável com inteligência artificial..."
+                    className="w-full rounded-lg bg-novex-surface1/70 border border-novex-border/70 p-2.5 text-xs text-novex-text-secondary focus:text-novex-text-primary focus:border-[#00E5FF]/50 focus:ring-1 focus:ring-[#00E5FF]/50 transition-all resize-y outline-none leading-relaxed font-sans"
+                  />
+                  <div className="flex items-center justify-between text-[10px] text-novex-text-muted px-1">
+                    <span>Você pode editar o texto livremente antes de disparar.</span>
+                    <span className="text-emerald-400 font-medium">Motivo: {activeTitle}</span>
+                  </div>
+                </div>
               </div>
 
               {/* Feedback de envio do bot */}

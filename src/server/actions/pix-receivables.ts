@@ -607,6 +607,7 @@ export async function sendManualReceivableWhatsAppReminder(input: {
   installmentId?: string;
   pixChargeId?: string;
   phone?: string;
+  customMessage?: string;
 }) {
   const { sendManualDebtorPixReminder } = await import("@/server/services/notification-service");
   return sendManualDebtorPixReminder(input);
