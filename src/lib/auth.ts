@@ -53,5 +53,13 @@ export const auth = betterAuth({
   },
   secret: process.env.AUTH_SECRET,
   baseURL: serverAuthUrl,
-  trustedOrigins: [serverAuthUrl],
+  trustedOrigins: Array.from(new Set([
+    serverAuthUrl,
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:3002",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+    "http://127.0.0.1:3002",
+  ].filter(Boolean))),
 });

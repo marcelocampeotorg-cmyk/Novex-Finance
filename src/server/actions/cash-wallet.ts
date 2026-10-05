@@ -99,6 +99,28 @@ export async function adjustCashWalletBalance(input: AdjustCashWalletInput) {
         },
       });
 
+      let resolvedCategoryId: string | null = null;
+      if (categoryId) {
+        const cat = await tx.category.findFirst({ where: { id: categoryId, workspaceId } });
+        if (cat) resolvedCategoryId = cat.id;
+      }
+      if (!resolvedCategoryId && direction === "DEBIT") {
+        const defaultCat = await tx.category.findFirst({
+          where: {
+            workspaceId,
+            direction: { in: ["EXPENSE", "BOTH"] },
+            OR: [
+              { name: { contains: "Pessoal", mode: "insensitive" } },
+              { name: { contains: "Outras", mode: "insensitive" } },
+              { name: { contains: "Básicas", mode: "insensitive" } },
+            ],
+          },
+        }) || await tx.category.findFirst({
+          where: { workspaceId, direction: { in: ["EXPENSE", "BOTH"] } },
+        });
+        if (defaultCat) resolvedCategoryId = defaultCat.id;
+      }
+
       await tx.ledgerEntry.create({
         data: {
           id: randomUUID(),
@@ -110,7 +132,7 @@ export async function adjustCashWalletBalance(input: AdjustCashWalletInput) {
           occurredAt: now,
           sourceType: "MANUAL_ADJUSTMENT",
           sourceId: externalId,
-          categoryId: categoryId || (direction === "DEBIT" ? "e45775aa-b1a1-4a34-95a0-8d18b68fe62b" : null), // Pessoal por padrão em débito se disponível
+          categoryId: resolvedCategoryId,
           excludedFromReports: false,
         },
       });

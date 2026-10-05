@@ -63,7 +63,7 @@ export const AppSidebar: React.FC = () => {
           {collapsed ? (
             <div className="flex items-center justify-center w-full">
               <Image
-                src="/brand/novex_symbol_original.png"
+                src="/brand/novex_symbol_transparent.png"
                 alt="NOVEXBR"
                 width={32}
                 height={32}
@@ -74,7 +74,7 @@ export const AppSidebar: React.FC = () => {
           ) : (
             <div className="flex items-center gap-2.5">
               <Image
-                src="/brand/novex_symbol_original.png"
+                src="/brand/novex_symbol_transparent.png"
                 alt="NOVEXBR"
                 width={36}
                 height={36}

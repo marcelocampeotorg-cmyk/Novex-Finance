@@ -124,7 +124,7 @@ export function LiveNotificationPopup() {
     <div
       onMouseEnter={() => setIsPaused(true)}
       onMouseLeave={() => setIsPaused(false)}
-      className={`fixed top-6 left-1/2 -translate-x-1/2 z-50 max-w-sm sm:max-w-md w-[calc(100%-2rem)] sm:w-full bg-novex-surface1/95 backdrop-blur-xl border ${getBorderColor()} rounded-2xl shadow-2xl p-4 transition-all duration-300 animate-in slide-in-from-top-5 fade-in`}
+      className={`fixed bottom-20 sm:bottom-6 right-4 sm:right-6 sm:left-auto left-4 z-50 max-w-sm sm:max-w-md w-[calc(100%-2rem)] sm:w-full bg-novex-surface1/95 backdrop-blur-xl border ${getBorderColor()} rounded-2xl shadow-2xl p-4 transition-all duration-300 animate-in slide-in-from-bottom-5 fade-in`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3">

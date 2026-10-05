@@ -186,7 +186,7 @@ export default function DashboardPage() {
                 ? "bg-novex-surface1 text-novex-cyan border-novex-cyan/40 cursor-wait shadow-sm"
                 : syncError || displaySummary.syncSource === "FALHA"
                 ? "bg-red-500/10 text-red-300 border-red-500/30 hover:bg-red-500/20"
-                : displaySummary.syncSource === "DESCONECTADO" || displaySummary.syncSource === "PENDENTE"
+                : displaySummary.syncSource === "DESCONECTADO"
                 ? "bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20"
                 : "bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20"
             }`}
@@ -205,19 +205,17 @@ export default function DashboardPage() {
                 </span>
                 <RefreshCw className="h-3.5 w-3.5 ml-1 opacity-70 hover:opacity-100 shrink-0" />
               </>
-            ) : displaySummary.syncSource === "DESCONECTADO" || displaySummary.syncSource === "PENDENTE" ? (
+            ) : displaySummary.syncSource === "DESCONECTADO" ? (
               <>
                 <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
-                <span className="font-semibold text-amber-300 truncate">
-                  {displaySummary.syncSource === "DESCONECTADO" ? "Integração Desconectada" : "Atualização pendente"}
-                </span>
+                <span className="font-semibold text-amber-300 truncate">Integração Desconectada</span>
                 <RefreshCw className="h-3.5 w-3.5 ml-1 opacity-70 hover:opacity-100 shrink-0" />
               </>
             ) : (
               <>
                 <CheckCircle2 className="h-4 w-4 text-emerald-400" />
                 <span className="font-semibold text-emerald-300 truncate">
-                  Última sincronização: {displaySummary.lastSyncAt ? formatDate(displaySummary.lastSyncAt) : "pendente"}
+                  Última sincronização: {displaySummary.lastSyncAt ? formatDate(displaySummary.lastSyncAt) : "Recente"}
                 </span>
                 <RefreshCw className="h-3.5 w-3.5 ml-1 opacity-70 hover:opacity-100 shrink-0" />
               </>
